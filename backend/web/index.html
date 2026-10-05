@@ -57,6 +57,15 @@
         spellcheck="false"
       ></textarea>
 
+      <label class="field-label" for="extra-instructions">Instructions for the model <span class="optional">optional</span></label>
+      <p class="hint">Anything the model should know that the ticket doesn't say. Same field the extension sends, so prompt changes can be tested here.</p>
+      <textarea
+        id="extra-instructions"
+        rows="3"
+        placeholder="e.g. This user is on an older torch build — check ABI compatibility before suggesting an upgrade."
+        spellcheck="false"
+      ></textarea>
+
       <div class="actions">
         <button id="draft-btn" class="primary">Draft Response</button>
         <button id="clear-btn" class="secondary" type="button">Clear</button>

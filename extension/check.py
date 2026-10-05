@@ -11,7 +11,10 @@ Every check here exists because something it catches actually shipped broken:
 * stale selectors     -- JS querying a class the markup no longer emits fails
   silently.
 
-Usage:  python3 check.py          (exit 1 on any failure)
+Usage:  ../backend/.venv/bin/python check.py     (exit 1 on any failure)
+
+Needs `esprima`, which is already in the backend venv -- hence the interpreter
+above. A bare `python3 check.py` will not find it.
 """
 
 import collections
@@ -21,7 +24,15 @@ import os
 import re
 import sys
 
-import esprima
+try:
+    import esprima
+except ImportError:
+    sys.exit(
+        "check.py needs the 'esprima' module.\n"
+        "Run it with the backend venv, which already has it:\n"
+        "    ../backend/.venv/bin/python check.py\n"
+        "or install it:  pip install esprima"
+    )
 
 EXT = os.path.dirname(os.path.abspath(__file__))
 fails = []

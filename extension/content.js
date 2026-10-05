@@ -167,8 +167,10 @@
 
   /* ==================================================================
      UI — a "Draft reply" button that opens a docked right-hand panel
-     holding the whole workflow: connection, ticket, instructions, draft.
-     Nothing needs the toolbar popup.
+     holding the whole drafting workflow: connection, ticket, instructions,
+     draft. The toolbar popup is still needed for one thing the panel does not
+     own: choosing which field the draft is written into (work notes /
+     additional comments / both). We read that here via GET_CONFIG.
      ================================================================== */
 
   const FAB_ID = "rc-copilot-fab";

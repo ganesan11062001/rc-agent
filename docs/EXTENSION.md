@@ -41,8 +41,6 @@ cluster/                Slurm launchers and helpers
   serve_stack.sbatch      vLLM + backend, one job (sbatch route)
   capture.sbatch          capture server, CPU only
   capture_server.py       same API as the backend, stores instead of drafting
-  test_connection.sbatch  cheapest OOD probe: no model, no auth
-  mock_server.py          stdlib JSON endpoint used by the above
 ```
 
 The backend itself is [`../backend`](../backend) — this directory adds the
@@ -55,11 +53,14 @@ browser half and the cluster launcher.
 ### 1. Confirm the OOD path works (5 minutes, no GPU)
 
 Do this before involving a model. It isolates the proxy from everything else.
+`capture.sbatch` runs on the CPU `short` partition, so it schedules immediately,
+and it speaks the real API — same `/api/health`, `/api/login`, `/api/draft`,
+same auth module — so a pass here means the extension needs no changes.
 
 ```bash
 cd cluster
-sbatch test_connection.sbatch
-tail -f logs/ood-test-<jobid>.out
+sbatch capture.sbatch
+tail -f logs/rc-capture-<jobid>.out
 ```
 
 Copy the printed URL into a browser tab while signed into OOD. JSON means the
@@ -201,8 +202,8 @@ Tested on the cluster filesystem against a stub model:
   "short description".
 - All JS parses; popup ids resolve; every message type the content script and
   popup send is handled by the service worker; manifest references all exist.
-- `bash -n` on both sbatch scripts; `mock_server.py` compiles and serves JSON on
-  any path, with CORS and a 204 preflight, bound on `0.0.0.0`.
+- `bash -n` on the sbatch scripts; `capture_server.py` compiles and serves JSON
+  on any path, with CORS and a 204 preflight, bound on `0.0.0.0`.
 
 **Not verified — no Chrome and no live OOD here:**
 

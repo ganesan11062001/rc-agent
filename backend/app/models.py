@@ -84,11 +84,6 @@ class HealthResponse(BaseModel):
     detail: Optional[str] = None
 
 
-class ErrorResponse(BaseModel):
-    error: str
-    detail: Optional[str] = None
-
-
 # --- JSON schema handed to the server for guided decoding -----------------
 # Hand-written rather than generated from LLMDraft so it satisfies OpenAI's
 # "strict" json_schema rules (no extra keys, everything required) and stays

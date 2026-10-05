@@ -140,6 +140,7 @@
   }
 
   var ticketText = el("ticket-text");
+  var extraInstructions = el("extra-instructions");
   var draftBtn = el("draft-btn");
   var clearBtn = el("clear-btn");
   var copyBtn = el("copy-btn");
@@ -249,7 +250,12 @@
       var res = await fetch("/api/draft", {
         method: "POST",
         headers: headers,
-        body: JSON.stringify({ ticket_text: text })
+        /* Mirrors what the extension sends (extension/background.js draft()),
+           so the prompt can be tuned here against the real code path. */
+        body: JSON.stringify({
+          ticket_text: text,
+          extra_instructions: (extraInstructions.value || "").trim()
+        })
       });
 
       var payload = null;
@@ -347,6 +353,7 @@
 
   clearBtn.addEventListener("click", function () {
     ticketText.value = "";
+    extraInstructions.value = "";
     charCount.textContent = "0 characters";
     results.hidden = true;
     hideStatus();

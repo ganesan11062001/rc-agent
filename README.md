@@ -88,6 +88,7 @@ Paste tickets at `http://127.0.0.1:8080` and edit
 | [`ood-apps/rc-copilot/`](ood-apps/rc-copilot) | OOD interactive app: vLLM + backend in one job |
 | [`ood-apps/capture-test/`](ood-apps/capture-test) | Same, no model — stores what's sent, for testing the data path |
 | [`cluster/`](cluster) | Slurm launchers, install and diagnostic scripts |
+| [`tests/`](tests) | Standalone inference test — run it on the cluster, no browser or OOD needed |
 | [`dist/`](dist) | Packaged extension zip |
 | [`docs/`](docs) | Diagram and extension guide |
 
@@ -113,8 +114,11 @@ iframe, Next Experience hides fields in shadow DOM, Service Portal uses its own
 id convention. Rather than three sets of selectors, fields are found by a
 shadow-piercing DOM walk matched on id, name, `aria-label` and label text.
 
-**Drafts go to work notes, not customer-visible comments** — so a mis-click on
-Update can't send unreviewed model output to a researcher.
+**Drafts go to work notes by default**, not to customer-visible comments — so a
+mis-click on Update can't send unreviewed model output to a researcher. Two
+other targets can be chosen in the toolbar popup: *additional comments*, and
+*both* (analysis to work notes, reply to comments). Nothing is ever saved
+either way; a human still clicks Update.
 
 ---
 
