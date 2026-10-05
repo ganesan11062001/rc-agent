@@ -9,15 +9,19 @@ vLLM 0.29.0 serving GLM models on a single A100 node.
 
 ## Quick start
 
-Edit the `--partition` / `--gres` lines in `sbatch_serve.sh` to match your
-allocation first (see the comment block in that file), then:
+To get a model *and* the backend in one allocation, use `serve_stack.sbatch` —
+it picks the GPU flags up from the command line, so nothing needs editing:
 
 ```bash
-sbatch sbatch_serve.sh          # GLM-4.7-Flash on 2 A100s
-MODEL=air sbatch sbatch_serve.sh  # GLM-4.5-Air on 4 A100s
+sbatch --gres=gpu:a100:1 --mem=80G --cpus-per-task=12 \
+       --export=ALL,MODEL=qwen7b serve_stack.sbatch
 ```
 
-Or interactively on a GPU node:
+See the comment block at the top of that file for the per-model allocations
+(`qwen7b`, `qwen14b`, `flash`, `t4-7b`, `small`).
+
+For the model *alone* — which is what the rest of this page is about — grab a
+GPU node interactively:
 
 ```bash
 source env.sh
@@ -38,7 +42,7 @@ python smoke_test.py
 |---|---|
 | `env.sh` | Sourceable env — venv, caches, CUDA paths. Everything else assumes this ran. |
 | `serve_glm.sh` | Starts `vllm serve` with the right flags per model. |
-| `sbatch_serve.sh` | Slurm wrapper around `serve_glm.sh`. |
+| `serve_stack.sbatch` | Slurm job running `serve_glm.sh` *and* the backend together. |
 | `smoke_test.py` | Hits `/v1/models` and `/v1/chat/completions` against a running server. |
 
 ## Why not GLM-5.3

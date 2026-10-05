@@ -10,7 +10,9 @@
 
 set -uo pipefail
 
-JOB_NAME="${JOB_NAME:-glm-vllm}"
+# Must match the --job-name in the launcher you used. serve_stack.sbatch is the
+# only one left, and it sets rc-copilot.
+JOB_NAME="${JOB_NAME:-rc-copilot}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 LOGIN_HOST="${LOGIN_HOST:-login.explorer.northeastern.edu}"
 LOCAL_PORT="${LOCAL_PORT:-8000}"   # port on your laptop, the tunnel's left side
@@ -48,7 +50,7 @@ while :; do
 
   if [ -z "$row" ]; then
     die "No '$JOB_NAME' job in the queue. Start one with:
-  sbatch --partition=gpu-short --time=02:00:00 sbatch_serve.sh"
+  sbatch --gres=gpu:a100:1 --mem=80G --export=ALL,MODEL=qwen7b serve_stack.sbatch"
   fi
 
   IFS='|' read -r jobid state nodelist timeleft reason <<<"$row"

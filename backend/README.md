@@ -155,7 +155,7 @@ the browser extension's default settings work untouched.
 ```
 laptop                                    cluster
 ┌──────────────────────────┐              ┌────────────────────┐
-│ browser / extension      │              │ sbatch_serve.sh    │
+│ browser / extension      │              │ serve_glm.sh       │
 │   -> 127.0.0.1:8080      │              │   vLLM on d####    │
 │ uvicorn (RC Copilot)     │   ssh -L     │   :8000            │
 │   -> 127.0.0.1:8000 ─────┼──────────────┼─> d####:8000       │
@@ -165,9 +165,13 @@ laptop                                    cluster
 **1. Start vLLM** (on a login node):
 
 ```bash
-cd /projects/rc/projects/ticket_mate
-sbatch --partition=gpu-short --time=02:00:00 sbatch_serve.sh
+cd /projects/rc/projects/ticket_mate/cluster
+sbatch --partition=gpu-short --time=02:00:00 \
+       --gres=gpu:a100:1 --mem=80G --export=ALL,MODEL=qwen7b serve_stack.sbatch
 ```
+
+(`serve_stack.sbatch` also starts a backend inside the job. For this topology
+you ignore it and talk to the vLLM port through the tunnel.)
 
 **2. Ask where it landed.** `vllm_status.sh` reads the node out of Slurm, checks
 the API is actually answering, and asks the server for its own model id — then

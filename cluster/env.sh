@@ -2,7 +2,9 @@
 # Source this before running anything: `source env.sh`
 # Sets up the vLLM venv + caches on /projects (home dirs have tight quotas).
 
-export TM_ROOT=/projects/rc/projects/ticket_mate
+# Overridable, like every other TM_ROOT in the tree -- so a checkout somewhere
+# else works without editing this file.
+export TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
 
 # uv + the project venv
 export PATH="$TM_ROOT/.uv/bin:$PATH"
