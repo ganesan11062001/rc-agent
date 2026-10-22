@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from config import get_settings
 from graph.connection import driver
-from retrieval import citations, http
+from retrieval import citations, http, support
 from retrieval.embeddings import get_embedder
 from retrieval.graphrag import retrieve
 
@@ -94,6 +94,9 @@ class CiteRequest(BaseModel):
     refs: Dict[str, str] = Field(..., description='{"S1": url_with_anchor, ...}')
     allowed_urls: List[str]
     style: str = Field("markdown", pattern=_STYLE)
+    # Also judge whether each [S#] fits its sentence better than the other
+    # sources do (retrieval/support.py). Needs the graph and model loaded.
+    check_support: bool = False
 
 
 class AnswerRequest(RetrieveRequest):
@@ -153,11 +156,13 @@ def retrieve_endpoint(req: RetrieveRequest) -> Dict:
 def cite_endpoint(req: CiteRequest) -> Dict:
     if (req.text is None) == (req.texts is None):
         raise HTTPException(422, "send exactly one of `text` or `texts`")
-    out = citations.render_many(
-        [req.text] if req.text is not None else req.texts,
-        req.refs, req.allowed_urls, req.style,
-    )
+    texts = [req.text] if req.text is not None else req.texts
+    out = citations.render_many(texts, req.refs, req.allowed_urls, req.style)
     body = asdict(out)
+    # Judged on the model's original text, where [S#] still marks each claim.
+    body["support"] = None
+    if req.check_support and _ready.is_set():
+        body["support"] = [asdict(v) for v in support.check(texts, req.refs)]
     if req.text is not None:
         body["text"] = out.text
         del body["texts"]
