@@ -162,9 +162,13 @@ def _is_unsupported_param_error(exc: openai.APIStatusError) -> bool:
 
 async def generate_draft(ticket_text: str,
                          extra_instructions: str = "",
-                         trace: Optional[Dict[str, Any]] = None
+                         trace: Optional[Dict[str, Any]] = None,
+                         kg_context: str = "",
+                         kg_low_confidence: bool = False,
                          ) -> Tuple[LLMDraft, str]:
     """Send one ticket to the model and return (validated draft, model name).
+
+    `kg_context` is the numbered RC website sources from rc_kg, if any.
 
     Raises LLMError with a UI-friendly message on any failure.
     """
@@ -186,6 +190,8 @@ async def generate_draft(ticket_text: str,
                 ticket_text,
                 json_reminder=(strategy == "none"),
                 extra_instructions=extra_instructions,
+                kg_context=kg_context,
+                kg_low_confidence=kg_low_confidence,
             )
             kwargs: Dict[str, Any] = {
                 "model": settings.vllm_model_name,

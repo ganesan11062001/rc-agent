@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     # on every startup, because on a shared node this leaves the app wide open.
     auth_disabled: bool = False
 
+    # --- RC knowledge graph (rc_kg) ---------------------------------------
+    # Base URL of the rc_kg API (e.g. http://127.0.0.1:8090). Unset = drafts
+    # are not grounded in the RC website, exactly as before rc_kg existed.
+    # script.sh.erb starts rc_kg in the same job and sets this.
+    rc_kg_url: Optional[str] = None
+    # Bearer token for rc_kg; the job generates it and gives it to both sides.
+    rc_kg_api_token: Optional[str] = None
+    # Website sections put in the prompt per ticket.
+    rc_kg_k: int = 6
+    # Retrieval is well under a second; the timeout only matters when rc_kg
+    # is wedged.
+    rc_kg_timeout_seconds: float = 15.0
+
     # --- App -------------------------------------------------------------
     app_port: int = 8080
 

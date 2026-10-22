@@ -12,15 +12,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, runlog
+from . import auth, kg_client, runlog
 from .config import get_settings
 from .llm_client import LLMError, check_health, generate_draft
 from .models import (
     DraftRequest,
     DraftResponse,
     HealthResponse,
+    LLMDraft,
     LoginRequest,
     LoginResponse,
+    Reference,
 )
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -61,9 +63,10 @@ configure_logging()
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(
-        "RC Copilot starting | vllm_base_url=%s model=%s debug=%s",
+        "RC Copilot starting | vllm_base_url=%s model=%s rc_kg=%s debug=%s",
         settings.vllm_base_url,
         settings.vllm_model_name,
+        settings.rc_kg_url or "off",
         settings.debug,
     )
     if settings.debug:
@@ -168,9 +171,14 @@ async def draft(request: DraftRequest):
     # output strategy worked, so this draft can be explained afterwards.
     trace: dict = {}
 
+    # Ground the draft in the RC website. Never fatal: without it the draft is
+    # produced exactly as before, with a caveat saying so.
+    kg = await kg_client.retrieve(request.ticket_text)
+
     try:
         llm_draft, model_name = await generate_draft(
-            request.ticket_text, request.extra_instructions, trace
+            request.ticket_text, request.extra_instructions, trace,
+            kg_context=kg.context, kg_low_confidence=kg.low_confidence,
         )
     except LLMError as exc:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -201,18 +209,38 @@ async def draft(request: DraftRequest):
             content={"error": exc.message, "detail": exc.detail},
         )
 
+    references = []
+    if kg.status == "ok":
+        fields, refs = await kg_client.apply_citations(llm_draft.model_dump(), kg)
+        llm_draft = LLMDraft(**fields)
+        references = [Reference(**r) for r in refs]
+        if kg.low_confidence and not references:
+            llm_draft.caveats.append(
+                "No RC website page closely matched this ticket; the reply is "
+                "not backed by RC documentation.")
+    else:
+        llm_draft = LLMDraft(**kg_client.strip_citations(llm_draft.model_dump()))
+    if kg.status == "unavailable":
+        llm_draft.caveats.append(
+            "The RC knowledge graph was unavailable (%s), so this draft was not "
+            "checked against the RC website and has no links." % kg.detail)
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     response = DraftResponse.from_llm_draft(llm_draft, model_name, elapsed_ms)
+    response.references = references
+    response.kg_status = kg.status
 
     logger.info(
         "draft ok | id=%s input_chars=%d confidence=%.2f label=%s steps=%d "
-        "caveats=%d latency_ms=%d model=%s",
+        "caveats=%d references=%d kg=%s latency_ms=%d model=%s",
         request_id,
         len(request.ticket_text),
         response.confidence,
         response.confidence_label,
         len(response.suggested_steps),
         len(response.caveats),
+        len(response.references),
+        response.kg_status,
         elapsed_ms,
         model_name,
     )
@@ -242,6 +270,7 @@ async def draft(request: DraftRequest):
 async def health():
     settings = get_settings()
     reachable, model_ids, detail = await check_health()
+    kg_state, kg_detail = await kg_client.health()
 
     if not reachable:
         logger.warning("health check failed | %s", detail)
@@ -256,6 +285,8 @@ async def health():
             vllm_base_url=settings.vllm_base_url,
             configured_model=settings.vllm_model_name,
             detail=detail,
+            knowledge_graph=kg_state,
+            knowledge_graph_detail=kg_detail,
         )
 
     model_available = settings.vllm_model_name in model_ids if model_ids else None
@@ -272,6 +303,8 @@ async def health():
             else "Server is up, but it is not serving '%s'."
             % settings.vllm_model_name
         ),
+        knowledge_graph=kg_state,
+        knowledge_graph_detail=kg_detail,
     )
 
 

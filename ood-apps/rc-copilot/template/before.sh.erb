@@ -16,3 +16,7 @@ export password="$(create_passwd)"
 
 # vLLM stays on loopback — only rc-copilot talks to it.
 export VLLM_PORT=$(find_port)
+
+# rc_kg (the RC website knowledge graph) also stays on loopback; only
+# rc-copilot talks to it.
+export RC_KG_PORT=$(find_port)

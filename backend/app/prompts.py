@@ -126,10 +126,46 @@ researcher, and they must not appear verbatim in "draft_response".
 """
 
 
+# Appended when rc_kg returned website sections for this ticket. It sits
+# between the ticket and the engineer's instructions, so those stay last. The
+# citation rule is what keeps links honest: markers are swapped for exact URLs
+# after generation, and any URL the model writes itself is checked and dropped
+# if it was not retrieved.
+KG_CONTEXT_TEMPLATE = """\
+
+--- RC WEBSITE SOURCES ---
+These sections were retrieved from rc.northeastern.edu for this ticket. They
+are Northeastern's own documentation, so facts in them (partition names and
+limits, paths, policies, how to request things) are not "invented" -- use them.
+
+{context}
+--- END RC WEBSITE SOURCES ---
+
+How to use the sources:
+- Use a source only if it is actually relevant to this ticket; ignore the rest.
+- When a step or the reply relies on a source, cite it right after the claim as
+  [S1] or [S1, S3]. Cite in "suggested_steps" and "draft_response" alike.
+- NEVER write a URL yourself. Citations are turned into exact links afterwards.
+- Do not cite a source for something it does not say.
+- If the sources do not cover the problem, answer from general HPC knowledge
+  without citing, and say in "caveats" that no RC page covers it.
+"""
+
+KG_LOW_CONFIDENCE_NOTE = """\
+Note: retrieval matched these sources only weakly. They may well be unrelated
+to this ticket; do not stretch them to fit.
+"""
+
+
 def build_messages(ticket_text: str, json_reminder: bool = False,
-                   extra_instructions: str = ""):
+                   extra_instructions: str = "", kg_context: str = "",
+                   kg_low_confidence: bool = False):
     """Build the chat messages for one drafting request."""
     user_content = USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
+    if kg_context:
+        user_content += KG_CONTEXT_TEMPLATE.format(context=kg_context.strip())
+        if kg_low_confidence:
+            user_content += KG_LOW_CONFIDENCE_NOTE
     if extra_instructions and extra_instructions.strip():
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(
             extra_instructions=extra_instructions.strip())

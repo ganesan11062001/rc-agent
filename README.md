@@ -46,6 +46,22 @@ and the **model runs in the user's own Slurm allocation**.
 
 **Nothing is ever submitted automatically.** A human reviews and clicks Update.
 
+### Grounded in the RC website
+
+Each ticket is also matched against the rc.northeastern.edu website, served
+from a Neo4j knowledge graph by [rc_kg](../rc_kg) in the same job. The most
+relevant sections go into the prompt as numbered sources; the model cites them
+as `[S1]`, and the backend turns those into a numbered **References** block in
+the reply (and a Sources line in the steps) with the exact page links. The
+model never writes a URL: one it writes anyway is checked against what was
+retrieved and removed if it is not there, with a caveat saying so.
+
+rc_kg starts automatically with the session and needs no setup beyond a graph
+snapshot (`/projects/rc/projects/rc_kg/scripts/build_graph.sh`, run once). If
+it is missing or still loading, drafts work exactly as before, with a caveat
+that they were not checked against the website. `/api/health` reports it as
+`knowledge_graph`.
+
 ---
 
 ## Quick start

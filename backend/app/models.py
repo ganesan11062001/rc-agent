@@ -45,12 +45,25 @@ class LLMDraft(BaseModel):
     draft_response: str
 
 
+class Reference(BaseModel):
+    """One RC website page cited in the draft, numbered as in the reply."""
+
+    n: int
+    title: str
+    url: str
+
+
 class DraftResponse(LLMDraft):
     """What /api/draft returns: the model's draft plus derived fields."""
 
     confidence_label: str
     model: str
     latency_ms: int
+    # RC website pages the draft cites (already written into draft_response as
+    # a References block), and whether grounding was used at all:
+    # "ok" | "unavailable" | "disabled".
+    references: List[Reference] = Field(default_factory=list)
+    kg_status: str = "disabled"
 
     @classmethod
     def from_llm_draft(
@@ -82,6 +95,10 @@ class HealthResponse(BaseModel):
     model_available: Optional[bool] = None
     available_models: List[str] = Field(default_factory=list)
     detail: Optional[str] = None
+    # "ok" | "loading" | "unreachable" | "disabled" -- separate from `status`,
+    # which stays about the model so existing clients read it unchanged.
+    knowledge_graph: str = "disabled"
+    knowledge_graph_detail: Optional[str] = None
 
 
 # --- JSON schema handed to the server for guided decoding -----------------

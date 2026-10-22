@@ -52,6 +52,7 @@ TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
 OOD_HOST="${OOD_HOST:-ood.explorer.northeastern.edu}"
 OOD_ROUTE="${OOD_ROUTE:-rnode}"
 MODEL="${MODEL:-small}"
+RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
 SESSION_HOURS="${SESSION_HOURS:-3}"
 
 # Token file lives in $HOME (mode 600), never on group-readable /projects.
@@ -87,11 +88,13 @@ chmod 600 "logs/rc-copilot-${SLURM_JOB_ID}.err" 2>/dev/null || true
 # ── cleanup ───────────────────────────────────────────────────────────────────
 VLLM_PID=""
 APP_PID=""
+KG_PID=""
 cleanup() {
   echo
   echo "shutting down..."
   [ -n "$APP_PID" ]  && kill "$APP_PID"  2>/dev/null
   [ -n "$VLLM_PID" ] && kill "$VLLM_PID" 2>/dev/null
+  [ -n "$KG_PID" ]   && kill "$KG_PID"   2>/dev/null   # stops its Neo4j too
   wait 2>/dev/null
 }
 trap cleanup EXIT INT TERM
@@ -101,6 +104,21 @@ source "$TM_ROOT/cluster/env.sh"
 
 echo "=== node: $NODE | job: $SLURM_JOB_ID ==="
 nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
+
+# ── rc_kg (RC website knowledge graph), loopback only ────────────────────────
+# Started first: it is CPU-only and ready in 1-2 minutes, so it is up
+# by the time vLLM has loaded. See ood-apps/rc-copilot/template/script.sh.erb.
+if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
+  RC_KG_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  export RC_KG_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+  echo "=== starting rc_kg on 127.0.0.1:${RC_KG_PORT} ==="
+  "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" \
+    > "logs/rc_kg-${SLURM_JOB_ID}.out" 2>&1 &
+  KG_PID=$!
+  export RC_KG_URL="http://127.0.0.1:${RC_KG_PORT}"
+else
+  echo "=== rc_kg not found at ${RC_KG_ROOT}; drafts will not be grounded ==="
+fi
 
 echo "=== starting vLLM (loopback only, port $VLLM_PORT) ==="
 MODEL="$MODEL" PORT="$VLLM_PORT" VLLM_HOST=127.0.0.1 \

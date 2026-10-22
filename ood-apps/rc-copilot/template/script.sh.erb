@@ -6,6 +6,9 @@
 set -uo pipefail
 
 TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+# The RC website knowledge graph. Unset or missing = drafts are not grounded,
+# and everything else works as before.
+RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
 # Files under template/ are rendered with a TemplateBinding, which exposes
 # `context` and `session` but NOT the form attributes as bare locals. Bare
 # `model` raises "undefined local variable" at staging time; only submit.yml.erb
@@ -61,13 +64,34 @@ source "$TM_ROOT/cluster/env.sh"
 
 VLLM_PID=""
 APP_PID=""
+KG_PID=""
 cleanup() {
   echo "shutting down..."
   [ -n "${APP_PID:-}" ]  && kill "$APP_PID"  2>/dev/null
   [ -n "${VLLM_PID:-}" ] && kill "$VLLM_PID" 2>/dev/null
+  # serve_kg.sh traps TERM and stops its Neo4j before exiting.
+  [ -n "${KG_PID:-}" ]   && kill "$KG_PID"   2>/dev/null
   wait 2>/dev/null
 }
 trap cleanup EXIT INT TERM
+
+# ── rc_kg, loopback only ──────────────────────────────────────────────────────
+# Loads the graph snapshot from /projects into a private, node-local Neo4j and
+# serves retrieval to rc-copilot. CPU only, 1-2 min to ready, so it is up
+# before vLLM; until then rc-copilot drafts without grounding and says so.
+KG_LOG="$(pwd)/rc_kg.log"
+if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
+  RC_KG_PORT="${RC_KG_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}"
+  # Loopback is shared by every user on this node, so rc_kg gets a token too.
+  export RC_KG_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+  echo "=== starting rc_kg on 127.0.0.1:${RC_KG_PORT} (log: ${KG_LOG}) ==="
+  RC_KG_ROOT="$RC_KG_ROOT" "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" \
+    > "$KG_LOG" 2>&1 &
+  KG_PID=$!
+  export RC_KG_URL="http://127.0.0.1:${RC_KG_PORT}"
+else
+  echo "=== rc_kg not found at ${RC_KG_ROOT}; drafts will not be grounded ==="
+fi
 
 # ── rc-copilot FIRST ──────────────────────────────────────────────────────────
 # Order matters. OOD publishes the port and shows the session card the moment
@@ -146,6 +170,14 @@ if [ "$READY" = 1 ]; then
 else
   echo; echo "WARNING: vLLM never became ready. rc-copilot stays up so the"
   echo "         session and its logs remain reachable."
+fi
+
+if [ -n "$KG_PID" ]; then
+  if curl -sf --noproxy '*' --max-time 3 "${RC_KG_URL}/health" | grep -q '"status":"ok"'; then
+    echo "=== rc_kg ready: $(curl -sf --noproxy '*' "${RC_KG_URL}/health") ==="
+  else
+    echo "=== rc_kg still loading (see ${KG_LOG}); drafts are grounded as soon as it is up ==="
+  fi
 fi
 
 echo "=== runs are recorded under ${RUN_LOG_DIR} ==="
