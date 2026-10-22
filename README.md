@@ -48,8 +48,9 @@ and the **model runs in the user's own Slurm allocation**.
 
 ### Grounded in the RC website
 
-Each ticket is also matched against the rc.northeastern.edu website, served
-from a Neo4j knowledge graph by [rc_kg](../rc_kg) in the same job. The most
+Each ticket is also matched against the rc.northeastern.edu website and the
+rc-docs.northeastern.edu documentation, served from a Neo4j knowledge graph by
+[rc_kg](../rc_kg) in the same job. The most
 relevant sections go into the prompt as numbered sources; the model cites them
 as `[S1]`, and the backend turns those into a numbered **References** block in
 the reply (and a Sources line in the steps) with the exact page links. The
@@ -62,7 +63,7 @@ it is missing or still loading, drafts work exactly as before, with a caveat
 that they were not checked against the website. `/api/health` reports it as
 `knowledge_graph`.
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.0.0`; see its
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.1.0`; see its
 `API_CONTRACT.md`). The backend checks `api_version` and, on a different major
 version, drafts ungrounded with a caveat naming both versions rather than
 misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the
