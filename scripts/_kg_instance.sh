@@ -206,3 +206,56 @@ kg_watchdog() {
   [ -n "${pids// /}" ] && kill -9 $pids 2>/dev/null
   rm -rf "$d"
 }
+
+# ── fast runtime: site-packages unpacked to node-local disk ──────────────────
+# See build_runtime.sh for why. kg_runtime sets KG_PYTHON (an array: the
+# command to run Python with) and prepends the right paths to PYTHONPATH.
+# Without a current archive it falls back to the venv on /projects, which is
+# correct, only slower.
+
+KG_SITE="$(echo "$RC_KG_ROOT"/.venv/lib/python3*/site-packages)"
+KG_RUNTIME_TAR="$RC_KG_ROOT/vendor/runtime/site-packages.tar"
+
+# Fingerprint of what is installed: dist-info names carry the versions.
+kg_runtime_stamp() {
+  ls -1 "$KG_SITE" 2>/dev/null | grep -E '\.dist-info$' | sha256sum | cut -c1-16
+}
+
+kg_runtime() {
+  KG_PYTHON=("$RC_KG_PY")
+  local stamp; stamp="$(cat "${KG_RUNTIME_TAR%.tar}.stamp" 2>/dev/null)"
+  if [ ! -f "$KG_RUNTIME_TAR" ] || [ -z "$stamp" ]; then
+    kg_log "no runtime archive; importing from /projects (slow: run scripts/build_runtime.sh)"
+    return 0
+  fi
+  if [ "$stamp" != "$(kg_runtime_stamp)" ]; then
+    kg_log "runtime archive is out of date with the venv; importing from /projects (run scripts/build_runtime.sh)"
+    return 0
+  fi
+  # One unpacked copy per user per node per package set, shared by that
+  # user's instances on the node, so only the first one pays for it.
+  local rt="$KG_PARENT/rc_kgrt_${USER}_${stamp}"
+  if [ ! -f "$rt/.complete" ]; then
+    local t0 tmp; t0=$(date +%s); tmp="$rt.tmp.$$"
+    rm -rf "$tmp"; mkdir -p "$tmp" && chmod 700 "$tmp"
+    if tar -C "$tmp" -xf "$KG_RUNTIME_TAR" && touch "$tmp/.complete"; then
+      # Another instance may have finished first; theirs is as good as ours.
+      mv -T "$tmp" "$rt" 2>/dev/null || rm -rf "$tmp"
+      kg_log "unpacked runtime to $rt in $(( $(date +%s) - t0 ))s"
+    else
+      rm -rf "$tmp"
+      kg_log "could not unpack runtime (disk full?); importing from /projects"
+      return 0
+    fi
+  fi
+  # The venv's base interpreter with the local packages instead of the venv's.
+  # -s: no user site-packages from $HOME.
+  KG_PYTHON=("$(readlink -f "$RC_KG_PY")" -s)
+  # After the repo (kg_python_env put it first), so no package shadows our modules.
+  export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$rt"
+  # Unpacked copies for package sets no longer current are removed after a
+  # day, by which time no instance started from them is still running.
+  find "$KG_PARENT" -maxdepth 1 -name "rc_kgrt_${USER}_*" ! -name "rc_kgrt_${USER}_${stamp}" \
+       -user "$USER" -mtime +1 -exec rm -rf {} + 2>/dev/null
+  return 0
+}

@@ -122,3 +122,7 @@ rmdir "$STAGE"
 kg_log "published to $SNAP"
 ls -lh "$SNAP"
 "$RC_KG_PY" -c "import json; m=json.load(open('$SNAP/manifest.json')); print('built', m['built_at'], 'commit', m['git_commit']); print('eval', m['eval'])"
+
+# Keep the serving runtime in step with the venv (a no-op unless packages
+# changed; see build_runtime.sh).
+"$RC_KG_ROOT/scripts/build_runtime.sh" || kg_log "WARNING: runtime archive not refreshed; serving will import from /projects"

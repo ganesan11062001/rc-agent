@@ -57,25 +57,28 @@ WD_PID=$!
 kg_python_env
 cd "$INST" || exit 1          # no repo .env: this process is configured by env only
 
+kg_runtime
+[ -f "$SNAP/manifest.json" ] && export RC_KG_MANIFEST="$SNAP/manifest.json"
+[ -n "${RC_KG_API_TOKEN:-}" ] || kg_log "WARNING: RC_KG_API_TOKEN unset; the API is open to every user on $(hostname -s)"
+
+# The API starts first so its imports (~10 s) overlap Neo4j's load (~20 s);
+# it answers /health with "loading" until the graph is reachable and embedded.
+kg_log "rc-kg API on http://$HOST:$PORT"
+"${KG_PYTHON[@]}" -m uvicorn api.app:app --app-dir "$RC_KG_ROOT" \
+  --host "$HOST" --port "$PORT" --log-level warning &
+API_PID=$!
+
 if [ -f "$SNAP/neo4j.dump" ]; then
   kg_log "loading snapshot $SNAP ($(du -h "$SNAP/neo4j.dump" | cut -f1))"
   kg_instance_load "$SNAP"
   kg_instance_start
-  [ -f "$SNAP/manifest.json" ] && export RC_KG_MANIFEST="$SNAP/manifest.json"
 else
   kg_log "WARNING: no snapshot at $SNAP; building from the live site (~4 min)"
   kg_instance_start
-  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -m ingest.run \
+  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "${KG_PYTHON[@]}" -m ingest.run \
     --report "$INST/ingest_report.json" || kg_die "ingest failed"
-  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -m enrich.run \
+  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "${KG_PYTHON[@]}" -m enrich.run \
     || kg_die "enrich failed"
 fi
 kg_log "neo4j up on $NEO4J_URI"
-
-[ -n "${RC_KG_API_TOKEN:-}" ] || kg_log "WARNING: RC_KG_API_TOKEN unset; the API is open to every user on $(hostname -s)"
-
-kg_log "rc-kg API on http://$HOST:$PORT"
-"$RC_KG_PY" -m uvicorn api.app:app --app-dir "$RC_KG_ROOT" \
-  --host "$HOST" --port "$PORT" --log-level warning &
-API_PID=$!
 wait "$API_PID"

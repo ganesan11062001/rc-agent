@@ -19,7 +19,9 @@ Run:  scripts/serve_kg.sh            (per-job Neo4j from the snapshot + this)
 import hmac
 import json
 import logging
+import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -40,12 +42,34 @@ _ready = threading.Event()
 _warm_error: List[str] = []
 
 
+# serve_kg.sh starts the API while Neo4j is still loading the snapshot (or,
+# with no snapshot, while the graph is still being built), so warm-up waits
+# for a graph that answers and has embeddings rather than failing at once.
+_WARM_TIMEOUT_S = float(os.environ.get("RC_KG_WARM_TIMEOUT", "900"))
+
+
+def _graph_ready() -> bool:
+    try:
+        d = driver()
+        d.verify_connectivity()
+        with d.session(database=get_settings().neo4j_database) as sess:
+            return sess.run(
+                "MATCH (s:Section) WHERE s.embedding IS NOT NULL RETURN count(s) > 0 AS ok"
+            ).single()["ok"]
+    except Exception:                              # noqa: BLE001
+        return False
+
+
 def _warm() -> None:
-    """Connect to Neo4j and load the embedding model before the first query,
+    """Load the embedding model and wait for the graph before the first query,
     so /health turning "ok" means a query will actually be answered."""
     try:
-        driver()
         get_embedder()
+        deadline = time.monotonic() + _WARM_TIMEOUT_S
+        while not _graph_ready():
+            if time.monotonic() > deadline:
+                raise RuntimeError("graph not ready after %.0f s" % _WARM_TIMEOUT_S)
+            time.sleep(1)
         _ready.set()
         logger.info("rc-kg ready")
     except Exception as exc:                       # noqa: BLE001
