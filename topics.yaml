@@ -1,0 +1,149 @@
+# Hand-maintained topic list. Sections are linked to a topic only when one of
+# its aliases appears in the section (whole word, case-insensitive) -- nothing
+# here is generated, and nothing outside this file can become a Topic.
+#
+# Aliases are matched as phrases, so keep them specific: "job" would tag half
+# the site, "out of memory" tags the sections that are actually about it.
+# Written from the page and heading inventory on 2026-10-22.
+
+topics:
+  - name: Explorer cluster
+    description: Northeastern's current HPC cluster, its use and getting started.
+    aliases: [Explorer, Explorer cluster, Explorer HPC, HPC cluster]
+
+  - name: Discovery cluster
+    description: The legacy cluster and migrating from Discovery to Explorer.
+    aliases: [Discovery, Discovery cluster]
+
+  - name: AICR
+    description: The AI Compute Resource cluster, access, training and status.
+    aliases: [AICR, AI Compute Resource]
+
+  - name: Account access
+    description: Requesting and approving cluster accounts, PI sponsorship, connecting.
+    aliases: [account approval, access request, request access, getting access,
+              sponsor, sponsoring, PI approval, connecting to the cluster, ssh,
+              login node, login nodes]
+
+  - name: Slurm
+    description: Submitting and managing batch and interactive jobs with Slurm.
+    aliases: [Slurm, sbatch, srun, salloc, squeue, scancel, sacct, sinfo,
+              batch job, batch jobs, interactive job, interactive session,
+              job script]
+
+  - name: Job arrays and parallel jobs
+    description: Job arrays, parallelizing many small jobs, MPI and scaling.
+    aliases: [job array, job arrays, Slurm arrays, parallelizing, parallel computing,
+              MPI, GNU parallel, scaling]
+
+  - name: Partitions and QoS
+    description: Partitions, queues, partition access requests and limits.
+    aliases: [partition, partitions, QoS, queue, queues, short partition,
+              gpu-interactive, partition access]
+
+  - name: GPUs
+    description: GPU hardware, requesting GPUs, GPU efficiency and monitoring.
+    aliases: [GPU, GPUs, H200, A100, V100, CUDA, gpu partition, GPU hours,
+              GPU utilization, GPU monitor, GPU efficiency]
+
+  - name: Compute hardware
+    description: CPU and GPU node types and hardware on the clusters.
+    aliases: [CPU nodes, GPU nodes, hardware overview, compute nodes, node sharing]
+
+  - name: Job failures and efficiency
+    description: Why jobs are killed or slow, out-of-memory, IdleBot, seff.
+    aliases: [out of memory, OOM, OOM-kill, IdleBot, seff, historical-seff,
+              job efficiency, job termination, unexpected job termination,
+              exit code, memory usage]
+
+  - name: Open OnDemand
+    description: The OOD web portal, its apps, file explorer and desktop.
+    aliases: [Open OnDemand, OOD, OnDemand]
+
+  - name: JupyterLab
+    description: Running Jupyter notebooks on the cluster.
+    aliases: [JupyterLab, Jupyter, notebook, notebooks]
+
+  - name: Conda and Python environments
+    description: Conda, Miniconda and Python virtual environments.
+    aliases: [conda, Miniconda, Miniconda3, Anaconda, virtual environment,
+              conda environment, mamba, pip install, Python]
+
+  - name: Software and modules
+    description: Installed software, Lmod modules and software installation requests.
+    aliases: [module load, module avail, module spider, modules, Lmod,
+              software installation, software installation request,
+              software applications]
+
+  - name: Containers
+    description: Apptainer/Singularity containers on the cluster.
+    aliases: [container, containers, Apptainer, Singularity, .sif, Docker]
+
+  - name: MATLAB
+    description: MATLAB, its licence server and MATLAB Parallel Server.
+    aliases: [MATLAB, MATLAB Parallel Server, license server]
+
+  - name: LLMs and machine learning
+    description: Running PyTorch, open LLMs and Ollama on the cluster.
+    aliases: [PyTorch, LLM, LLMs, Ollama, open LLMs, machine learning, deep learning,
+              TensorFlow]
+
+  - name: Storage
+    description: Research storage options, active and archival, and quotas.
+    aliases: [storage, quota, quotas, active storage, archival storage, /projects,
+              /work, /home, VAST, NESE, tape, storage space request,
+              storage extension]
+
+  - name: Scratch
+    description: The /scratch filesystem, its policy and scheduled purges.
+    aliases: [scratch, /scratch, scratch purge, scratch space]
+
+  - name: Project management
+    description: Managing /projects membership and the project command.
+    aliases: [project command, managing projects, managing /projects, project members]
+
+  - name: Data transfer
+    description: Moving data between clusters and local machines; Globus, scp, rsync.
+    aliases: [Globus, data transfer, transferring data, transferring files, moving files,
+              moving data, scp, rsync, sftp, file transfer]
+
+  - name: Data management plans
+    description: DMPs for funding agencies and encrypted/legacy storage.
+    aliases: [data management plan, DMP, funding agencies, encrypted storage]
+
+  - name: Maintenance and outages
+    description: Scheduled maintenance, the MGHPCC shutdown, outages and status.
+    aliases: [maintenance, maintenance window, annual shutdown, MGHPCC, outage, outages, is down, are down,
+              fully operational, status updates, cluster status, degraded]
+
+  - name: Policies
+    description: Cluster use policies, account continuity, acknowledgements.
+    aliases: [policy, policies, user account continuity, acknowledgements,
+              acknowledge, PI leaves]
+
+  - name: Courses and classroom use
+    description: Using Explorer for courses, course partitions and instructor setup.
+    aliases: [courses, course, classroom, instructor, instructors, students,
+              course partitions, course guide]
+
+  - name: Training and office hours
+    description: RC training events, recordings, office hours and consultations.
+    aliases: [training, workshop, workshops, office hours, consultation, consultations,
+              recordings]
+
+  - name: Getting help
+    description: Submitting a ticket, emailing RC, documentation and service catalog.
+    aliases: [submit a ticket, ticket, rchelp, getting help, get help, service catalog,
+              documentation request, Research Computing Documentation]
+
+  - name: Linux and the shell
+    description: Linux, Bash, file editors and command-line basics.
+    aliases: [Linux, Bash, shell, terminal, file editors, vim, nano, command line]
+
+  - name: Version control and reproducibility
+    description: Git, version control and scientific reproducibility.
+    aliases: [Git, GitHub, version control, reproducibility, scientific reproducibility]
+
+  - name: Checkpointing
+    description: Checkpoint/restart for long-running jobs.
+    aliases: [checkpoint, checkpointing, checkpoint restart]

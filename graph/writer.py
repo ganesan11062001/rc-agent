@@ -58,7 +58,8 @@ SET s.heading          = r.heading,
     s.content_hash     = r.content_hash,
     s.order            = r.order,
     s.char_count       = r.char_count,
-    s.retrievable      = r.retrievable
+    s.retrievable      = r.retrievable,
+    s.duplicate_of     = r.duplicate_of
 MERGE (p)-[:HAS_SECTION]->(s)
 """
 

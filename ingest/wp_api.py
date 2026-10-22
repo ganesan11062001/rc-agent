@@ -6,6 +6,7 @@ stopping early there would silently truncate the corpus.
 """
 
 import html
+import re
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional
@@ -135,3 +136,33 @@ def fetch_event_categories() -> Dict[int, str]:
         logger.info("event category taxonomy not exposed over REST (%s)", exc)
         return {}
     return {int(c["id"]): html.unescape(c.get("name", "")) for c in data}
+
+
+_JSON_ALTERNATE = re.compile(
+    r"""<link[^>]+rel=["']alternate["'][^>]+type=["']application/json["'][^>]+href=["']([^"']+)["']""",
+    re.I,
+)
+
+
+def fetch_from_page(page_url: str, content_type: str) -> Optional[WPItem]:
+    """Recover an item the collection endpoint does not list.
+
+    The `calendar_event` collection omits current events, and a `?slug=` query
+    for them returns []. But each live page advertises its own record in a
+    `<link rel="alternate" type="application/json">`, and fetching that by id
+    returns the full published item. Two requests per item, only for the ones
+    the sitemap has and the API listing does not.
+    """
+    r = session().get(page_url + "/")
+    if r.status_code != 200:
+        logger.warning("sitemap-only %s returned HTTP %d", page_url, r.status_code)
+        return None
+    m = _JSON_ALTERNATE.search(r.text)
+    if not m:
+        logger.warning("sitemap-only %s advertises no REST record", page_url)
+        return None
+    raw, _ = session().get_json(html.unescape(m.group(1)), {"_fields": FIELDS})
+    if raw.get("status") != "publish":
+        logger.warning("sitemap-only %s is %r, not published", page_url, raw.get("status"))
+        return None
+    return WPItem.from_api(raw, content_type)

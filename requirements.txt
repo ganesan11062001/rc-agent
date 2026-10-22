@@ -11,6 +11,8 @@ PyYAML==6.0.3
 python-dotenv==1.2.4
 numpy==2.5.3
 
-# Phase 2+ only. The embedding provider is configurable, so this is the default
-# local option, not a requirement of the ingest.
-# sentence-transformers==3.3.1
+# Phase 2+ (EMBEDDING_PROVIDER=sentence_transformers, the default). Installed
+# and tested 2026-10-22. On a CPU-only node install torch from the CPU index
+# first, or pip pulls ~2 GB of CUDA wheels:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+sentence-transformers==6.2.0

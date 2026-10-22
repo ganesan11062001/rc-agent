@@ -67,6 +67,15 @@ class Settings(BaseSettings):
 
     data_dir: str = "data"
 
+    # --- Serving (set by scripts/serve_kg.sh) -------------------------------
+    # When set, every endpoint except /health needs "Authorization: Bearer".
+    # Loopback is shared by every user on a compute node, so a job that starts
+    # the API also generates a token and hands it to its client.
+    rc_kg_api_token: Optional[str] = None
+    # manifest.json of the snapshot this instance was loaded from, shown by
+    # /health so a client can tell how old the graph is.
+    rc_kg_manifest: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:

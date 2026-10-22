@@ -1,0 +1,107 @@
+# Retrieval eval. Each question is phrased the way a researcher writes a
+# ticket, not the way the site words its headings, so a pass means retrieval
+# bridged the vocabulary gap rather than matched a title.
+#
+# expected_urls are page URLs (no fragment, no trailing slash). A retrieved
+# section counts as a hit if it is on any listed page. List every page that
+# genuinely answers the question; a page that merely mentions the topic does
+# not belong here.
+#
+# Written 2026-10-22 against the page inventory of that date.
+
+questions:
+  - question: "My Slurm job died and sacct says OUT_OF_MEMORY. What should I change?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - question: "My interactive session keeps getting cancelled even though I'm still using it"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - question: "How can I see how much CPU and memory my finished jobs actually used?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/03/27/job-efficiency-historical-seff
+
+  - question: "My GPU job is stuck pending. What are the GPU partition time and job limits?"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+
+  - question: "I need to run jobs longer than 48 hours, how do I get access to the long partition?"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "I'm a new PhD student, how do I get an account on the cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/getting-access
+
+  - question: "How do I copy my files from Explorer over to the AICR cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/aicr/aicr-transferring-data
+
+  - question: "Files disappeared from my scratch directory, are they deleted automatically?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/scratch-space-policy
+
+  - question: "Our lab needs more storage space for a research project"
+    expected_urls:
+      - https://rc.northeastern.edu/research-projects-storage-space-policy
+      - https://rc.northeastern.edu/data-storage-options
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "conda activate fails on Explorer, my environment was built on Discovery"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/06/26/miniconda3-from-discovery-to-explorer
+
+  - question: "How do I start a Jupyter notebook on the cluster from my browser?"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "Can I run a local LLM like llama with Ollama on the HPC?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/03/26/installing-ollama-on-the-hpc-cluster
+
+  - question: "I have thousands of tiny Python tasks, what is the best way to run them?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/10/23/parallelizing-multiple-small-jobs
+
+  - question: "A professor wants to use the cluster for a class this semester"
+    expected_urls:
+      - https://rc.northeastern.edu/courses-on-explorer
+
+  - question: "My PI is leaving Northeastern, what happens to our account and data?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/user-account-continuity-policy
+
+  - question: "How should I acknowledge Research Computing in my paper?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/acknowledgements
+
+  - question: "I need a data management plan for an NSF grant proposal"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/data-management-plan-for-funding-agencies
+
+  - question: "How do I add a student to my /projects directory?"
+    expected_urls:
+      - https://rc.northeastern.edu/2026/08/25/managing-projects-through-open-ondemand-ood
+
+  - question: "Will the cluster be unavailable during the annual data center shutdown?"
+    expected_urls:
+      - https://rc.northeastern.edu/cluster-maintenance
+      - https://rc.northeastern.edu/2026/04/28/mghpcc-annual-shutdown-monday-june-15-friday-june-19
+      - https://rc.northeastern.edu/2025/04/30/mghpcc-annual-shutdown-monday-june-2-thursday-june-5
+
+  - question: "Can I talk to someone from RC in person about my workflow?"
+    expected_urls:
+      - https://rc.northeastern.edu/getting-help
+      - https://rc.northeastern.edu/getting-help-2
+
+  - question: "What GPU models are available on Explorer?"
+    expected_urls:
+      - https://rc.northeastern.edu/compute
+      - https://rc.northeastern.edu/2025/04/30/all-about-explorer-and-the-new-h200-gpus
+      - https://rc.northeastern.edu/2025/07/29/all-public-gpus-now-on-explorer
+
+  - question: "I need a software package installed on the cluster"
+    expected_urls:
+      - https://rc.northeastern.edu/service-catalog

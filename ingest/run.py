@@ -43,6 +43,8 @@ class Report:
     anchor_kinds: Dict[str, int] = field(default_factory=dict)
     pages_without_any_anchor: List[str] = field(default_factory=list)
     sitemap_vs_api: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+    recovered_from_sitemap: List[str] = field(default_factory=list)
+    duplicate_sections: Dict[str, int] = field(default_factory=dict)
     internal_links: Dict[str, int] = field(default_factory=dict)
     redirected_links: Dict[str, str] = field(default_factory=dict)
     broken_internal_links: List[str] = field(default_factory=list)
@@ -67,6 +69,47 @@ def _is_past(iso_date: str) -> bool:
     if d.tzinfo is None:
         d = d.replace(tzinfo=timezone.utc)
     return d < datetime.now(timezone.utc)
+
+
+_TYPE_RANK = {"page": 0, "post": 1, "calendar_event": 2}
+
+
+def _mark_duplicates(rows: List[Dict], by_url: Dict[str, "wp_api.WPItem"]
+                     ) -> Dict[str, int]:
+    """Keep one retrievable copy of each repeated section.
+
+    Footers ("How Can Research Computing Support You?" on 26 pages) and staff
+    bios repeated on every event page would otherwise fill the top-k with the
+    same text under different URLs. All copies stay in the graph, so links and
+    NEXT chains are intact; only the canonical one is retrievable, and the rest
+    point at it via `duplicate_of`. Canonical = a retrievable copy on a `page`
+    in preference to a post or event, then the shallowest URL.
+    """
+    groups: Dict[str, List[Dict]] = defaultdict(list)
+    for r in rows:
+        r["duplicate_of"] = None
+        groups[r["content_hash"]].append(r)
+
+    hidden = 0
+    repeated = 0
+    for copies in groups.values():
+        if len(copies) < 2:
+            continue
+        repeated += 1
+        copies.sort(key=lambda r: (
+            not r["retrievable"],
+            _TYPE_RANK.get(by_url[r["page_url"]].content_type, 9),
+            r["page_url"].count("/"),
+            r["page_url"],
+            r["order"],
+        ))
+        canonical = copies[0]["section_id"]
+        for r in copies[1:]:
+            r["duplicate_of"] = canonical
+            if r["retrievable"]:
+                hidden += 1
+            r["retrievable"] = False
+    return {"repeated_texts": repeated, "copies_hidden_from_retrieval": hidden}
 
 
 def _resolve_internal(
@@ -137,6 +180,29 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
         api_urls[item.content_type].add(url)
     rep.sitemap_vs_api = sitemap_mod.compare(dict(api_urls), sm)
 
+    # The cross-check is only useful if it changes what gets loaded: fetch
+    # what the sitemap has and the API listing does not.
+    recovered: Set[str] = set()
+    for ctype, diff in rep.sitemap_vs_api.items():
+        if ctype not in wp_api.CONTENT_TYPES:
+            continue
+        for url in diff["only_in_sitemap"]:
+            it = wp_api.fetch_from_page(url, ctype)
+            if not it:
+                rep.warnings.append("sitemap-only %s could not be recovered" % url)
+                continue
+            key = normalize(it.link) or it.link
+            if key in by_url:
+                continue
+            items.append(it)
+            by_url[key] = it
+            by_wp[(it.content_type, it.wp_id)] = it
+            known_urls.add(key)
+            recovered.add(key)
+    rep.recovered_from_sitemap = sorted(recovered)
+    if recovered:
+        logger.info("recovered %d sitemap-only item(s) by id", len(recovered))
+
     # --- write Page nodes ------------------------------------------------
     page_rows = [
         {
@@ -147,7 +213,7 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
             "published": it.published,
             "last_modified": it.last_modified,
             "slug": it.slug,
-            "source": "wp_api",
+            "source": "sitemap" if url in recovered else "wp_api",
         }
         for url, it in by_url.items()
     ]
@@ -289,6 +355,7 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
         if page_anchor_kinds and anchors_mod.ANCHOR_ID not in page_anchor_kinds:
             rep.pages_without_any_anchor.append(url)
 
+    rep.duplicate_sections = _mark_duplicates(section_rows, by_url)
     writer.upsert_sections(section_rows)
     writer.link_next(next_rows)
     writer.link_to_pages(links_to_rows)
