@@ -8,16 +8,20 @@ clearly better? -- rather than "is the similarity above some number".
 
 Why relative, measured on this corpus (2026-10-22): an absolute cosine
 threshold separates supporting from non-supporting sections poorly (AUC 0.76
-for ticket-style claims; any threshold that keeps 90% of correct citations
-misses most wrong ones), because similarity levels differ a lot between
-pages. Ranking the cited source against the other retrieved ones, with a
-small bonus for shared distinctive terms (`seff`, `/scratch`, partition
-names -- what embeddings blur), puts the true source first for 92% of claims;
-flagging only when another source wins by >= 0.06 false-flags 1.6% of correct
-citations and catches 96% of citations to the wrong source. Re-checked on
-held-out claims through this module: 2.6% false flags, 94-95% caught. Those
-claims were derived from section text; real model paraphrases will be
-somewhat harder -- validate on real drafts (eval/citation_review.py).
+for ticket-style claims), because similarity levels differ a lot between
+pages. So a citation is flagged only when a section on another retrieved page
+beats the cited page's best retrieved section by >= 0.06 on cosine + 0.3 x
+shared distinctive terms (`seff`, `/scratch`, partition names -- what
+embeddings blur) AND on cosine alone. Terms alone are not enough: the OOM page
+mentions seff and the seff page mentions memory requests, and term overlap
+alone flagged correct citations of both.
+
+Measured by eval/citation_check.py:
+  hand-labelled draft sentences  1/11 correct citations flagged, 13/13 wrong caught
+  held-out reworded sentences    2.3% flagged, 90% wrong caught
+Known weakness: a short section that says the thing tersely ("#SBATCH
+--mem=3G") can lose to a longer page that discusses the topic; that is the
+one hand-labelled false flag.
 
 The verdicts are advisory. A flagged citation is reported, never rewritten:
 a human reviews every draft, and a confident silent swap would be worse than
@@ -38,10 +42,12 @@ from .graphrag import _STOPWORDS
 
 LEXICAL_WEIGHT = 0.3
 MARGIN = 0.06
-# Below this combined score the cited section shares nothing meaningful with
-# the claim, even if no other source does better (e.g. a citation tacked onto
-# a greeting). 99% of correct citations score >= 0.68 on the held-out set.
-FLOOR = 0.65
+# Below this the cited page shares nothing meaningful with the claim, even if
+# no other page does better (e.g. a citation tacked onto a greeting). Swept
+# 0.50-0.65 on both eval sets: it changes 1 catch in 130 and no false flags
+# there, but 0.65 flagged a correctly cited, tersely worded draft sentence
+# (score 0.64), so it is set low.
+FLOOR = 0.55
 
 _MARKER = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*[A-Za-z0-9]")
@@ -126,13 +132,20 @@ def check(texts: List[str], refs: Dict[str, str]) -> List[Verdict]:
         for ref in cited:
             if ref not in scored:
                 continue                      # unknown refs are render()'s job
-            total, cos = scored[ref]
-            # A better section on the same page is not a wrong citation: the
-            # reader lands on the right page either way.
+            # The reader lands on the cited page, so the page is credited with
+            # its best retrieved section, and same-page sections are not rivals.
             page = _page(refs[ref])
+            mine = [r for r in scored if _page(refs[r]) == page]
+            total = max(scored[r][0] for r in mine)
+            cos = max(scored[r][1] for r in mine)
             rivals = [r for r in scored if r not in cited and _page(refs[r]) != page]
             best_ref = max(rivals, key=lambda r: scored[r][0]) if rivals else None
-            if best_ref and scored[best_ref][0] - total >= MARGIN:
+            # Both signals must agree. Shared terms alone are not enough: on
+            # this site the OOM page mentions seff and the seff page mentions
+            # memory requests, so term overlap prefers the other page for
+            # claims both pages support.
+            if best_ref and scored[best_ref][0] - total >= MARGIN \
+                    and scored[best_ref][1] > cos:
                 verdicts.append(Verdict(ref, claim, "better_source", round(total, 3),
                                         best_ref, round(scored[best_ref][0], 3)))
             elif total < FLOOR:
