@@ -105,3 +105,41 @@ questions:
   - question: "I need a software package installed on the cluster"
     expected_urls:
       - https://rc.northeastern.edu/service-catalog
+
+  # Short phrasings, added 2026-10-22 after "How do I start Jupyter on the
+  # cluster?" missed the OOD page while the longer wording above passed.
+  # Tickets are often this terse.
+  - question: "How do I start Jupyter on the cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "jupyter notebook"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "gpu partition limits"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+
+  - question: "scratch files deleted"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/scratch-space-policy
+
+  - question: "conda env from discovery broken"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/06/26/miniconda3-from-discovery-to-explorer
+
+  - question: "need more storage"
+    expected_urls:
+      - https://rc.northeastern.edu/research-projects-storage-space-policy
+      - https://rc.northeastern.edu/data-storage-options
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "matlab"
+    expected_urls:
+      - https://rc.northeastern.edu/training/research-computing-spring-training
+      - https://rc.northeastern.edu/2025/11/13/matlab-license-server-update-thursday-november-13
+
+  - question: "globus"
+    expected_urls:
+      - https://rc.northeastern.edu/2026/07/23/globus-maintenance-monday-july-27-9-a-m-5-p-m

@@ -16,9 +16,10 @@ embeddings blur) AND on cosine alone. Terms alone are not enough: the OOM page
 mentions seff and the seff page mentions memory requests, and term overlap
 alone flagged correct citations of both.
 
-Measured by eval/citation_check.py:
-  hand-labelled draft sentences  1/11 correct citations flagged, 13/13 wrong caught
-  held-out reworded sentences    2.3% flagged, 90% wrong caught
+Measured by eval/citation_check.py (re-run whenever retrieval changes, since
+it changes which sources the check chooses between):
+  hand-labelled draft sentences  1/11 correct citations flagged, 11/11 wrong caught
+  held-out reworded sentences    3.4% flagged, 87% wrong caught (178 each)
 Known weakness: a short section that says the thing tersely ("#SBATCH
 --mem=3G") can lose to a longer page that discusses the topic; that is the
 one hand-labelled false flag.

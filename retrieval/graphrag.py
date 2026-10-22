@@ -95,7 +95,15 @@ def _fulltext_query(text: str) -> str:
         if len(low) < 3 or low in _STOPWORDS or low.isdigit() or low in seen:
             continue
         seen.add(low)
-        terms.append(_LUCENE_SPECIAL.sub(r"\\\1", tok))
+        esc = _LUCENE_SPECIAL.sub(r"\\\1", tok)
+        # The index tokenizes without stemming, and the site writes compounds
+        # as one word, so "Jupyter" never matched "JupyterLab", nor "partition"
+        # "partitions". A prefix form catches both; the exact form stays so an
+        # exact hit still scores higher.
+        if len(low) >= 4 and tok.isalnum():
+            terms.append("%s OR %s*" % (esc, esc))
+        else:
+            terms.append(esc)
         if len(terms) >= _MAX_FULLTEXT_TERMS:
             break
     return " OR ".join(terms)

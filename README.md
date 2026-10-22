@@ -8,8 +8,9 @@ the page that actually supports the answer they give a researcher.
 
 > **Status:** Phases 1–3 and 5 are built and verified against the live site
 > (2026-10-22): ingestion, topics and embeddings, GraphRAG retrieval with an
-> HTTP API for TicketMate, and a retrieval eval (Hit@5 = 1.00, MRR = 0.87 on
-> 22 ticket-style questions). See [Phase status](#phase-status).
+> HTTP API for TicketMate, a retrieval eval (Hit@5 = 1.00, MRR = 0.83 on 30
+> ticket-style questions) and a citation-support check. Not yet seen: drafts
+> from a real model. See [Phase status](#phase-status).
 
 ---
 
@@ -23,6 +24,10 @@ the page that actually supports the answer they give a researcher.
    URL the model writes anyway is checked against what was retrieved and
    stripped if it is not there. An LLM that invents a plausible-looking RC
    URL is worse than one that says "I don't know".
+
+   Beyond the URL itself, `retrieval/support.py` checks that each `[S#]` is
+   attached to a sentence its page actually says, and flags (never rewrites)
+   citations where another retrieved page fits clearly better.
 
 ---
 
@@ -59,15 +64,37 @@ per instance and never touches `/projects`. Set `RC_KG_API_TOKEN` to require
 a bearer token: loopback is shared by everyone on a compute node. With no
 snapshot it falls back to building one from the live site.
 
+Measured with three instances on one node: ~1.2 GB RAM each (Neo4j 660 MB,
+API 575 MB), 8 MB of local disk, retrieval 0.14 s median per query.
+
+**Crashes do not leave debris.** Each instance dir records its owner (pid and
+process start time). A watchdog stops Neo4j and the API and removes the dir
+if `serve_kg.sh` is killed outright; if the watchdog dies too (the job's
+whole cgroup killed), the next start on that node sweeps the user's stale
+dirs. `scripts/kg_ps.sh` lists instances as live/STALE; `--clean` removes the
+stale ones. Live instances and other users' dirs are never touched.
+
+**Startup is ~35 s** (63 s the first time on a node). Importing the Python
+stack straight from `/projects` took 85–110 s, nearly all of it ~55,000 NFS
+metadata calls; `scripts/build_runtime.sh` packs site-packages into one
+archive that serving unpacks to local disk once per node, and the API's
+imports overlap Neo4j's load. What remains is Neo4j itself (~26 s, three JVM
+starts). Without a current archive, serving falls back to the venv — slower,
+never wrong.
+
 **TicketMate starts it automatically**: `ood-apps/rc-copilot/template/script.sh.erb`
 and `cluster/serve_stack.sbatch` launch `serve_kg.sh` before vLLM, with a
 fresh port and token, and point the backend at it (`RC_KG_URL`,
-`RC_KG_API_TOKEN`). It is ready in 1–2 minutes — Neo4j loads the snapshot in
-~20 s; the rest is `import transformers` probing optional packages over NFS
-(measured 25–58 s) — while vLLM is still loading weights.
+`RC_KG_API_TOKEN`). It is ready well before vLLM finishes loading weights;
+until then drafts are produced ungrounded and say so.
 
 To refresh the graph after the website changes, re-run `build_graph.sh`; new
-TicketMate sessions pick it up.
+TicketMate sessions pick it up. Running sessions keep the graph they loaded
+(no reload, no dropped connections), so a session can be at most one build
+out of date.
+
+`scripts/with_kg.sh` runs any module against a private copy of the snapshot,
+e.g. `scripts/with_kg.sh -m eval.run`.
 
 ## Setup (development)
 
@@ -275,6 +302,29 @@ above its sign-off; the steps get a Sources line, since they go to work notes
 on their own. If rc_kg is down, the draft is produced as before with a caveat
 saying it was not checked against the website.
 
+The same call sets `check_support`, and every citation whose page does not
+seem to say the sentence becomes a caveat for the engineer, naming the page
+that fits better when there is one. Measured by `eval/citation_check.py`: on
+hand-labelled draft sentences 1/11 correct citations flagged and 11/11 wrong
+ones caught; on 178 held-out reworded sentences 3.4% flagged, 87% caught.
+Those are proxies — real drafts are the test (next section).
+
+### Checking real drafts
+
+`eval/citation_review.py` reads TicketMate's run logs
+(`/scratch/$USER/rc_copilot_runs`, which keep the exact prompt and the raw
+model output), reports how often grounded drafts cite, how many citations are
+flagged, `[S#]` markers naming no source and URLs the model wrote, and writes
+every citation to a CSV (mode 600 — it quotes drafts) with an empty
+`human_label` column:
+
+```bash
+scripts/with_kg.sh -m eval.citation_review
+```
+
+Label a sample of rows right/wrong and the support check's real error rate on
+your model is known rather than assumed.
+
 Ticket text never leaves the cluster: embeddings run in-process, and the API
 binds `127.0.0.1`.
 
@@ -287,7 +337,12 @@ Re-run `python -m enrich.run` after editing; topics removed from the file are
 removed from the graph.
 
 **Eval questions** go in `eval/questions.yaml` as `question` + `expected_urls`
-(page URLs). Phrase them like tickets, not like headings.
+(page URLs). Phrase them like tickets, not like headings — and include terse
+ones: "How do I start Jupyter on the cluster?" failed while a longer wording
+passed, until keyword search learned to prefix-match (`Jupyter*` →
+JupyterLab). **Citation cases** go in `eval/citation_cases.yaml`; only label a
+page unsupported after reading it (a "staff bio" heading turned out to hold
+seff and job-array tips).
 
 ---
 
@@ -297,9 +352,9 @@ removed from the graph.
 |---|---|
 | 1 — ingestion via the WP REST API | **done**, verified against the live site |
 | 2 — topics and embeddings | **done**: 30 topics, 1171 MENTIONS, all 380 sections embedded |
-| 3 — GraphRAG retrieval + HTTP API | **done**: `/retrieve`, `/cite`, `/answer`; `/answer` tested against a stub LLM only |
+| 3 — GraphRAG retrieval + HTTP API | **done**: `/retrieve`, `/cite` (+ citation-support check), `/answer`; tested end to end through TicketMate against a stub model only |
 | 4 — incremental sync and link health | `modified_after`, `content_hash` and `embedded_key` are in place; no runner |
-| 5 — evaluation (Hit@5, MRR) | **done**: Hit@1 0.77, Hit@5 1.00, MRR 0.87 on 22 questions |
+| 5 — evaluation | **done**: retrieval Hit@1 0.70, Hit@5 1.00, MRR 0.83 on 30 questions; citation check as above; `citation_review.py` for real drafts |
 
 ### Known gaps
 
@@ -309,8 +364,14 @@ removed from the graph.
   reliable embedding. Merging them into their parent is proposed, not done.
 - 6 internal links are genuinely broken (5 are PDFs under `/files/2025/08/`).
 - `/aicr/rc-internal` also yields no sections (same dashboard plugin).
-- The eval set is 22 questions written by one person from the page
-  inventory. It shows retrieval works; it is too small to tune weights on.
+- The eval sets (30 retrieval questions, 10 citation cases) were written by
+  one person from the page inventory. They catch regressions; they are too
+  small to tune weights on.
+- No draft from a real model (GLM/Qwen) has been checked yet: how well it
+  follows the `[S#]` rules is unknown until `citation_review.py` runs on a
+  real session's logs.
+- The citation check can flag a correct citation of a short, terse section
+  ("#SBATCH --mem=3G") when a longer page discusses the same topic.
 - Nothing rebuilds the snapshot on a schedule yet: re-run
   `scripts/build_graph.sh` when the site changes (a cron'd sbatch would do).
 
@@ -324,8 +385,8 @@ removed from the graph.
 | `graph/` | Neo4j driver, schema (constraints + indexes), batched writer |
 | `topics.yaml` | The closed topic vocabulary |
 | `enrich/` | Phase 2 — topic matching and embedding |
-| `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement, CLI |
+| `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement and support check, CLI |
 | `api/` | FastAPI service for TicketMate |
-| `eval/` | Eval questions and Hit@k / MRR runner |
-| `scripts/` | `build_graph.sh`, `serve_kg.sh` (and their `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
-| `tests/` | 63 unit tests: sectioning, anchors, URLs, duplicates, topics, citations |
+| `eval/` | Retrieval eval (`run.py`), citation-check eval (`citation_check.py`), real-draft review (`citation_review.py`) |
+| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
+| `tests/` | 72 unit tests: sectioning, anchors, URLs, duplicates, topics, citations, claims, query building |
