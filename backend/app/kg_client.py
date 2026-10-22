@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+# The rc_kg API major version this client is written against; see
+# rc_kg/API_CONTRACT.md. A different major means fields this file reads may
+# have changed, so grounding is switched off rather than guessed at.
+EXPECTED_API_MAJOR = "1"
+_compatible: Optional[bool] = None       # cached once rc_kg has answered
+
 # The reply is sent as written, so its sign-off is fixed by the prompt.
 # References go above it rather than after "Research Computing".
 _SIGN_OFF = "Best regards,\nResearch Computing"
@@ -93,10 +99,38 @@ def _why(exc: Exception) -> str:
     return str(getattr(exc, "reason", exc))
 
 
+def _version_problem(h: Dict[str, Any]) -> Optional[str]:
+    got = str(h.get("api_version") or "")
+    if got.split(".")[0] != EXPECTED_API_MAJOR:
+        return ("rc_kg API version %s, but this TicketMate needs %s.x"
+                % (got or "unknown", EXPECTED_API_MAJOR))
+    return None
+
+
+async def _check_compatible() -> Optional[str]:
+    """None if rc_kg speaks our major version, else why not. Checked once
+    per process: the rc_kg serving a job does not change under it."""
+    global _compatible
+    if _compatible:
+        return None
+    h = await _acall("/health", timeout=3.0)
+    problem = _version_problem(h)
+    if problem is None and h.get("status") == "ok":
+        _compatible = True
+    return problem
+
+
 async def retrieve(ticket_text: str) -> KGContext:
     s = get_settings()
     if not s.rc_kg_url:
         return KGContext(status="disabled")
+    try:
+        problem = await _check_compatible()
+    except Exception as exc:                       # noqa: BLE001
+        return KGContext(status="unavailable", detail=_why(exc))
+    if problem:
+        logger.error("rc_kg incompatible: %s", problem)
+        return KGContext(status="unavailable", detail=problem)
     try:
         res = await _acall("/retrieve", {"query": ticket_text, "k": s.rc_kg_k})
     except Exception as exc:                       # noqa: BLE001
@@ -111,7 +145,7 @@ async def retrieve(ticket_text: str) -> KGContext:
 
 
 async def health() -> Tuple[str, Optional[str]]:
-    """("ok"|"loading"|"unreachable"|"disabled", detail)."""
+    """("ok"|"loading"|"unreachable"|"incompatible"|"disabled", detail)."""
     s = get_settings()
     if not s.rc_kg_url:
         return "disabled", None
@@ -119,6 +153,9 @@ async def health() -> Tuple[str, Optional[str]]:
         h = await _acall("/health", timeout=3.0)
     except Exception as exc:                       # noqa: BLE001
         return "unreachable", _why(exc)
+    problem = _version_problem(h)
+    if problem:
+        return "incompatible", problem
     if h.get("status") == "ok":
         built = (h.get("snapshot") or {}).get("built_at")
         return "ok", ("graph built %s" % built) if built else None

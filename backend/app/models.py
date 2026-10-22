@@ -95,7 +95,7 @@ class HealthResponse(BaseModel):
     model_available: Optional[bool] = None
     available_models: List[str] = Field(default_factory=list)
     detail: Optional[str] = None
-    # "ok" | "loading" | "unreachable" | "disabled" -- separate from `status`,
+    # "ok" | "loading" | "unreachable" | "incompatible" | "disabled" -- separate from `status`,
     # which stays about the model so existing clients read it unchanged.
     knowledge_graph: str = "disabled"
     knowledge_graph_detail: Optional[str] = None

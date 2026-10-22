@@ -62,6 +62,13 @@ it is missing or still loading, drafts work exactly as before, with a caveat
 that they were not checked against the website. `/api/health` reports it as
 `knowledge_graph`.
 
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.0.0`; see its
+`API_CONTRACT.md`). The backend checks `api_version` and, on a different major
+version, drafts ungrounded with a caveat naming both versions rather than
+misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the
+integration end to end: grounding and citations against a real rc_kg, an
+incompatible rc_kg refused, and rc_kg down.
+
 ---
 
 ## Quick start
