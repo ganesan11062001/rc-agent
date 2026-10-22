@@ -319,7 +319,9 @@ every citation to a CSV (mode 600 — it quotes drafts) with an empty
 `human_label` column:
 
 ```bash
-scripts/with_kg.sh -m eval.citation_review
+# with a TicketMate session running a real model (its log shows node:port):
+python3 eval/draft_batch.py --url http://<node>:<port>    # 30 eval tickets
+scripts/with_kg.sh -m eval.citation_review --only RCKG-EVAL
 ```
 
 Label a sample of rows right/wrong and the support check's real error rate on

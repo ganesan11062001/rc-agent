@@ -48,11 +48,13 @@ def _texts(raw: str) -> Optional[List[str]]:
             + list(d.get("suggested_steps", [])) + list(d.get("caveats", [])))
 
 
-def review(run_dir: Path, out_csv: Path) -> Dict:
+def review(run_dir: Path, out_csv: Path, only: str = "") -> Dict:
     stats: Counter = Counter()
     verdicts: Counter = Counter()
     rows = []
     for path in sorted(run_dir.rglob("*.json")):
+        if only and not path.parent.name.startswith(only.upper()):
+            continue
         try:
             run = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -112,6 +114,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("run_dir", nargs="?", default=str(default))
     ap.add_argument("--out", help="CSV path (default: <run_dir>/citation_review.csv)")
+    ap.add_argument("--only", default="", help="ticket-number prefix, e.g. RCKG-EVAL")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("neo4j").setLevel(logging.ERROR)
@@ -119,7 +122,8 @@ def main() -> int:
     if not run_dir.is_dir():
         print("no run logs at %s" % run_dir, file=sys.stderr)
         return 1
-    print(json.dumps(review(run_dir, Path(args.out or run_dir / "citation_review.csv")), indent=2))
+    print(json.dumps(review(run_dir, Path(args.out or run_dir / "citation_review.csv"),
+                            args.only), indent=2))
     return 0
 
 
