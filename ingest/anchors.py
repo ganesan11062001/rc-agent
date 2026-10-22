@@ -83,6 +83,18 @@ def text_fragment(heading: str) -> str:
     return quote(snippet, safe="")
 
 
+def disambiguate(url_with_anchor: str, section_text: str) -> str:
+    """Make a text-fragment link unique when its heading repeats on the page.
+
+    A browser jumps to the first match of `#:~:text=Solution%3A`, so the
+    second "Solution:" section on a page was linked to the first one. The
+    fragment syntax takes a suffix -- `text=Solution%3A,-We%20can` -- that
+    must follow the match, and the section's own opening words do.
+    """
+    words = " ".join((section_text or "").split()[:4])
+    return "%s,-%s" % (url_with_anchor, quote(words, safe="")) if words else url_with_anchor
+
+
 def build_anchor(
     page_url: str,
     heading: str,

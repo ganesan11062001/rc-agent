@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.0"
+API_VERSION = "1.1"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 

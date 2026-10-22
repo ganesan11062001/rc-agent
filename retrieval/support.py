@@ -16,10 +16,10 @@ embeddings blur) AND on cosine alone. Terms alone are not enough: the OOM page
 mentions seff and the seff page mentions memory requests, and term overlap
 alone flagged correct citations of both.
 
-Measured by eval/citation_check.py (re-run whenever retrieval changes, since
-it changes which sources the check chooses between):
-  hand-labelled draft sentences  1/11 correct citations flagged, 11/11 wrong caught
-  held-out reworded sentences    3.4% flagged, 87% wrong caught (178 each)
+Measured by eval/citation_check.py (re-run whenever retrieval or the corpus
+changes, since that changes which sources the check chooses between).
+With both sites (2026-10-22), see the numbers printed by that script; they
+are recorded in the README rather than here so the two cannot drift.
 Known weaknesses:
 - A short section that says the thing tersely ("#SBATCH --mem=3G") can lose
   to a longer page that discusses the topic; that is the one hand-labelled
@@ -54,6 +54,12 @@ MARGIN = 0.06
 # there, but 0.65 flagged a correctly cited, tersely worded draft sentence
 # (score 0.64), so it is set low.
 FLOOR = 0.55
+# At or above this the cited page clearly says the claim, so a rival scoring
+# higher is not reported. Needed once two sites cover the same ground: a
+# correct citation of the website's Scratch Space Policy (0.987) was flagged
+# because the docs' Scratch Directory Purge page scored 1.054. On held-out
+# claims this costs 4 of 222 caught wrong citations (1.8%).
+CONFIDENT = 0.95
 
 _MARKER = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*[A-Za-z0-9]")
@@ -150,7 +156,7 @@ def check(texts: List[str], refs: Dict[str, str]) -> List[Verdict]:
             # this site the OOM page mentions seff and the seff page mentions
             # memory requests, so term overlap prefers the other page for
             # claims both pages support.
-            if best_ref and scored[best_ref][0] - total >= MARGIN \
+            if best_ref and total < CONFIDENT and scored[best_ref][0] - total >= MARGIN \
                     and scored[best_ref][1] > cos:
                 verdicts.append(Verdict(ref, claim, "better_source", round(total, 3),
                                         best_ref, round(scored[best_ref][0], 3)))

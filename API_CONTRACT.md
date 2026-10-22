@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1
+# rc-kg HTTP API contract — v1 (current: 1.1)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -49,6 +49,8 @@ Request: `{"query": str (1–50,000 chars), "k": int 1–20 = 6, "include_events
 | `sources[].heading` | string | |
 | `sources[].text` | string | |
 | `sources[].published` | string | `YYYY-MM-DD`, may be empty |
+| `sources[].last_modified` | string | `YYYY-MM-DD`, may be empty (1.1) |
+| `sources[].site` | string | `rc.northeastern.edu` or `rc-docs.northeastern.edu` (1.1) |
 | `sources[].score` | number | |
 
 ## `POST /cite`
@@ -66,6 +68,12 @@ Request: exactly one of `text: str` or `texts: str[]`, plus
 | `removed_urls` | string[] | |
 | `unknown_refs` | string[] | markers naming no source |
 | `support` | `{ref, claim, verdict, score, best_ref, best_score}[]` \| null | `check_support` only, and only once loaded; `verdict` is `"ok"` \| `"better_source"` \| `"weak"` |
+
+## Changes
+
+- **1.1** (2026-10-22): `sources[].site` and `sources[].last_modified`, for
+  the rc-docs site. `context` labels docs sources and their update date.
+- **1.0**: initial contract.
 
 ## `POST /answer`
 

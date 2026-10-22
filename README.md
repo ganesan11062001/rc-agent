@@ -1,7 +1,8 @@
-# RC-KG — grounded answers with exact links, from the RC website
+# RC-KG — grounded answers with exact links, from the RC website and docs
 
 Ask a question in plain English; get an answer built **only** from
-rc.northeastern.edu content, plus the specific page sections it came from.
+rc.northeastern.edu and rc-docs.northeastern.edu content, plus the specific
+page sections it came from.
 
 Built for the Northeastern Research Computing team, who need to paste a link to
 the page that actually supports the answer they give a researcher.
@@ -173,6 +174,34 @@ code bypasses it for internal hosts (`retrieval/http.py`); for `curl`, pass
 `--noproxy '*'`.
 
 ---
+
+## Two sources, one graph
+
+| | RC website | RC documentation |
+|---|---|---|
+| URL | rc.northeastern.edu | rc-docs.northeastern.edu/en/latest/ |
+| What it covers | policies, services, people, news, events | how-to: jobs, GPUs, software, storage, transfer |
+| Built with | WordPress — REST API + sitemap | Sphinx on Read the Docs — `searchindex.js` page list |
+| Section links | real `#id` for 6%, text fragments otherwise | real `#id` for every heading |
+| Dates | WordPress published/modified | last commit per page in the public source repo |
+| Ingest | `ingest/run.py` | `ingest/rtd.py`, called from the same run |
+
+**Why `latest` and not `explorer-main`:** the docs publish both. On
+2026-10-22 `explorer-main` was 17 commits behind `master` (which `latest` is
+built from), missing the updated GPU table, the new MGHPCC shutdown date, the
+data-transfer guide and the storage-query page. Links to any version —
+including the RC website's 40 links to `explorer-main` — are mapped to the
+same page under `latest`.
+
+The two sites link into each other (53 website → docs, 19 docs → website
+`LINKS_TO` edges), sections repeated across them are deduplicated with the
+docs copy kept, and the prompt context labels docs sources with their last
+update date. Page nodes carry `site`; API sources carry `site` and
+`last_modified` (API 1.1).
+
+The docs ingest found 5 broken links inside rc-docs (to pages from an older
+layout such as `hardware/partitions.html` and `using-discovery/srun.html`),
+listed in `ingest_report.json` under `docs.unresolved_links`.
 
 ## What the graph contains
 
@@ -379,9 +408,15 @@ seff and job-array tips).
   reliable embedding. Merging them into their parent is proposed, not done.
 - 6 internal links are genuinely broken (5 are PDFs under `/files/2025/08/`).
 - `/aicr/rc-internal` also yields no sections (same dashboard plugin).
-- The eval sets (30 retrieval questions, 10 citation cases) were written by
-  one person from the page inventory. They catch regressions; they are too
-  small to tune weights on.
+- The eval sets (45 retrieval questions — 30 website, 15 docs — and 10
+  citation cases) were written by one person from the page inventories. They
+  catch regressions; they are too small to tune weights on, which is why only
+  changes with a clear cause were made (see `_TOPIC_MODE` in
+  `retrieval/graphrag.py`).
+- "How do I add a student to my /projects directory?" misses the top 5 even
+  though vector search ranks the right docs section first: keyword search
+  cannot match "add" to "Adding" (3-letter words get no prefix form), and rank
+  fusion rewards sections both searches find over one search's clear winner.
 - No draft from a real model (GLM/Qwen) has been checked yet: how well it
   follows the `[S#]` rules is unknown until `citation_review.py` runs on a
   real session's logs.

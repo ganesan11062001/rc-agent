@@ -109,3 +109,9 @@ def test_summarize_counts_each_kind():
     assert counts[ANCHOR_ID] == 1
     assert counts[ANCHOR_TEXT_FRAGMENT] == 1
     assert counts[ANCHOR_NONE] == 1
+
+
+def test_repeated_heading_fragment_gets_the_sections_own_words_as_suffix():
+    from ingest.anchors import disambiguate
+    u = "https://rc.northeastern.edu/post/#:~:text=Solution%3A"
+    assert disambiguate(u, "We can define memory usage for our jobs") == u + ",-We%20can%20define%20memory"

@@ -43,7 +43,8 @@ SET p.wp_id         = r.wp_id,
     p.published     = r.published,
     p.last_modified = r.last_modified,
     p.slug          = r.slug,
-    p.source        = r.source
+    p.source        = r.source,
+    p.site          = r.site
 """
 
 UPSERT_SECTIONS = """

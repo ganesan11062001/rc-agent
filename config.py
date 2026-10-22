@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     request_delay: float = 1.0
     request_timeout: float = 30.0
 
+    # Read the Docs site, ingested alongside (ingest/rtd.py). `latest` is
+    # built from `master`; explorer-main lagged it by 17 commits on 2026-10-22.
+    docs_enabled: bool = True
+    docs_base: str = "https://rc-docs.northeastern.edu/en/latest/"
+    docs_repo: str = "https://github.com/northeastern-rc/rc-public-documentation"
+    docs_branch: str = "master"
+    docs_source_dir: str = "docs/source"
+
     # --- Neo4j ------------------------------------------------------------
     neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"

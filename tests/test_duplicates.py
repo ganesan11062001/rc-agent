@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -18,9 +17,9 @@ def _row(sid, page, h, retrievable=True, order=0):
 
 def test_page_beats_post_and_event_and_unique_rows_are_untouched():
     by_url = {
-        SITE + "/research-computing-team": SimpleNamespace(content_type="page"),
-        SITE + "/2025/06/26/miniconda": SimpleNamespace(content_type="post"),
-        SITE + "/calendar_event/intro": SimpleNamespace(content_type="calendar_event"),
+        SITE + "/research-computing-team": "page",
+        SITE + "/2025/06/26/miniconda": "post",
+        SITE + "/calendar_event/intro": "calendar_event",
     }
     rows = [
         _row("post-1-005", SITE + "/2025/06/26/miniconda", "bio"),
@@ -40,8 +39,16 @@ def test_page_beats_post_and_event_and_unique_rows_are_untouched():
 
 
 def test_shallowest_url_wins_among_pages():
-    by_url = {SITE + "/a/b/c": SimpleNamespace(content_type="page"),
-              SITE + "/a": SimpleNamespace(content_type="page")}
+    by_url = {SITE + "/a/b/c": "page", SITE + "/a": "page"}
     rows = [_row("x", SITE + "/a/b/c", "f"), _row("y", SITE + "/a", "f")]
     _mark_duplicates(rows, by_url)
     assert rows[0]["duplicate_of"] == "y"
+
+
+def test_docs_copy_is_canonical_over_the_website():
+    docs = "https://rc-docs.northeastern.edu/en/latest/gpus/gpuoverview.html"
+    rows = [_row("page-1-002", SITE + "/compute", "gpu-table"),
+            _row("doc-gpus/gpuoverview-001", docs, "gpu-table")]
+    _mark_duplicates(rows, {SITE + "/compute": "page", docs: "doc"})
+    assert rows[0]["duplicate_of"] == "doc-gpus/gpuoverview-001"
+    assert rows[1]["retrievable"] and rows[1]["duplicate_of"] is None

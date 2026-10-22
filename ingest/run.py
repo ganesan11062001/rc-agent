@@ -23,6 +23,7 @@ from config import get_settings
 from graph import schema, writer
 
 from . import anchors as anchors_mod
+from . import rtd
 from . import sitemap as sitemap_mod
 from . import wp_api
 from .http import session
@@ -44,6 +45,7 @@ class Report:
     pages_without_any_anchor: List[str] = field(default_factory=list)
     sitemap_vs_api: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
     recovered_from_sitemap: List[str] = field(default_factory=list)
+    docs: Dict = field(default_factory=dict)
     duplicate_sections: Dict[str, int] = field(default_factory=dict)
     internal_links: Dict[str, int] = field(default_factory=dict)
     redirected_links: Dict[str, str] = field(default_factory=dict)
@@ -71,19 +73,21 @@ def _is_past(iso_date: str) -> bool:
     return d < datetime.now(timezone.utc)
 
 
-_TYPE_RANK = {"page": 0, "post": 1, "calendar_event": 2}
+# Docs first: when the same text is on both sites, the docs page is the
+# maintained technical reference.
+_TYPE_RANK = {rtd.CONTENT_TYPE: 0, "page": 1, "post": 2, "calendar_event": 3}
 
 
-def _mark_duplicates(rows: List[Dict], by_url: Dict[str, "wp_api.WPItem"]
-                     ) -> Dict[str, int]:
+def _mark_duplicates(rows: List[Dict], ctype: Dict[str, str]) -> Dict[str, int]:
     """Keep one retrievable copy of each repeated section.
 
     Footers ("How Can Research Computing Support You?" on 26 pages) and staff
     bios repeated on every event page would otherwise fill the top-k with the
     same text under different URLs. All copies stay in the graph, so links and
     NEXT chains are intact; only the canonical one is retrievable, and the rest
-    point at it via `duplicate_of`. Canonical = a retrievable copy on a `page`
-    in preference to a post or event, then the shallowest URL.
+    point at it via `duplicate_of`. Canonical = a retrievable copy on a docs
+    page, then a `page`, then a post or event, then the shallowest URL.
+    `ctype` maps page URL -> content type.
     """
     groups: Dict[str, List[Dict]] = defaultdict(list)
     for r in rows:
@@ -98,7 +102,7 @@ def _mark_duplicates(rows: List[Dict], by_url: Dict[str, "wp_api.WPItem"]
         repeated += 1
         copies.sort(key=lambda r: (
             not r["retrievable"],
-            _TYPE_RANK.get(by_url[r["page_url"]].content_type, 9),
+            _TYPE_RANK.get(ctype[r["page_url"]], 9),
             r["page_url"].count("/"),
             r["page_url"],
             r["order"],
@@ -203,6 +207,12 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
     if recovered:
         logger.info("recovered %d sitemap-only item(s) by id", len(recovered))
 
+    # --- the docs site: list its pages now, so website links to it can
+    # become LINKS_TO edges instead of ExternalLinks -----------------------
+    doc_pages: List[rtd.DocPage] = rtd.discover() if s.docs_enabled else []
+    doc_urls: Set[str] = {p.url for p in doc_pages}
+    website_to_docs = 0
+
     # --- write Page nodes ------------------------------------------------
     page_rows = [
         {
@@ -214,6 +224,7 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
             "last_modified": it.last_modified,
             "slug": it.slug,
             "source": "sitemap" if url in recovered else "wp_api",
+            "site": "rc.northeastern.edu",
         }
         for url, it in by_url.items()
     ]
@@ -286,6 +297,7 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
         live_ids = anchors_mod.fetch_live_heading_ids(url + "/") if needs_live else {}
 
         page_anchor_kinds = []
+        seen_headings: Set[str] = set()
         retrievable_page = not (
             it.content_type == "calendar_event"
             and not s.include_events_in_retrieval
@@ -301,6 +313,10 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
                 live_ids,
                 inline_ids.get(anchors_mod._key(p.heading)),
             )
+            key = anchors_mod._key(p.heading)
+            if anc.kind == anchors_mod.ANCHOR_TEXT_FRAGMENT and key in seen_headings:
+                anc = anchors_mod.Anchor(anchors_mod.disambiguate(anc.url_with_anchor, p.text), anc.kind)
+            seen_headings.add(key)
             anchor_counter[anc.kind] += 1
             page_anchor_kinds.append(anc.kind)
             sizes.append(len(p.text))
@@ -348,6 +364,14 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
                     else:
                         broken.add(norm)
                 else:
+                    docs_target = rtd.canonical_doc_url(norm, doc_urls) if doc_urls else None
+                    if docs_target in doc_urls:
+                        # Any version (latest, explorer-main) maps to the
+                        # ingested latest page.
+                        links_to_rows.append({"section_id": sid, "target_url": docs_target,
+                                              "href_as_written": href, "via_redirect": False})
+                        website_to_docs += 1
+                        continue
                     ext_domains[host] += 1
                     external_rows[norm] = {"url": norm, "domain": host}
                     link_out_rows.append({"section_id": sid, "url": norm})
@@ -355,7 +379,26 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
         if page_anchor_kinds and anchors_mod.ANCHOR_ID not in page_anchor_kinds:
             rep.pages_without_any_anchor.append(url)
 
-    rep.duplicate_sections = _mark_duplicates(section_rows, by_url)
+    ctype = {url: it.content_type for url, it in by_url.items()}
+    if doc_pages:
+        logger.info("fetching %d docs pages", len(doc_pages))
+        docs = rtd.collect(
+            doc_pages,
+            resolve_rc=lambda u: _resolve_internal(u, known_urls, redirect_cache)[0],
+        )
+        writer.upsert_pages(docs["pages"])
+        section_rows += docs["sections"]
+        next_rows += docs["next"]
+        links_to_rows += docs["links_to"]
+        external_rows.update(docs["external"])
+        link_out_rows += docs["links_out"]
+        ctype.update({p["url"]: rtd.CONTENT_TYPE for p in docs["pages"]})
+        docs["report"].rc_website_links_to_docs = website_to_docs
+        rep.docs = docs["report"].__dict__
+        for url in docs["report"].pages_without_sections:
+            rep.warnings.append("%s produced no sections" % url)
+
+    rep.duplicate_sections = _mark_duplicates(section_rows, ctype)
     writer.upsert_sections(section_rows)
     writer.link_next(next_rows)
     writer.link_to_pages(links_to_rows)

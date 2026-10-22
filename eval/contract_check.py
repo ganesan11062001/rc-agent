@@ -67,7 +67,8 @@ def main() -> int:
     srcs = (r or {}).get("sources") or []
     expect(1 <= len(srcs) <= 4, "k respected (%d sources)" % len(srcs))
     for f, t in (("ref", str), ("url", str), ("page_url", str), ("page_title", str),
-                 ("heading", str), ("text", str), ("published", str), ("score", (int, float))):
+                 ("heading", str), ("text", str), ("published", str), ("score", (int, float)),
+                 ("last_modified", str), ("site", str)):
         expect(all(has(s, f, t) for s in srcs), "sources[].%s" % f)
     expect([s.get("ref") for s in srcs] == ["S%d" % i for i in range(1, len(srcs) + 1)],
            "refs are S1..Sn in order")

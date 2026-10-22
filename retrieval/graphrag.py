@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 # RRF constant. 60 is the value from the original paper and is not sensitive.
 _RRF_K = 60
 _TOPIC_WEIGHT = 0.3     # topic boost is a tie-breaker, not a retriever
+# Topic hits only re-rank sections vector or fulltext already found. Letting
+# them introduce sections (the first version did) is query-independent noise:
+# every "Storage" ticket pulled in the same long storage-heavy sections, e.g.
+# the 11,682-char cluster status page, and with the docs site added that
+# pushed correct answers out of the top k.
+_TOPIC_INTRODUCES = False
+_FULLTEXT_WEIGHT = 1.0
+# "flat": every matched topic counts the same. "idf": a topic counts by how
+# specific it is -- "Explorer cluster" is matched by nearly every ticket and
+# mentioned by hundreds of sections, so it should not move the ranking;
+# "Globus" should. "off": topics do not affect ranking at all.
+# Measured on the 45-question eval with the docs site (2026-10-22): flat kept
+# "connect from Windows" out of the top 5 (Hit@5 0.956); idf and off both fix
+# it (0.978). idf is used because it keeps specific topics useful. RRF k and
+# the fulltext weight moved MRR by <0.02 with no consistent direction, i.e.
+# noise at this eval size, so they stay at their defaults.
+_TOPIC_MODE = "idf"
 # At most this many sources from one page, so one long page cannot fill k.
 _MAX_PER_PAGE = 3
 
@@ -65,7 +82,9 @@ class Source:
     url: str                       # url_with_anchor -- what gets cited
     page_url: str
     content_type: str
+    site: str                      # "rc.northeastern.edu" | "rc-docs.northeastern.edu"
     published: str
+    last_modified: str
     anchor_kind: str
     text: str
     score: float
@@ -133,13 +152,26 @@ RETURN s.section_id AS sid, weight
 ORDER BY weight DESC LIMIT $n
 """
 
+# Per topic: idf = log(N / df) / log(N), in [0, 1]; 0 for a topic every
+# retrievable section mentions, 1 for one only a single section mentions.
+TOPIC_IDF = """
+MATCH (x:Section {retrievable: true}) WITH count(x) AS n
+UNWIND $topics AS name
+MATCH (t:Topic {name: name})
+OPTIONAL MATCH (s:Section {retrievable: true})-[:MENTIONS]->(t)
+WITH n, name, count(s) AS df
+RETURN name, CASE WHEN df = 0 THEN 0.0 ELSE log(toFloat(n) / df) / log(toFloat(n)) END AS idf
+"""
+
 EXPAND = """
 UNWIND $sids AS sid
 MATCH (p:Page)-[:HAS_SECTION]->(s:Section {section_id: sid})
 OPTIONAL MATCH (prev:Section)-[:NEXT]->(s)
 OPTIONAL MATCH (s)-[:NEXT]->(nxt:Section)
 RETURN sid,
-       p.published AS published, p.title AS page_title, p.url AS page_url, p.content_type AS content_type,
+       p.published AS published, p.last_modified AS last_modified,
+       coalesce(p.site, 'rc.northeastern.edu') AS site,
+       p.title AS page_title, p.url AS page_url, p.content_type AS content_type,
        s.heading AS heading, s.text AS text, s.url_with_anchor AS url,
        s.anchor_kind AS anchor_kind,
        prev.heading AS prev_heading, prev.text AS prev_text,
@@ -198,13 +230,20 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             for rank, r in enumerate(
                 sess.run(FULLTEXT, q=ft, n=candidates, events=events), 1
             ):
-                add(r["sid"], "fulltext", rank)
+                add(r["sid"], "fulltext", rank, _FULLTEXT_WEIGHT)
 
-        if query_topics:
+        if query_topics and _TOPIC_MODE != "off":
+            topic_weight = _TOPIC_WEIGHT
+            if _TOPIC_MODE == "idf":
+                idf = {r["name"]: r["idf"] for r in sess.run(TOPIC_IDF, topics=query_topics)}
+                # The ticket's most specific topic sets how much topics count.
+                topic_weight = _TOPIC_WEIGHT * max(idf.values(), default=0.0)
+            found = set(fused)
             for rank, r in enumerate(
                 sess.run(TOPIC_SECTIONS, topics=query_topics, n=candidates), 1
             ):
-                add(r["sid"], "topic", rank, _TOPIC_WEIGHT)
+                if _TOPIC_INTRODUCES or r["sid"] in found:
+                    add(r["sid"], "topic", rank, topic_weight)
 
         order = sorted(fused, key=fused.get, reverse=True)
         rows = {r["sid"]: r for r in sess.run(EXPAND, sids=order[: k * 4])}
@@ -231,7 +270,9 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             url=r["url"],
             page_url=r["page_url"] + "/",
             content_type=r["content_type"],
+            site=r["site"],
             published=(r["published"] or "")[:10],
+            last_modified=(r["last_modified"] or "")[:10],
             anchor_kind=r["anchor_kind"],
             text=r["text"],
             score=round(fused[sid], 5),
@@ -274,6 +315,11 @@ def format_context(sources: List[Source], max_chars: int = 2500) -> str:
         title = src.page_title if src.heading in ("Overview", src.page_title) \
             else "%s > %s" % (src.page_title, src.heading)
         lines = ["[%s] %s" % (src.ref, title), "URL: %s" % src.url]
+        if src.content_type == "doc":
+            # rc-docs is the technical reference; the website is announcements
+            # and policy. The model should know which it is reading.
+            lines.append("Source: RC documentation (rc-docs)%s" % (
+                ", last updated %s" % src.last_modified if src.last_modified else ""))
         # Posts are dated announcements (purges, outages); the model needs the
         # date to tell the current one from last year's.
         if src.content_type != "page" and src.published:
