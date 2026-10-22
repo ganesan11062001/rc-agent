@@ -10,7 +10,7 @@ Why relative, measured on this corpus (2026-10-22): an absolute cosine
 threshold separates supporting from non-supporting sections poorly (AUC 0.76
 for ticket-style claims), because similarity levels differ a lot between
 pages. So a citation is flagged only when a section on another retrieved page
-beats the cited page's best retrieved section by >= 0.06 on cosine + 0.3 x
+beats the cited page's best retrieved section by >= MARGIN (0.10) on cosine + 0.3 x
 shared distinctive terms (`seff`, `/scratch`, partition names -- what
 embeddings blur) AND on cosine alone. Terms alone are not enough: the OOM page
 mentions seff and the seff page mentions memory requests, and term overlap
@@ -47,7 +47,11 @@ from .embeddings import get_embedder
 from .graphrag import _STOPWORDS
 
 LEXICAL_WEIGHT = 0.3
-MARGIN = 0.06
+# Raised from 0.06 after the docs ingest: with two sites covering the same
+# topics, correct citations were flagged because another page also fit (2/12
+# hand-labelled, and both citations of a fully correct test draft). At 0.10:
+# 0/12 false flags, 6/6 wrong caught; held-out 0.0% / 83.4% (was 0.4% / 84.2%).
+MARGIN = 0.10
 # Below this the cited page shares nothing meaningful with the claim, even if
 # no other page does better (e.g. a citation tacked onto a greeting). Swept
 # 0.50-0.65 on both eval sets: it changes 1 catch in 130 and no false flags

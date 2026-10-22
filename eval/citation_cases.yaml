@@ -72,3 +72,18 @@ cases:
     supported:
       - {page: /research-computing-policies/scratch-space-policy, heading: "Scratch Space"}
     unsupported: []
+
+  # Added 2026-10-22 from TicketMate's contract test after the docs ingest:
+  # both sentences are correctly cited, and were flagged because another
+  # retrieved page (often on the other site) also supports them.
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?"
+    claim: "Check the job's peak memory usage with seff"
+    supported:
+      - {page: /2026/08/25/august-26-2026, heading: "Overview"}
+    unsupported: []
+
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?"
+    claim: "Raise the memory request with --mem and resubmit"
+    supported:
+      - {page: /2025/11/04/debugging-unexpected-job-termination-on-explorer, heading: "Out of Memory"}
+    unsupported: []

@@ -205,18 +205,20 @@ listed in `ingest_report.json` under `docs.unresolved_links`.
 
 ## What the graph contains
 
-Built 2026-10-22: 114 items → 380 sections.
+Built 2026-10-22 (commit 5dd63d3): 169 pages → 594 sections.
 
-| content type | items | sections | retrievable |
-|---|---|---|---|
-| page | 35 | 221 | 185 |
-| post | 55 | 112 | 97 |
-| calendar_event | 24 (19 API + 5 sitemap) | 47 | 0 by default |
+| site | content type | pages | sections | retrievable |
+|---|---|---|---|---|
+| rc.northeastern.edu | page | 35 | 221 | 185 |
+| | post | 55 | 112 | 97 |
+| | calendar_event | 24 (19 API + 5 sitemap) | 47 | 0 by default |
+| rc-docs.northeastern.edu | doc | 55 | 214 | 214 |
 
-Graph: `Page=114  Section=380  Topic=30  Category=13  ExternalLink=113`,
-`HAS_SECTION=380  NEXT=268  LINKS_TO=251  LINKS_OUT=285  MENTIONS=1171
+Graph: `Page=169  Section=594  Topic=30  Category=13  ExternalLink=169`,
+`HAS_SECTION=594  NEXT=427  LINKS_TO=457  LINKS_OUT=297  MENTIONS=1842
 IN_CATEGORY=77  CHILD_OF=15`. Every section has a 384-dim `bge-small-en-v1.5`
-embedding.
+embedding. `LINKS_TO` includes 81 website → docs and 19 docs → website
+edges.
 
 51 sections are hidden from retrieval as duplicates: 22 texts repeat across
 pages (the "How Can Research Computing Support You?" footer appears 26 times;
@@ -265,7 +267,9 @@ revisiting: it is where most technical answers live.
 ## Graph schema
 
 ```
-(:Page {wp_id, content_type, title, url, published, last_modified, slug})
+(:Page {site, content_type, title, url, published, last_modified, slug, wp_id})
+        site: rc.northeastern.edu | rc-docs.northeastern.edu
+        content_type: page | post | calendar_event | doc     (wp_id: WordPress only)
 (:Section {section_id, heading, heading_level, text, url_with_anchor,
            anchor_kind, content_hash, order, char_count, retrievable,
            duplicate_of, embedding, embedding_model, embedded_key})
@@ -346,9 +350,12 @@ saying it was not checked against the website.
 
 The same call sets `check_support`, and every citation whose page does not
 seem to say the sentence becomes a caveat for the engineer, naming the page
-that fits better when there is one. Measured by `eval/citation_check.py`: on
-hand-labelled draft sentences 1/11 correct citations flagged and 11/11 wrong
-ones caught; on 178 held-out reworded sentences 3.4% flagged, 87% caught.
+that fits better when there is one. Measured by `eval/citation_check.py` on
+the two-site graph: hand-labelled draft sentences 0/12 correct citations
+flagged, 6/6 wrong ones caught; 265 held-out reworded sentences 0% flagged,
+83% caught. Two sites often both support a claim, so a citation is only
+flagged when another page beats it clearly (margin 0.10) and it is not itself
+a confident match (score below 0.95).
 Those are proxies — real drafts are the test (next section).
 
 ### Checking real drafts
@@ -420,12 +427,12 @@ seff and job-array tips).
 - No draft from a real model (GLM/Qwen) has been checked yet: how well it
   follows the `[S#]` rules is unknown until `citation_review.py` runs on a
   real session's logs.
-- The citation check can flag a correct citation of a short, terse section
-  ("#SBATCH --mem=3G") when a longer page discusses the same topic, and it
-  cannot flag a wrong citation when no retrieved page supports the claim
-  (it has no better source to point to).
+- The citation check trades recall for trust: at its current strictness it
+  misses about 1 in 6 wrong citations on held-out sentences, and it cannot
+  flag a wrong citation when no retrieved page supports the claim (there is
+  no better source to point to).
 - Nothing rebuilds the snapshot on a schedule yet: re-run
-  `scripts/build_graph.sh` when the site changes (a cron'd sbatch would do).
+  `scripts/build_graph.sh` when either site changes (a cron'd sbatch would do).
 
 ---
 
