@@ -20,9 +20,14 @@ Measured by eval/citation_check.py (re-run whenever retrieval changes, since
 it changes which sources the check chooses between):
   hand-labelled draft sentences  1/11 correct citations flagged, 11/11 wrong caught
   held-out reworded sentences    3.4% flagged, 87% wrong caught (178 each)
-Known weakness: a short section that says the thing tersely ("#SBATCH
---mem=3G") can lose to a longer page that discusses the topic; that is the
-one hand-labelled false flag.
+Known weaknesses:
+- A short section that says the thing tersely ("#SBATCH --mem=3G") can lose
+  to a longer page that discusses the topic; that is the one hand-labelled
+  false flag.
+- It can only point to a better source among those retrieved. A claim no
+  retrieved page supports, cited to a loosely related one, is caught only by
+  FLOOR -- seen in testing: a GPU-partition limit cited to the OOM section
+  of an OOM ticket's sources was not flagged.
 
 The verdicts are advisory. A flagged citation is reported, never rewritten:
 a human reviews every draft, and a confident silent swap would be worse than

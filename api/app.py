@@ -85,7 +85,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="RC-KG", version="0.3", lifespan=lifespan)
+# The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
+# when a client written for the old one could break: a field removed or
+# renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
+API_VERSION = "1.0"
+
+app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
 
 def require_token(authorization: Optional[str] = Header(None)) -> None:
@@ -156,6 +161,7 @@ def health() -> Dict:
     s = get_settings()
     if not _ready.is_set():
         return {"status": "failed" if _warm_error else "loading",
+                "api_version": API_VERSION,
                 "detail": _warm_error[0] if _warm_error else None}
     with driver().session(database=s.neo4j_database) as sess:
         rec = sess.run(
@@ -163,7 +169,8 @@ def health() -> Dict:
             "count(s.embedding) AS embedded, "
             "sum(CASE WHEN s.retrievable THEN 1 ELSE 0 END) AS retrievable"
         ).single()
-    return {"status": "ok", **dict(rec), "embedding_model": s.embedding_model,
+    return {"status": "ok", "api_version": API_VERSION, **dict(rec),
+            "embedding_model": s.embedding_model,
             "snapshot": _snapshot(), "llm_configured": bool(s.llm_base_url)}
 
 

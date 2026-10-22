@@ -274,6 +274,19 @@ graph without polluting results), and a `section_search` fulltext index over
    `low_confidence` when the best vector match is under 0.78 (on-topic
    tickets score 0.85–0.93; "what's the weather in Boston" scores 0.74).
 
+## API contract and versioning
+
+[API_CONTRACT.md](API_CONTRACT.md) lists every request and response field
+clients may rely on. `/health` returns `api_version` (`1.0`); clients check
+the major number and refuse to guess across a mismatch — TicketMate drafts
+ungrounded, with a caveat naming the versions. Bump MAJOR for anything that
+could break an existing client, MINOR for additions; tag releases (`v1.0.0`).
+
+`scripts/contract_test.sh` starts a fresh instance and asserts every field in
+the contract (46 checks). TicketMate's `tests/rc_kg/run_contract.sh` checks
+the other side: grounding, citation numbering and flags, a v2 rc_kg refused,
+and rc_kg down. Run both before tagging or deploying a change to either.
+
 ## Using it from TicketMate (RC Copilot)
 
 TicketMate keeps its own vLLM and prompt; RC-KG supplies the grounding.
@@ -373,7 +386,9 @@ seff and job-array tips).
   follows the `[S#]` rules is unknown until `citation_review.py` runs on a
   real session's logs.
 - The citation check can flag a correct citation of a short, terse section
-  ("#SBATCH --mem=3G") when a longer page discusses the same topic.
+  ("#SBATCH --mem=3G") when a longer page discusses the same topic, and it
+  cannot flag a wrong citation when no retrieved page supports the claim
+  (it has no better source to point to).
 - Nothing rebuilds the snapshot on a schedule yet: re-run
   `scripts/build_graph.sh` when the site changes (a cron'd sbatch would do).
 
@@ -389,6 +404,7 @@ seff and job-array tips).
 | `enrich/` | Phase 2 — topic matching and embedding |
 | `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement and support check, CLI |
 | `api/` | FastAPI service for TicketMate |
-| `eval/` | Retrieval eval (`run.py`), citation-check eval (`citation_check.py`), real-draft review (`citation_review.py`) |
-| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
+| `API_CONTRACT.md` | The v1 HTTP contract clients rely on |
+| `eval/` | Retrieval eval (`run.py`), citation-check eval (`citation_check.py`), real-draft review (`citation_review.py`, `draft_batch.py`), contract check (`contract_check.py`) |
+| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
 | `tests/` | 72 unit tests: sectioning, anchors, URLs, duplicates, topics, citations, claims, query building |
