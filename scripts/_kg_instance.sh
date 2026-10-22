@@ -5,11 +5,13 @@
 # shared vendor/ tree and its password into the repo's .env. That is wrong for
 # anything launched from a Slurm job, where two jobs (or two users) can run at
 # once from the same checkout. Here every instance gets its own directory on
-# node-local disk holding config, store, logs and password; NEO4J_CONF points
-# Neo4j at it, and nothing shared is written.
+# node-local disk holding config, store and logs; NEO4J_CONF points Neo4j at
+# it, and nothing shared is written. The password is only ever in the
+# environment of the processes that need it.
 #
 # Defines:  kg_instance_init DIR    kg_instance_load DUMP_DIR
 #           kg_instance_start       kg_instance_stop
+#           kg_new_dir LABEL        kg_sweep_stale        kg_list
 # Exports after init:  NEO4J_CONF NEO4J_URI NEO4J_USER NEO4J_PASSWORD NEO4J_DATABASE
 
 RC_KG_ROOT="${RC_KG_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -109,4 +111,98 @@ kg_python_env() {
   # from the vLLM process sharing this allocation.
   export OMP_NUM_THREADS="${RC_KG_THREADS:-2}" MKL_NUM_THREADS="${RC_KG_THREADS:-2}"
   export PYTHONPATH="$RC_KG_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+}
+
+# ── ownership, sweeping and listing ──────────────────────────────────────────
+# Every instance dir is named rc_kg_<user>_<label>_XXXX under one parent and
+# records who owns it: "<pid> <process start time>" of the creating script.
+# The start time guards against PID reuse. A dir whose owner is gone is stale:
+# whatever still runs from it (an orphaned Neo4j or API after a kill -9) is
+# stopped and the dir removed. Only the caller's own dirs are ever touched.
+
+KG_PARENT="${RC_KG_TMP:-${TMPDIR:-/tmp}}"
+
+_kg_starttime() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
+
+kg_new_dir() {
+  local d
+  d="$(mktemp -d "$KG_PARENT/rc_kg_${USER}_${1}_XXXX")" \
+    || kg_die "cannot create an instance dir under $KG_PARENT"
+  echo "$$ $(_kg_starttime $$)" > "$d/owner"
+  echo "$d"
+}
+
+_kg_owner_alive() {
+  local pid start
+  read -r pid start < "$1/owner" 2>/dev/null || return 1
+  [ -n "$pid" ] && [ "$(_kg_starttime "$pid")" = "$start" ]
+}
+
+# PIDs of this user's processes started from, or running inside, a dir.
+_kg_procs_in() {
+  local d="$1" p
+  {
+    for p in $(pgrep -u "$(id -u)" -f -- "$d" 2>/dev/null); do
+      [ "$p" != "$$" ] && echo "$p"
+    done
+    for p in /proc/[0-9]*; do
+      p="${p#/proc/}"
+      [ "$p" = "$$" ] && continue
+      [ "$(readlink "/proc/$p/cwd" 2>/dev/null)" = "$d" ] && echo "$p"
+    done
+  } | sort -un
+}
+
+kg_sweep_stale() {
+  local d pids n=0
+  for d in "$KG_PARENT"/rc_kg_"${USER}"_*; do
+    [ -d "$d" ] && [ -O "$d" ] || continue
+    _kg_owner_alive "$d" && continue
+    pids="$(_kg_procs_in "$d" | sort -u | tr '\n' ' ')"
+    if [ -n "${pids// /}" ]; then
+      # shellcheck disable=SC2086
+      kill $pids 2>/dev/null
+      for _ in $(seq 1 15); do
+        # shellcheck disable=SC2086
+        kill -0 $pids 2>/dev/null || break
+        sleep 1
+      done
+      # shellcheck disable=SC2086
+      kill -9 $pids 2>/dev/null
+    fi
+    rm -rf "$d" && n=$((n + 1))
+    kg_log "removed stale instance $(basename "$d")${pids:+ (stopped pids $pids)}"
+  done
+  return 0
+}
+
+kg_list() {
+  local d state any=0
+  for d in "$KG_PARENT"/rc_kg_"${USER}"_*; do
+    [ -d "$d" ] || continue
+    any=1
+    if _kg_owner_alive "$d"; then state="live (owner pid $(cut -d' ' -f1 "$d/owner"))"
+    else state="STALE"; fi
+    printf '%-44s %-26s %5s MB  procs: %s\n' "$(basename "$d")" "$state" \
+      "$(du -sm "$d" 2>/dev/null | cut -f1)" "$(_kg_procs_in "$d" | tr '\n' ' ')"
+  done
+  [ "$any" = 1 ] || echo "no rc-kg instances for $USER under $KG_PARENT on $(hostname -s)"
+}
+
+# Run in the background by a long-lived script: if the script disappears
+# without running its own cleanup (kill -9, OOM kill), take down what it
+# started. Usage: kg_watchdog <dir> & ; kill it in the script's own cleanup.
+kg_watchdog() {
+  local d="$1" owner="$$" start
+  cd / || return        # do not count as a process inside the dir
+  start="$(_kg_starttime "$owner")"
+  # $$ in a subshell is still the parent script's PID, which is the point.
+  while [ "$(_kg_starttime "$owner")" = "$start" ]; do sleep 3; done
+  local pids; pids="$(_kg_procs_in "$d" | grep -v "^${BASHPID}$" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  [ -n "${pids// /}" ] && kill $pids 2>/dev/null
+  sleep 5
+  # shellcheck disable=SC2086
+  [ -n "${pids// /}" ] && kill -9 $pids 2>/dev/null
+  rm -rf "$d"
 }

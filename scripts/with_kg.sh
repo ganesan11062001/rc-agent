@@ -11,9 +11,10 @@
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_kg_instance.sh"
 SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
-INST="$(mktemp -d "${RC_KG_TMP:-${TMPDIR:-/tmp}}/rc_kg_${USER}_${SLURM_JOB_ID:-local}_XXXX")" \
-  || kg_die "cannot create an instance dir"
-trap 'kg_instance_stop; rm -rf "$INST"' EXIT
+kg_sweep_stale
+INST="$(kg_new_dir tool)" || exit 1
+kg_watchdog "$INST" & WD_PID=$!
+trap 'kill $WD_PID 2>/dev/null; kg_instance_stop; rm -rf "$INST"' EXIT
 trap 'exit 143' INT TERM
 kg_instance_init "$INST"
 kg_python_env

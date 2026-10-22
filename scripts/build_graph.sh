@@ -31,9 +31,12 @@ while [ $# -gt 0 ]; do
 done
 
 SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/rc_kg_build_${USER}_XXXX")"
-cleanup() { kg_instance_stop; rm -rf "$WORK"; }
-trap cleanup EXIT INT TERM
+kg_sweep_stale
+WORK="$(kg_new_dir build)" || exit 1
+kg_watchdog "$WORK" & WD_PID=$!
+cleanup() { kill "$WD_PID" 2>/dev/null; kg_instance_stop; rm -rf "$WORK"; }
+trap cleanup EXIT
+trap 'exit 143' INT TERM
 
 kg_log "building in $WORK"
 kg_instance_init "$WORK/neo4j"

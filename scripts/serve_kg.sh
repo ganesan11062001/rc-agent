@@ -9,6 +9,11 @@
 #   RC_KG_TMP          node-local parent dir    default $TMPDIR, else /tmp
 #   RC_KG_THREADS      CPU threads for query embedding, default 2
 #
+# Cleanup: a normal stop (SIGTERM, Ctrl-C, the job ending) removes everything.
+# If this script is killed outright, a watchdog stops Neo4j and the API and
+# removes the dir; anything that survives even that (the watchdog killed too)
+# is swept by the next start on the node. scripts/kg_ps.sh lists instances.
+#
 # Works on any node that can read /projects: nothing is written outside the
 # instance dir, which is removed on exit. With no snapshot it falls back to
 # building one from the live site (~4 min, needs network) so a fresh checkout
@@ -30,13 +35,15 @@ done
 [ -n "$PORT" ] || PORT="$(kg_free_port)"
 
 SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
+kg_sweep_stale
 # Always a fresh directory this script created, so removing it on exit can
 # never take anything else with it.
-INST="$(mktemp -d "${RC_KG_TMP:-${TMPDIR:-/tmp}}/rc_kg_${USER}_${SLURM_JOB_ID:-local}_XXXX")" \
-  || kg_die "cannot create an instance dir under ${RC_KG_TMP:-${TMPDIR:-/tmp}}"
+INST="$(kg_new_dir "${SLURM_JOB_ID:-local}")" || exit 1
 
 API_PID=""
+WD_PID=""
 cleanup() {
+  [ -n "$WD_PID" ] && kill "$WD_PID" 2>/dev/null
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null && wait "$API_PID" 2>/dev/null
   kg_instance_stop
   rm -rf "$INST"
@@ -45,6 +52,8 @@ trap cleanup EXIT
 trap 'exit 143' INT TERM
 
 kg_instance_init "$INST"
+kg_watchdog "$INST" &
+WD_PID=$!
 kg_python_env
 cd "$INST" || exit 1          # no repo .env: this process is configured by env only
 
