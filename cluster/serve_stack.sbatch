@@ -53,6 +53,9 @@ OOD_HOST="${OOD_HOST:-ood.explorer.northeastern.edu}"
 OOD_ROUTE="${OOD_ROUTE:-rnode}"
 MODEL="${MODEL:-small}"
 RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+# "full" (RC website + rc-docs, default) or "website" (RC website only):
+#   sbatch --export=ALL,RC_KG_VARIANT=website serve_stack.sbatch
+RC_KG_VARIANT="${RC_KG_VARIANT:-full}"
 SESSION_HOURS="${SESSION_HOURS:-3}"
 
 # Token file lives in $HOME (mode 600), never on group-readable /projects.
@@ -111,8 +114,8 @@ nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
 if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
   RC_KG_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   export RC_KG_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-  echo "=== starting rc_kg on 127.0.0.1:${RC_KG_PORT} ==="
-  "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" \
+  echo "=== starting rc_kg (${RC_KG_VARIANT} graph) on 127.0.0.1:${RC_KG_PORT} ==="
+  "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" --variant "$RC_KG_VARIANT" \
     > "logs/rc_kg-${SLURM_JOB_ID}.out" 2>&1 &
   KG_PID=$!
   export RC_KG_URL="http://127.0.0.1:${RC_KG_PORT}"

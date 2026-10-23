@@ -9,6 +9,8 @@ TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
 # The RC website knowledge graph. Unset or missing = drafts are not grounded,
 # and everything else works as before.
 RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+# Which graph: "full" (RC website + rc-docs) or "website" (RC website only).
+RC_KG_VARIANT="${RC_KG_VARIANT:-full}"
 # Files under template/ are rendered with a TemplateBinding, which exposes
 # `context` and `session` but NOT the form attributes as bare locals. Bare
 # `model` raises "undefined local variable" at staging time; only submit.yml.erb
@@ -84,8 +86,8 @@ if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
   RC_KG_PORT="${RC_KG_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}"
   # Loopback is shared by every user on this node, so rc_kg gets a token too.
   export RC_KG_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-  echo "=== starting rc_kg on 127.0.0.1:${RC_KG_PORT} (log: ${KG_LOG}) ==="
-  RC_KG_ROOT="$RC_KG_ROOT" "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" \
+  echo "=== starting rc_kg (${RC_KG_VARIANT} graph) on 127.0.0.1:${RC_KG_PORT} (log: ${KG_LOG}) ==="
+  RC_KG_ROOT="$RC_KG_ROOT" "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$RC_KG_PORT" --variant "$RC_KG_VARIANT" \
     > "$KG_LOG" 2>&1 &
   KG_PID=$!
   export RC_KG_URL="http://127.0.0.1:${RC_KG_PORT}"

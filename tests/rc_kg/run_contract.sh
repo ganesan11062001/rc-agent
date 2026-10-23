@@ -8,6 +8,7 @@
 #    citation flagged, no raw [S#] anywhere.
 # B. an rc_kg claiming API v2.0: refused, draft ungrounded with the reason.
 # C. rc_kg unreachable: draft still produced, with a caveat.
+# D. the website-only graph variant: grounded in rc.northeastern.edu only.
 # Needs no GPU. ~1-2 min, almost all of it rc_kg starting.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,15 +32,17 @@ backend() {   # backend <kg_url> -> prints port
 VP="$(free)"; $PY "$HERE/stub_vllm.py" "$VP" & PIDS+=($!)
 export RC_KG_API_TOKEN="contract-$$"
 KGP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KGP" >"$WORK/kg.log" 2>&1 & PIDS+=($!)
+KWP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KWP" --variant website >"$WORK/kg-website.log" 2>&1 & PIDS+=($!)
 FKP="$(free)"; $PY "$HERE/fake_kg_v2.py" "$FKP" & PIDS+=($!)
 A="$(backend "http://127.0.0.1:$KGP")"
 B="$(backend "http://127.0.0.1:$FKP")"
 C="$(backend "http://127.0.0.1:$(free)")"      # nothing listens there
+W="$(backend "http://127.0.0.1:$KWP")"
 
-$PY - "$A" "$B" "$C" <<'PY'
+$PY - "$A" "$B" "$C" "$W" <<'PY'
 import json, sys, time, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
-A, B, C = sys.argv[1:]
+A, B, C, W = sys.argv[1:]
 fails = []
 def check(cond, what):
     print(("  ok    " if cond else "  FAIL  ") + what)
@@ -94,6 +97,15 @@ check(wait(C, "unreachable", 30) is not None, "health: unreachable")
 d = draft(C, OOM)
 check(d["kg_status"] == "unavailable" and any("unavailable" in c for c in d["caveats"]), "draft with caveat")
 check("[S" not in all_text(d), "no raw [S#] markers")
+
+print("D. website-only graph variant")
+h = wait(W, "ok")
+check(h is not None and "RC website graph" in (h.get("knowledge_graph_detail") or ""), "health names the website graph")
+d = draft(W, OOM)
+check(d["kg_status"] == "ok" and d["references"], "draft grounded")
+check(all(r["url"].startswith("https://rc.northeastern.edu/") for r in d["references"]), "every reference is on the RC website")
+h = wait(A, "ok")
+check(h is not None and "website + docs" in (h.get("knowledge_graph_detail") or ""), "full graph session names the full graph")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)

@@ -157,8 +157,12 @@ async def health() -> Tuple[str, Optional[str]]:
     if problem:
         return "incompatible", problem
     if h.get("status") == "ok":
-        built = (h.get("snapshot") or {}).get("built_at")
-        return "ok", ("graph built %s" % built) if built else None
+        snap = h.get("snapshot") or {}
+        # "website" = RC website only, "full" = website + rc-docs (rc_kg API 1.2).
+        what = {"website": "RC website graph", "full": "RC website + docs graph"}.get(
+            snap.get("variant"), "graph")
+        built = snap.get("built_at")
+        return "ok", ("%s, built %s" % (what, built)) if built else what
     return h.get("status", "unknown"), h.get("detail")
 
 
