@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1 (current: 1.1)
+# rc-kg HTTP API contract — v1 (current: 1.2)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -26,7 +26,7 @@ Never needs the token. Always `200`.
 | `api_version` | string, `"MAJOR.MINOR"` | |
 | `detail` | string \| null | when not `"ok"` |
 | `sections`, `embedded`, `retrievable` | int | when `"ok"` |
-| `snapshot` | `{built_at, git_commit, eval}` \| null | when `"ok"` |
+| `snapshot` | `{built_at, git_commit, eval, variant, sites}` \| null | when `"ok"`; `variant` is `"full"` (website + docs) or `"website"` (1.2) |
 
 ## `POST /retrieve`
 
@@ -71,6 +71,8 @@ Request: exactly one of `text: str` or `texts: str[]`, plus
 
 ## Changes
 
+- **1.2** (2026-10-23): `snapshot.variant` and `snapshot.sites` — which
+  graph is being served (`full` or `website`).
 - **1.1** (2026-10-22): `sources[].site` and `sources[].last_modified`, for
   the rc-docs site. `context` labels docs sources and their update date.
 - **1.0**: initial contract.

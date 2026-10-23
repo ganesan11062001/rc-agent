@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Build the knowledge graph from the live site and store it on /projects.
+# Build the knowledge graph from the live sites and store it on /projects.
 #
-#   scripts/build_graph.sh                 build, eval-gate, publish
-#   scripts/build_graph.sh --min-hit 0.8   loosen the gate
-#   scripts/build_graph.sh --force         publish even if the gate fails
+#   scripts/build_graph.sh                     the full graph: website + rc-docs
+#   scripts/build_graph.sh --variant website   the RC website only
+#   scripts/build_graph.sh --all               both variants, one after the other
+#   scripts/build_graph.sh --min-hit 0.8       loosen the gate
+#   scripts/build_graph.sh --force             publish even if the gate fails
 #
-# Output, in $RC_KG_SNAPSHOT (default <repo>/data/graph):
+# Each variant has its own snapshot, eval gate and rollback copy:
+#   full     data/graph/            gated on all eval questions
+#   website  data/graph-website/    gated on the questions the website can answer
+#
+# Output, in $RC_KG_SNAPSHOT (default: the variant's directory above):
 #   neo4j.dump      the whole graph: pages, sections, embeddings, topics, indexes
 #   manifest.json   when, from which commit, node/edge counts, eval scores
 #   ingest_report.json
@@ -21,16 +27,34 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_kg_instance.sh"
 
 MIN_HIT=0.9
 FORCE=0
+VARIANT=full
+ALL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --min-hit) MIN_HIT="$2"; shift 2 ;;
     --force)   FORCE=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --variant) VARIANT="$2"; shift 2 ;;
+    --all)     ALL=1; shift ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) kg_die "unknown argument $1" ;;
   esac
 done
 
-SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
+if [ "$ALL" = 1 ]; then
+  [ -z "${RC_KG_SNAPSHOT:-}" ] || kg_die "--all with RC_KG_SNAPSHOT would publish every variant to one directory"
+  # Each variant in its own process, so one failing gate does not stop the
+  # other; the exit status reports any failure.
+  rc=0
+  for v in $KG_VARIANTS; do
+    "$0" --variant "$v" --min-hit "$MIN_HIT" $([ "$FORCE" = 1 ] && echo --force) || rc=1
+  done
+  exit $rc
+fi
+
+SNAP="${RC_KG_SNAPSHOT:-$(kg_snapshot_dir "$VARIANT")}" || exit 1
+kg_variant_env "$VARIANT"
+SITES="$(kg_variant_sites "$VARIANT")"
+kg_log "variant: $VARIANT ($SITES) -> $SNAP"
 kg_sweep_stale
 WORK="$(kg_new_dir build)" || exit 1
 kg_watchdog "$WORK" & WD_PID=$!
@@ -57,17 +81,17 @@ kg_log "phase 1: ingest"
 kg_log "phase 2: topics + embeddings"
 "$RC_KG_PY" -m enrich.run || kg_die "enrich failed"
 kg_log "phase 5: eval (gate: hit@5 >= $MIN_HIT)"
-"$RC_KG_PY" -m eval.run --json "$WORK/eval.json" --min-hit "$MIN_HIT"
+"$RC_KG_PY" -m eval.run --json "$WORK/eval.json" --min-hit "$MIN_HIT" --sites "$SITES"
 GATE=$?
 
-"$RC_KG_PY" - "$WORK" "$MODEL" <<'PY' || kg_die "could not write manifest"
+"$RC_KG_PY" - "$WORK" "$MODEL" "$VARIANT" "$SITES" <<'PY' || kg_die "could not write manifest"
 import json, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 import config
 from config import get_settings
 from graph.writer import counts
-work, model = Path(sys.argv[1]), sys.argv[2]
+work, model, variant, sites = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4].split(",")
 root = Path(config.__file__).resolve().parent
 try:
     commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
@@ -79,6 +103,8 @@ except OSError:
 (work / "manifest.json").write_text(json.dumps({
     "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "git_commit": commit + ("-dirty" if dirty else ""),
+    "variant": variant,
+    "sites": sites,
     "embedding_model": model,
     "embedding_dim": get_settings().embedding_dim,
     "neo4j_version": "5.26",

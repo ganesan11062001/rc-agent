@@ -51,6 +51,9 @@ def main() -> int:
     for f in ("sections", "embedded", "retrievable"):
         expect(has(h, f, int), "%s: int" % f)
     expect(h is not None and "snapshot" in h, "snapshot present")
+    snap = (h or {}).get("snapshot") or {}
+    expect(snap.get("variant") in ("full", "website"), "snapshot.variant is full|website (got %r)" % snap.get("variant"))
+    expect(isinstance(snap.get("sites"), list) and snap.get("sites"), "snapshot.sites: non-empty list")
 
     if token:
         print("auth")

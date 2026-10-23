@@ -4,13 +4,14 @@
 #   scripts/with_kg.sh -m eval.run --all
 #   scripts/with_kg.sh -m eval.citation_review
 #   scripts/with_kg.sh -m retrieval.query "my job was killed"
+#   RC_KG_VARIANT=website scripts/with_kg.sh -m eval.run --sites rc.northeastern.edu
 #
 # Same private, node-local Neo4j as serve_kg.sh, gone when the command exits.
 # For anything that needs the graph without a running API.
 
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_kg_instance.sh"
-SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
+SNAP="${RC_KG_SNAPSHOT:-$(kg_snapshot_dir "${RC_KG_VARIANT:-full}")}" || exit 1
 kg_sweep_stale
 INST="$(kg_new_dir tool)" || exit 1
 kg_watchdog "$INST" & WD_PID=$!

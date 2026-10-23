@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Serve the knowledge graph for one job: private Neo4j + the rc-kg API.
 #
-#   scripts/serve_kg.sh --port 8090          foreground; Ctrl-C / SIGTERM stops both
+#   scripts/serve_kg.sh --port 8090                    foreground; Ctrl-C / SIGTERM stops both
+#   scripts/serve_kg.sh --port 8090 --variant website  the website-only graph
 #
 # Environment (all optional):
-#   RC_KG_SNAPSHOT     dir with neo4j.dump      default <repo>/data/graph
+#   RC_KG_VARIANT      full (default) | website  -- which graph to serve
+#   RC_KG_SNAPSHOT     dir with neo4j.dump      default: the variant's directory
 #   RC_KG_API_TOKEN    bearer token for the API (recommended on shared nodes)
 #   RC_KG_TMP          node-local parent dir    default $TMPDIR, else /tmp
 #   RC_KG_THREADS      CPU threads for query embedding, default 2
@@ -28,13 +30,22 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
+    --variant) RC_KG_VARIANT="$2"; shift 2 ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) kg_die "unknown argument $1" ;;
   esac
 done
 [ -n "$PORT" ] || PORT="$(kg_free_port)"
 
-SNAP="${RC_KG_SNAPSHOT:-$RC_KG_ROOT/data/graph}"
+VARIANT="${RC_KG_VARIANT:-full}"
+SNAP="${RC_KG_SNAPSHOT:-$(kg_snapshot_dir "$VARIANT")}" || exit 1
+# A snapshot says which variant it is; refuse to serve the wrong one quietly.
+if [ -f "$SNAP/manifest.json" ]; then
+  built="$("$RC_KG_PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get('variant','full'))" "$SNAP/manifest.json")"
+  [ "$built" = "$VARIANT" ] || kg_die "$SNAP holds the '$built' graph, not '$VARIANT'"
+fi
+kg_variant_env "$VARIANT"
+kg_log "variant: $VARIANT -> $SNAP"
 kg_sweep_stale
 # Always a fresh directory this script created, so removing it on exit can
 # never take anything else with it.

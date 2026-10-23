@@ -28,9 +28,18 @@ def _page(url: str) -> str:
     return url.split("#", 1)[0].rstrip("/")
 
 
-def evaluate(k: int = 5) -> Dict:
+def _host(url: str) -> str:
+    return url.split("/")[2] if "://" in url else ""
+
+
+def evaluate(k: int = 5, sites=None) -> Dict:
+    """`sites`: only questions with an expected URL on one of these hosts.
+    A website-only graph cannot answer a docs-only question, so judging it
+    on one would measure the variant's scope, not its retrieval."""
     qs = yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]
     rows: List[Dict] = []
+    if sites:
+        qs = [q for q in qs if any(_host(u) in sites for u in q["expected_urls"])]
     for q in qs:
         expected = {_page(u) for u in q["expected_urls"]}
         res = retrieve(q["question"], k=k)
@@ -54,13 +63,15 @@ def main() -> int:
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--all", action="store_true", help="print every question")
     ap.add_argument("--json", help="also write the summary to this file")
+    ap.add_argument("--sites", default="",
+                    help="comma-separated hosts; skip questions with no expected URL on them")
     ap.add_argument("--min-hit", type=float, default=None,
                     help="exit 1 if hit@k is below this")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("neo4j").setLevel(logging.ERROR)
 
-    out = evaluate(args.k)
+    out = evaluate(args.k, [x for x in args.sites.split(",") if x] or None)
     for r in out["rows"]:
         if args.all or not r["rank"]:
             print("%-5s %s%s" % (r["rank"] or "MISS", r["question"],

@@ -259,3 +259,36 @@ kg_runtime() {
        -user "$USER" -mtime +1 -exec rm -rf {} + 2>/dev/null
   return 0
 }
+
+# ── graph variants ───────────────────────────────────────────────────────────
+# Each variant is built, eval-gated and published separately:
+#   full     RC website + rc-docs     data/graph/          (the default)
+#   website  RC website only          data/graph-website/
+# RC_KG_SNAPSHOT, if set, overrides the directory for any variant.
+KG_VARIANTS="full website"
+
+kg_snapshot_dir() {
+  case "${1:-full}" in
+    full)    echo "$RC_KG_ROOT/data/graph" ;;
+    website) echo "$RC_KG_ROOT/data/graph-website" ;;
+    *)       kg_die "unknown graph variant '$1' (expected: $KG_VARIANTS)" ;;
+  esac
+}
+
+# Environment that makes the Python side build a given variant.
+kg_variant_env() {
+  case "${1:-full}" in
+    full)    export DOCS_ENABLED=true ;;
+    website) export DOCS_ENABLED=false ;;
+    *)       kg_die "unknown graph variant '$1' (expected: $KG_VARIANTS)" ;;
+  esac
+}
+
+# Sites a variant's eval may be judged on (questions with no expected URL on
+# these sites are skipped: a website-only graph cannot answer a docs question).
+kg_variant_sites() {
+  case "${1:-full}" in
+    full)    echo "rc.northeastern.edu,rc-docs.northeastern.edu" ;;
+    website) echo "rc.northeastern.edu" ;;
+  esac
+}

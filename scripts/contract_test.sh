@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Start a fresh rc-kg from the snapshot and check it against API_CONTRACT.md.
-#   scripts/contract_test.sh        exit 0 = the v1 contract holds
+#   scripts/contract_test.sh                      exit 0 = the v1 contract holds
+#   scripts/contract_test.sh --variant website    against the website-only graph
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_kg_instance.sh"
+[ "${1:-}" = "--variant" ] && export RC_KG_VARIANT="$2"
 PORT="$(kg_free_port)"
 export RC_KG_API_TOKEN="contract-$$"
 SLURM_JOB_ID=contract "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$PORT" >"${TMPDIR:-/tmp}/rc_kg_contract_$$.log" 2>&1 &

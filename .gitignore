@@ -6,4 +6,6 @@ __pycache__/
 data/*.json
 data/dumps/
 !data/.gitkeep
-data/graph/
+# Graph snapshots (every variant) are build outputs, published on /projects;
+# they never belong in git.
+data/graph*/

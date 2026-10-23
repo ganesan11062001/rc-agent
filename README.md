@@ -32,6 +32,29 @@ the page that actually supports the answer they give a researcher.
 
 ---
 
+## Graph variants
+
+Two graphs are built and published separately, each with its own eval gate
+and rollback copy, and a session chooses one:
+
+| variant | contents | snapshot | gated on |
+|---|---|---|---|
+| `full` (default) | RC website + rc-docs | `data/graph/` | all eval questions |
+| `website` | RC website only | `data/graph-website/` | questions the website can answer |
+
+```bash
+scripts/build_graph.sh --all                    # both, one after the other
+scripts/build_graph.sh --variant website        # one
+scripts/serve_kg.sh --port 8090 --variant website
+RC_KG_VARIANT=website scripts/with_kg.sh -m eval.run --sites rc.northeastern.edu
+```
+
+`serve_kg.sh` refuses a snapshot whose manifest names a different variant,
+and `/health` reports `snapshot.variant` (API 1.2), so a session can always
+tell which graph it is grounded in. In TicketMate: `RC_KG_VARIANT=website`
+(e.g. `sbatch --export=ALL,RC_KG_VARIANT=website serve_stack.sbatch`), and
+`/api/health` names the graph.
+
 ## Deploying: build once, serve anywhere
 
 The graph is built once and stored on `/projects`; every job that needs it

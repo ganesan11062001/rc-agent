@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.1"
+API_VERSION = "1.2"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
@@ -153,7 +153,11 @@ def _snapshot() -> Optional[Dict]:
         m = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return {k: m.get(k) for k in ("built_at", "git_commit", "eval")}
+    out = {k: m.get(k) for k in ("built_at", "git_commit", "eval")}
+    # Snapshots from before variants existed are the full graph.
+    out["variant"] = m.get("variant", "full")
+    out["sites"] = m.get("sites") or ["rc.northeastern.edu", "rc-docs.northeastern.edu"]
+    return out
 
 
 @app.get("/health")
