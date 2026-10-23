@@ -63,7 +63,12 @@ it is missing or still loading, drafts work exactly as before, with a caveat
 that they were not checked against the website. `/api/health` reports it as
 `knowledge_graph`.
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.1.0`; see its
+Two graphs are available: `RC_KG_VARIANT=full` (website + docs, the default)
+or `website` (RC website only), e.g.
+`sbatch --export=ALL,RC_KG_VARIANT=website cluster/serve_stack.sbatch`;
+`/api/health` names the one in use.
+
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.2.0`; see its
 `API_CONTRACT.md`). The backend checks `api_version` and, on a different major
 version, drafts ungrounded with a caveat naming both versions rather than
 misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the
