@@ -32,12 +32,22 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 #       snapshot_download('Qwen/Qwen2.5-7B-Instruct-AWQ')"
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
-# vLLM scratch
-export VLLM_CACHE_ROOT="$TM_ROOT/.cache/vllm"
-export OUTLINES_CACHE_DIR="$TM_ROOT/.cache/outlines"
-export TRITON_CACHE_DIR="$TM_ROOT/.cache/triton"
+# vLLM scratch: compiled kernels and grammar caches, written on every launch.
+# The shared copies under $TM_ROOT/.cache belong to whoever installed the
+# project, so other RC members cannot write them; they get their own under
+# /scratch instead (regenerable -- a purge only costs one slower start).
+# The model weights in $HF_HOME are only read, so those stay shared.
+_tm_cache() {
+  if [ -w "$TM_ROOT/.cache/$1" ]; then echo "$TM_ROOT/.cache/$1"
+  else echo "/scratch/$USER/rc_copilot_cache/$1"; fi
+}
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-$(_tm_cache vllm)}"
+export OUTLINES_CACHE_DIR="${OUTLINES_CACHE_DIR:-$(_tm_cache outlines)}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$(_tm_cache triton)}"
+[ -w "$UV_CACHE_DIR" ] || export UV_CACHE_DIR="/scratch/$USER/rc_copilot_cache/uv"
 
-mkdir -p "$HF_HOME" "$VLLM_CACHE_ROOT" "$TRITON_CACHE_DIR" "${OUTLINES_CACHE_DIR:-/tmp}"
+mkdir -p "$VLLM_CACHE_ROOT" "$TRITON_CACHE_DIR" "$OUTLINES_CACHE_DIR"
+[ -d "$HF_HOME" ] || mkdir -p "$HF_HOME"
 
 # CUDA runtime from the cluster module tree (A100 = sm80).
 # The torch wheels bundle their own CUDA libs, so this is only needed for nvcc
