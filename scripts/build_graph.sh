@@ -83,6 +83,14 @@ kg_log "phase 2: topics + embeddings"
 kg_log "phase 5: eval (gate: hit@5 >= $MIN_HIT)"
 "$RC_KG_PY" -m eval.run --json "$WORK/eval.json" --min-hit "$MIN_HIT" --sites "$SITES"
 GATE=$?
+# Full Tier 1 report (RAGAS context metrics + ranking metrics, with CIs) and
+# the graph's integrity checks, kept beside the snapshot. A graph whose
+# relations break an invariant is never published, whatever --force says.
+"$RC_KG_PY" -m eval.retrieval_eval --sites "$SITES" --json "$WORK/retrieval_eval.json" >/dev/null \
+  || kg_die "retrieval_eval failed"
+kg_log "graph evaluation (integrity is a hard gate)"
+"$RC_KG_PY" -m eval.graph_eval --sites "$SITES" --json "$WORK/graph_eval.json" | sed -n '/1. INTEGRITY/,/3. USEFULNESS/p' | grep -E "FAIL|INTEGRITY"
+[ "${PIPESTATUS[0]}" = 0 ] || kg_die "graph integrity checks failed; snapshot NOT published (see graph_eval.json)"
 
 "$RC_KG_PY" - "$WORK" "$MODEL" "$VARIANT" "$SITES" <<'PY' || kg_die "could not write manifest"
 import json, subprocess, sys
@@ -110,6 +118,9 @@ except OSError:
     "neo4j_version": "5.26",
     "counts": counts(),
     "eval": json.loads((work / "eval.json").read_text()),
+    "ragas": {k: v["mean"] for k, v in json.loads((work / "retrieval_eval.json").read_text())["overall"].items()
+              if k in ("context_precision", "id_context_precision", "id_context_recall", "ndcg@5")},
+    "graph_integrity": all(c["ok"] for c in json.loads((work / "graph_eval.json").read_text())["integrity"]),
 }, indent=2))
 PY
 
@@ -123,7 +134,7 @@ mkdir -p "$WORK/out"
 "$NEO4J_HOME/bin/neo4j-admin" database dump neo4j --to-path="$WORK/out" \
   --overwrite-destination=true >"$WORK/dump.log" 2>&1 \
   || { cat "$WORK/dump.log" >&2; kg_die "dump failed"; }
-mv "$WORK/manifest.json" "$WORK/ingest_report.json" "$WORK/out/"
+mv "$WORK/manifest.json" "$WORK/ingest_report.json" "$WORK/retrieval_eval.json" "$WORK/graph_eval.json" "$WORK/out/"
 
 # Publish: stage next to the target (same filesystem), then swap, so a job
 # starting mid-publish never loads a half-copied dump.
@@ -134,13 +145,13 @@ chmod -R a+rX "$STAGE"        # other users' TicketMate jobs load it too
 if [ -f "$SNAP/neo4j.dump" ]; then
   # Hard links: the current files stay in place until renamed over below.
   rm -rf "$SNAP/previous"; mkdir -p "$SNAP/previous"
-  for f in neo4j.dump manifest.json ingest_report.json; do
+  for f in neo4j.dump manifest.json ingest_report.json retrieval_eval.json graph_eval.json; do
     [ -f "$SNAP/$f" ] && ln -f "$SNAP/$f" "$SNAP/previous/$f"
   done
 fi
 # Each rename is atomic. A job starting between them loads the old dump with
 # the new manifest beside it, which only affects what /health reports.
-for f in ingest_report.json manifest.json neo4j.dump; do
+for f in ingest_report.json retrieval_eval.json graph_eval.json manifest.json neo4j.dump; do
   mv -f "$STAGE/$f" "$SNAP/$f" || kg_die "publishing $f failed"
 done
 rmdir "$STAGE"
