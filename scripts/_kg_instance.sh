@@ -19,7 +19,6 @@ RC_KG_PY="$RC_KG_ROOT/.venv/bin/python"
 NEO4J_HOME="$(echo "$RC_KG_ROOT"/vendor/neo4j-community-*)"
 export NEO4J_HOME
 
-kg_die() { echo "rc-kg ERROR: $*" >&2; exit 1; }
 kg_log() { echo "[rc-kg $(date +%H:%M:%S)] $*"; }
 
 kg_free_port() {
@@ -291,4 +290,31 @@ kg_variant_sites() {
     full)    echo "rc.northeastern.edu,rc-docs.northeastern.edu" ;;
     website) echo "rc.northeastern.edu" ;;
   esac
+}
+
+# ── startup progress ─────────────────────────────────────────────────────────
+# If RC_KG_PROGRESS_DIR is set (TicketMate sets it per session), each startup
+# step writes <dir>/<step>.json: {"step","status","detail","at"} with status
+# pending|running|done|failed. One writer per step file, written atomically,
+# so a reader (TicketMate's /api/health) never sees a torn file. The API
+# process writes its own steps the same way (api/app.py).
+KG_CURRENT_STEP=""
+
+kg_progress() {   # kg_progress <step> <status> [detail]
+  [ -n "${RC_KG_PROGRESS_DIR:-}" ] || return 0
+  mkdir -p "$RC_KG_PROGRESS_DIR" 2>/dev/null || return 0
+  local detail="${3:-}"
+  detail="${detail//\\/ }"; detail="${detail//\"/\'}"; detail="${detail//$'\n'/ }"
+  local f="$RC_KG_PROGRESS_DIR/$1.json"
+  printf '{"step":"%s","status":"%s","detail":"%s","at":"%s"}\n' \
+    "$1" "$2" "${detail:0:300}" "$(date -Iseconds)" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
+  [ "$2" = running ] && KG_CURRENT_STEP="$1"
+  return 0
+}
+
+# A fatal error marks whichever step was running as failed, with the reason.
+kg_die() {
+  echo "rc-kg ERROR: $*" >&2
+  [ -n "$KG_CURRENT_STEP" ] && kg_progress "$KG_CURRENT_STEP" failed "$*"
+  exit 1
 }

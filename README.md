@@ -108,6 +108,25 @@ never wrong. Before reporting ready it runs five varied warm-up queries:
 Neo4j's JVM optimises each query over its first executions, and without this
 every session's first ticket took ~3 s to retrieve instead of ~0.15 s.
 
+**Startup progress.** With `RC_KG_PROGRESS_DIR` set, each startup step writes
+`<dir>/<step>.json` (`{"step","status","detail","at"}`; the status is pending,
+running, done or failed). The steps are:
+
+1. `prepare`
+2. `runtime`
+3. `neo4j_load`
+4. `neo4j_start`
+5. `api_start`
+6. `embedder`
+7. `graph`
+8. `warmup`
+
+The checklist exists from the script's first second, and a fatal error marks
+the step that was running as failed, with the reason. TicketMate sets the
+directory per session and reports it in its `/api/health`, so the extension can
+show progress while the graph loads. This is a file side channel, not part of
+the HTTP API.
+
 **TicketMate starts it automatically**: `ood-apps/rc-copilot/template/script.sh.erb`
 and `cluster/serve_stack.sbatch` launch `serve_kg.sh` before vLLM, with a
 fresh port and token, and point the backend at it (`RC_KG_URL`,

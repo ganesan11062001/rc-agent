@@ -10,6 +10,7 @@
 #   RC_KG_API_TOKEN    bearer token for the API (recommended on shared nodes)
 #   RC_KG_TMP          node-local parent dir    default $TMPDIR, else /tmp
 #   RC_KG_THREADS      CPU threads for query embedding, default 2
+#   RC_KG_PROGRESS_DIR startup checklist, one <step>.json per step (see _kg_instance.sh)
 #
 # Cleanup: a normal stop (SIGTERM, Ctrl-C, the job ending) removes everything.
 # If this script is killed outright, a watchdog stops Neo4j and the API and
@@ -37,6 +38,10 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$PORT" ] || PORT="$(kg_free_port)"
 
+# The checklist exists from the first second, so a client never sees nothing.
+for step in prepare runtime neo4j_load neo4j_start api_start embedder graph warmup; do kg_progress "$step" pending; done
+kg_progress prepare running "checking the graph snapshot"
+
 VARIANT="${RC_KG_VARIANT:-full}"
 SNAP="${RC_KG_SNAPSHOT:-$(kg_snapshot_dir "$VARIANT")}" || exit 1
 # A snapshot says which variant it is; refuse to serve the wrong one quietly.
@@ -62,34 +67,51 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' INT TERM
 
+kg_progress prepare running "creating a private Neo4j for this session"
 kg_instance_init "$INST"
+kg_progress prepare done
 kg_watchdog "$INST" &
 WD_PID=$!
 kg_python_env
 cd "$INST" || exit 1          # no repo .env: this process is configured by env only
 
+kg_progress runtime running "unpacking the Python runtime (first start on this node only)"
+t0=$(date +%s)
 kg_runtime
+kg_progress runtime done "ready in $(( $(date +%s) - t0 ))s"
 [ -f "$SNAP/manifest.json" ] && export RC_KG_MANIFEST="$SNAP/manifest.json"
 [ -n "${RC_KG_API_TOKEN:-}" ] || kg_log "WARNING: RC_KG_API_TOKEN unset; the API is open to every user on $(hostname -s)"
 
 # The API starts first so its imports (~10 s) overlap Neo4j's load (~20 s);
 # it answers /health with "loading" until the graph is reachable and embedded.
 kg_log "rc-kg API on http://$HOST:$PORT"
+kg_progress api_start running "loading Python libraries"
 "${KG_PYTHON[@]}" -m uvicorn api.app:app --app-dir "$RC_KG_ROOT" \
   --host "$HOST" --port "$PORT" --log-level warning &
 API_PID=$!
 
 if [ -f "$SNAP/neo4j.dump" ]; then
   kg_log "loading snapshot $SNAP ($(du -h "$SNAP/neo4j.dump" | cut -f1))"
+  kg_progress neo4j_load running "loading the $VARIANT graph snapshot ($(du -h "$SNAP/neo4j.dump" | cut -f1))"
   kg_instance_load "$SNAP"
+  kg_progress neo4j_load done
+  kg_progress neo4j_start running "starting Neo4j"
   kg_instance_start
+  kg_progress neo4j_start done
 else
   kg_log "WARNING: no snapshot at $SNAP; building from the live site (~4 min)"
+  kg_progress neo4j_load running "no snapshot: building the graph from the live sites (~4 min)"
+  kg_progress neo4j_start running "starting Neo4j"
   kg_instance_start
+  kg_progress neo4j_start done
   HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "${KG_PYTHON[@]}" -m ingest.run \
     --report "$INST/ingest_report.json" || kg_die "ingest failed"
   HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "${KG_PYTHON[@]}" -m enrich.run \
     || kg_die "enrich failed"
+  kg_progress neo4j_load done "built from the live sites"
 fi
 kg_log "neo4j up on $NEO4J_URI"
 wait "$API_PID"
+rc=$?
+[ "$rc" = 0 ] || kg_progress api_start failed "the rc-kg API exited with status $rc"
+exit $rc

@@ -65,6 +65,24 @@ _WARMUP_QUERIES = [
 ]
 
 
+def _progress(step: str, status: str, detail: str = "") -> None:
+    """One startup step's state, for TicketMate's progress display (same
+    files and format as kg_progress in scripts/_kg_instance.sh)."""
+    d = os.environ.get("RC_KG_PROGRESS_DIR")
+    if not d:
+        return
+    try:
+        os.makedirs(d, exist_ok=True)
+        target = os.path.join(d, step + ".json")
+        tmp = "%s.tmp.%d" % (target, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"step": step, "status": status, "detail": detail[:300],
+                       "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, fh)
+        os.replace(tmp, target)
+    except OSError:
+        pass                                       # progress is best-effort
+
+
 def _graph_ready() -> bool:
     try:
         d = driver()
@@ -80,29 +98,39 @@ def _graph_ready() -> bool:
 def _warm() -> None:
     """Load the embedding model and wait for the graph before the first query,
     so /health turning "ok" means a query will actually be answered."""
+    step = "embedder"
     try:
+        _progress("embedder", "running", "loading the embedding model")
         get_embedder()
+        _progress("embedder", "done")
+        step = "graph"
+        _progress("graph", "running", "waiting for Neo4j to answer with an embedded graph")
         deadline = time.monotonic() + _WARM_TIMEOUT_S
         while not _graph_ready():
             if time.monotonic() > deadline:
                 raise RuntimeError("graph not ready after %.0f s" % _WARM_TIMEOUT_S)
             time.sleep(1)
+        _progress("graph", "done")
+        step = "warmup"
         # A few varied throwaway queries before reporting ready. Neo4j's JVM
         # compiles and optimizes each query over its first executions; traces
         # showed every session's first real ticket paying for it (retrieval
         # 3.1 s cold vs 0.17 s warm; topic boost and vector search the worst).
         # One warm-up query was not enough (first ticket still 0.96 s); five
         # varied ones bring it to ~0.13 s, measured 2026-10-24.
-        for q in _WARMUP_QUERIES:
+        for i, q in enumerate(_WARMUP_QUERIES, 1):
+            _progress("warmup", "running", "warm-up query %d/%d" % (i, len(_WARMUP_QUERIES)))
             try:
                 retrieve(q, k=6)
             except Exception:                      # noqa: BLE001 -- warm-up is best-effort
                 logger.warning("warm-up query failed", exc_info=True)
                 break
+        _progress("warmup", "done", "%d queries" % len(_WARMUP_QUERIES))
         _ready.set()
         logger.info("rc-kg ready")
     except Exception as exc:                       # noqa: BLE001
         _warm_error.append(str(exc).split("\n")[0])
+        _progress(step, "failed", _warm_error[0])
         logger.exception("rc-kg warm-up failed")
 
 
@@ -110,6 +138,7 @@ def _warm() -> None:
 async def lifespan(app: FastAPI):
     # In a thread: the port opens immediately and /health reports "loading",
     # rather than the client seeing connection refused for ~20 s.
+    _progress("api_start", "done", "API listening")
     threading.Thread(target=_warm, daemon=True).start()
     yield
 
