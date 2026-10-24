@@ -1,0 +1,18 @@
+# Pinned to what was installed and tested on 2026-10-05, Python 3.12.
+neo4j==6.3.1
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.3
+fastapi==0.142.2
+uvicorn==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.12.0
+PyYAML==6.0.3
+python-dotenv==1.2.4
+numpy==2.5.3
+
+# Phase 2+ (EMBEDDING_PROVIDER=sentence_transformers, the default). Installed
+# and tested 2026-10-22. On a CPU-only node install torch from the CPU index
+# first, or pip pulls ~2 GB of CUDA wheels:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+sentence-transformers==6.2.0

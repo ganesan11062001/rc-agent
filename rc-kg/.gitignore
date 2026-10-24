@@ -1,0 +1,12 @@
+.venv/
+.venv-eval/
+vendor/
+__pycache__/
+*.pyc
+.env
+data/*.json
+data/dumps/
+!data/.gitkeep
+# Graph snapshots (every variant) are build outputs, published on /projects;
+# they never belong in git.
+data/graph*/

@@ -1,0 +1,219 @@
+# Retrieval eval. Each question is phrased the way a researcher writes a
+# ticket, not the way the site words its headings, so a pass means retrieval
+# bridged the vocabulary gap rather than matched a title.
+#
+# expected_urls are page URLs (no fragment, no trailing slash). A retrieved
+# section counts as a hit if it is on any listed page. List every page that
+# genuinely answers the question; a page that merely mentions the topic does
+# not belong here.
+#
+# Written 2026-10-22 against the page inventory of that date.
+
+questions:
+  - question: "My Slurm job died and sacct says OUT_OF_MEMORY. What should I change?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - question: "My interactive session keeps getting cancelled even though I'm still using it"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - question: "How can I see how much CPU and memory my finished jobs actually used?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/03/27/job-efficiency-historical-seff
+
+  - question: "My GPU job is stuck pending. What are the GPU partition time and job limits?"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+
+  - question: "I need to run jobs longer than 48 hours, how do I get access to the long partition?"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "I'm a new PhD student, how do I get an account on the cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/getting-access
+
+  - question: "How do I copy my files from Explorer over to the AICR cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/aicr/aicr-transferring-data
+
+  - question: "Files disappeared from my scratch directory, are they deleted automatically?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/scratch-space-policy
+
+  - question: "Our lab needs more storage space for a research project"
+    expected_urls:
+      - https://rc.northeastern.edu/research-projects-storage-space-policy
+      - https://rc.northeastern.edu/data-storage-options
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "conda activate fails on Explorer, my environment was built on Discovery"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/06/26/miniconda3-from-discovery-to-explorer
+      - https://rc-docs.northeastern.edu/en/latest/best-practices/transition.html   # rc-docs, added with the docs ingest
+
+  - question: "How do I start a Jupyter notebook on the cluster from my browser?"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "Can I run a local LLM like llama with Ollama on the HPC?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/03/26/installing-ollama-on-the-hpc-cluster
+
+  - question: "I have thousands of tiny Python tasks, what is the best way to run them?"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/10/23/parallelizing-multiple-small-jobs
+
+  - question: "A professor wants to use the cluster for a class this semester"
+    expected_urls:
+      - https://rc.northeastern.edu/courses-on-explorer
+
+  - question: "My PI is leaving Northeastern, what happens to our account and data?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/user-account-continuity-policy
+
+  - question: "How should I acknowledge Research Computing in my paper?"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/acknowledgements
+
+  - question: "I need a data management plan for an NSF grant proposal"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/data-management-plan-for-funding-agencies
+
+  - question: "How do I add a student to my /projects directory?"
+    expected_urls:
+      - https://rc.northeastern.edu/2026/08/25/managing-projects-through-open-ondemand-ood
+      - https://rc-docs.northeastern.edu/en/latest/managingprojects/commands.html   # rc-docs, added with the docs ingest
+
+  - question: "Will the cluster be unavailable during the annual data center shutdown?"
+    expected_urls:
+      - https://rc.northeastern.edu/cluster-maintenance
+      - https://rc.northeastern.edu/2026/04/28/mghpcc-annual-shutdown-monday-june-15-friday-june-19
+      - https://rc.northeastern.edu/2025/04/30/mghpcc-annual-shutdown-monday-june-2-thursday-june-5
+
+  - question: "Can I talk to someone from RC in person about my workflow?"
+    expected_urls:
+      - https://rc.northeastern.edu/getting-help
+      - https://rc.northeastern.edu/getting-help-2
+
+  - question: "What GPU models are available on Explorer?"
+    expected_urls:
+      - https://rc.northeastern.edu/compute
+      - https://rc.northeastern.edu/2025/04/30/all-about-explorer-and-the-new-h200-gpus
+      - https://rc.northeastern.edu/2025/07/29/all-public-gpus-now-on-explorer
+
+  - question: "I need a software package installed on the cluster"
+    expected_urls:
+      - https://rc.northeastern.edu/service-catalog
+      - https://rc-docs.northeastern.edu/en/latest/software/index.html   # rc-docs, added with the docs ingest
+
+  # Short phrasings, added 2026-10-22 after "How do I start Jupyter on the
+  # cluster?" missed the OOD page while the longer wording above passed.
+  # Tickets are often this terse.
+  - question: "How do I start Jupyter on the cluster?"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "jupyter notebook"
+    expected_urls:
+      - https://rc.northeastern.edu/open-ondemand-ood
+
+  - question: "gpu partition limits"
+    expected_urls:
+      - https://rc.northeastern.edu/partitions
+
+  - question: "scratch files deleted"
+    expected_urls:
+      - https://rc.northeastern.edu/research-computing-policies/scratch-space-policy
+
+  - question: "conda env from discovery broken"
+    expected_urls:
+      - https://rc.northeastern.edu/2025/06/26/miniconda3-from-discovery-to-explorer
+      - https://rc-docs.northeastern.edu/en/latest/best-practices/transition.html   # rc-docs, added with the docs ingest
+
+  - question: "need more storage"
+    expected_urls:
+      - https://rc.northeastern.edu/research-projects-storage-space-policy
+      - https://rc.northeastern.edu/data-storage-options
+      - https://rc.northeastern.edu/service-catalog
+
+  - question: "matlab"
+    expected_urls:
+      - https://rc.northeastern.edu/training/research-computing-spring-training
+      - https://rc.northeastern.edu/2025/11/13/matlab-license-server-update-thursday-november-13
+      - https://rc-docs.northeastern.edu/en/latest/software/systemwide/matlab.html   # rc-docs, added with the docs ingest
+
+  - question: "globus"
+    expected_urls:
+      - https://rc.northeastern.edu/2026/07/23/globus-maintenance-monday-july-27-9-a-m-5-p-m
+      - https://rc-docs.northeastern.edu/en/latest/datamanagement/globus.html   # rc-docs, added with the docs ingest
+
+  # rc-docs (Read the Docs), added 2026-10-22 with the docs ingest. Expected
+  # pages from the docs' own titles (searchindex.js). Where an RC website page
+  # also answers it, it is listed too.
+  - question: "How do I submit a job array so I can run the same script on 100 input files?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/runningjobs/slurmarray.html
+
+  - question: "What do I put in my sbatch script to get a GPU?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/gpus/gpujobsubmission.html
+      - https://rc-docs.northeastern.edu/en/latest/gpus/accessinggpus.html
+
+  - question: "IdleBot keeps cancelling my GPU job, why?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/gpus/idlebot.html
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - question: "How do I run a Docker image on the cluster?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/containers/apptainer.html
+      - https://rc-docs.northeastern.edu/en/latest/containers/index.html
+
+  - question: "How do I transfer a large dataset with Globus?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/datamanagement/globus.html
+
+  - question: "How do I connect to Explorer from my Windows laptop?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/connectingtocluster/windows.html
+
+  - question: "My home directory is full and I can't write files"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/best-practices/homequota.html
+
+  - question: "Can I install software myself with Spack?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/software/packagemanagers/spack.html
+
+  - question: "How do I find and load a software module?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/software/systemwide/modules.html
+      - https://rc-docs.northeastern.edu/en/latest/software/systemwide/module_list.html
+
+  - question: "How do I check how much of our /projects storage is used?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/managingprojects/storagequery.html
+      - https://rc-docs.northeastern.edu/en/latest/best-practices/workquota.html
+
+  - question: "How do I see the status of my running jobs and cancel one?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/runningjobs/slurmmonitoringandmanaging.html
+
+  - question: "How do I get an interactive shell on a compute node with srun?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/runningjobs/interactiveandbatch.html
+
+  - question: "How do I compile my code with CMake on the cluster?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/software/fromsource/cmake.html
+
+  - question: "How do I run an MPI program across several nodes?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/software/systemwide/mpi.html
+
+  - question: "My job is stuck in the queue, how does scheduling priority work?"
+    expected_urls:
+      - https://rc-docs.northeastern.edu/en/latest/runningjobs/understandingqueuing.html

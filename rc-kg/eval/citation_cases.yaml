@@ -1,0 +1,89 @@
+# Hand-labelled citation cases for retrieval/support.py.
+#
+# Each case is a sentence written the way a drafting model writes one, for a
+# ticket-like query. `supported` names the section that genuinely backs the
+# sentence (page path + heading substring); citing it must NOT be flagged.
+# `unsupported` names pages, among those the query retrieves, that clearly do
+# not say it; citing any of their sections MUST be flagged. Pages whose
+# content was uncertain were left out of both lists rather than guessed.
+# (Tim's Tech Tool Tips looks like a staff bio by its heading but is a list of
+# dated tips -- seff, job arrays -- so it is not labelled unsupported.)
+#
+# Labelled 2026-10-22 from the retrieved section headings and text.
+
+cases:
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G."
+    claim: "Your job exceeded its memory request and was killed"
+    supported:
+      - {page: /2025/11/04/debugging-unexpected-job-termination-on-explorer, heading: "Out of Memory"}
+    unsupported: []
+
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G."
+    claim: "Raise the memory request with --mem in your sbatch script and resubmit"
+    supported:
+      - {page: /2025/11/04/debugging-unexpected-job-termination-on-explorer, heading: "Solution"}
+    unsupported: []
+
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G."
+    claim: "Check how much memory the job actually used with seff <jobid>"
+    supported:
+      - {page: /2025/03/27/job-efficiency-historical-seff, heading: "seff"}
+      - {page: /2025/11/04/debugging-unexpected-job-termination-on-explorer, heading: "Out of Memory"}
+    unsupported: []
+
+  - query: "My GPU job has been pending for hours on the gpu partition"
+    claim: "The gpu partition allows 4 running jobs per user with an 8 hour maximum"
+    supported:
+      - {page: /partitions, heading: "General and Application Only"}
+    unsupported: [/getting-help-2, /open-ondemand-ood, /2025/11/04/debugging-unexpected-job-termination-on-explorer]
+
+  - query: "My GPU job has been pending for hours on the gpu partition"
+    claim: "For jobs under two hours, use gpu-short, which has higher priority than gpu"
+    supported:
+      - {page: /partitions, heading: "General and Application Only"}
+    unsupported: [/getting-help-2, /open-ondemand-ood]
+
+  - query: "How do I copy my results from Explorer to AICR?"
+    claim: "While logged in to Explorer you can copy files to AICR with scp or rsync"
+    supported:
+      - {page: /aicr/aicr-transferring-data, heading: "While on Explorer"}
+    unsupported: [/aicr]
+
+  - query: "conda activate fails on Explorer, the env was made on Discovery"
+    claim: "Environments built with the Discovery Miniconda need to be rebuilt for Explorer"
+    supported:
+      - {page: /2025/06/26/miniconda3-from-discovery-to-explorer, heading: "Long-Term Solution"}
+    unsupported: [/training, /aicr/aicr-training]
+
+  - query: "I want to run thousands of small Python jobs"
+    claim: "Run many small Python tasks inside one job instead of submitting thousands of jobs"
+    supported:
+      - {page: /2025/10/23/parallelizing-multiple-small-jobs, heading: "Parallelizing Python Jobs"}
+    unsupported: [/training/research-computing-fall-training, /]
+
+  - query: "My PI is leaving the university, what happens to our data?"
+    claim: "When a PI leaves Northeastern, the group's accounts and storage need a new sponsor"
+    supported:
+      - {page: /research-computing-policies/user-account-continuity-policy, heading: "When a PI leaves"}
+    unsupported: [/research-computing-policies/scratch-space-policy]
+
+  - query: "Files I had in /scratch are gone"
+    claim: "Files in /scratch are purged periodically and are not backed up"
+    supported:
+      - {page: /research-computing-policies/scratch-space-policy, heading: "Scratch Space"}
+    unsupported: []
+
+  # Added 2026-10-22 from TicketMate's contract test after the docs ingest:
+  # both sentences are correctly cited, and were flagged because another
+  # retrieved page (often on the other site) also supports them.
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?"
+    claim: "Check the job's peak memory usage with seff"
+    supported:
+      - {page: /2026/08/25/august-26-2026, heading: "Overview"}
+    unsupported: []
+
+  - query: "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?"
+    claim: "Raise the memory request with --mem and resubmit"
+    supported:
+      - {page: /2025/11/04/debugging-unexpected-job-termination-on-explorer, heading: "Out of Memory"}
+    unsupported: []
