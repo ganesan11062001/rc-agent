@@ -77,8 +77,14 @@ def main() -> int:
     tr = (r or {}).get("trace") or {}
     expect(isinstance(tr.get("timings_ms", {}).get("total"), (int, float)), "trace.timings_ms.total")
     expect(set(tr.get("timings_ms", {})) >= {"embed", "vector", "fulltext", "expand"}, "trace has per-stage timings")
-    expect(isinstance(tr.get("snapshot"), dict) and tr.get("api_version") == "1.3", "trace.snapshot and api_version")
+    expect(isinstance(tr.get("snapshot"), dict) and tr.get("api_version") == "1.4", "trace.snapshot and api_version")
     expect(tr.get("request_id") == "contract-req-1", "X-Request-ID is echoed in trace.request_id")
+    print("POST /similarity")
+    code, sim = call(base, "/similarity", {"query": "my job ran out of memory",
+                                            "texts": ["Request more memory with --mem.", "Globus transfers files."]}, token)
+    sc = (sim or {}).get("scores") or []
+    expect(code == 200 and len(sc) == 2 and all(-1 <= x <= 1 for x in sc), "scores in [-1, 1], one per text")
+    expect(len(sc) == 2 and sc[0] > sc[1], "the relevant text scores higher")
     expect([s.get("ref") for s in srcs] == ["S%d" % i for i in range(1, len(srcs) + 1)],
            "refs are S1..Sn in order")
     expect(all(s.get("url") in (r or {}).get("allowed_urls", []) for s in srcs),

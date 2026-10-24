@@ -117,7 +117,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.3"
+API_VERSION = "1.4"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
@@ -155,6 +155,11 @@ class CiteRequest(BaseModel):
     # Also judge whether each [S#] fits its sentence better than the other
     # sources do (retrieval/support.py). Needs the graph and model loaded.
     check_support: bool = False
+
+
+class SimilarityRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=50_000)
+    texts: List[str] = Field(..., min_length=1, max_length=20)
 
 
 class AnswerRequest(RetrieveRequest):
@@ -245,6 +250,22 @@ def cite_endpoint(req: CiteRequest, x_request_id: Optional[str] = Header(None)) 
         body["text"] = out.text
         del body["texts"]
     return body
+
+
+@app.post("/similarity", dependencies=[Depends(require_token), Depends(require_ready)])
+def similarity_endpoint(req: SimilarityRequest, x_request_id: Optional[str] = Header(None)) -> Dict:
+    """Cosine similarity of `query` (embedded as a query) to each text
+    (embedded as a passage), with the same local model retrieval uses. For
+    clients' answer-relevance checks; nothing leaves the node."""
+    t0 = time.perf_counter()
+    emb = get_embedder()
+    q = emb.embed_query(req.query)
+    docs = emb.embed_documents([t[:20_000] for t in req.texts])
+    scores = [round(sum(a * b for a, b in zip(q, d)), 4) for d in docs]
+    ms = round((time.perf_counter() - t0) * 1000, 1)
+    reqlog.info("similarity id=%s texts=%d ms=%s", x_request_id or "-", len(req.texts), ms)
+    return {"scores": scores, "model": emb.model,
+            "trace": {"request_id": x_request_id, "api_version": API_VERSION, "latency_ms": ms}}
 
 
 def _chat(messages: List[Dict]) -> str:

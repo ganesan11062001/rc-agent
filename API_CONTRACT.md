@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1 (current: 1.3)
+# rc-kg HTTP API contract — v1 (current: 1.4)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -77,6 +77,7 @@ never the query text.
 
 ## Changes
 
+- **1.4** (2026-10-24): `POST /similarity`.
 - **1.3** (2026-10-24): `trace` on `/retrieve` and `/cite`; `X-Request-ID` is
   echoed and logged.
 - **1.2** (2026-10-23): `snapshot.variant` and `snapshot.sites` — which
@@ -84,6 +85,14 @@ never the query text.
 - **1.1** (2026-10-22): `sources[].site` and `sources[].last_modified`, for
   the rc-docs site. `context` labels docs sources and their update date.
 - **1.0**: initial contract.
+
+## `POST /similarity` (1.4)
+
+Request: `{"query": str, "texts": [str, …]}` (1–20 texts). Response:
+`{"scores": [cosine, …], "model": str, "trace": {request_id, api_version, latency_ms}}`
+— the query embedded as a query and each text as a passage, with the
+retrieval model; for answer-relevance checks. Embeddings are normalised, so
+scores are in [-1, 1].
 
 ## `POST /answer`
 
