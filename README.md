@@ -402,6 +402,84 @@ your model is known rather than assumed.
 Ticket text never leaves the cluster: embeddings run in-process, and the API
 binds `127.0.0.1`.
 
+## Evaluation framework
+
+Three layers, each answering a different question. All run against a private
+copy of a snapshot via `scripts/with_kg.sh`; add `RC_KG_VARIANT=website` and
+`--sites rc.northeastern.edu` for the website-only graph.
+
+### 1. Semantic retrieval (RAGAS, no LLM) — `eval/retrieval_eval.py`
+
+```bash
+scripts/with_kg.sh -m eval.retrieval_eval [--json report.json]
+```
+
+Relevance comes from the labels in `eval/questions.yaml` (a retrieved
+section is relevant if its page is an expected page), so it runs anywhere and
+gates builds. Every mean has a 95% bootstrap interval — at this eval size, a
+difference inside it is not evidence.
+
+| metric | what it asks | full graph (45 q) | website graph (31 q) |
+|---|---|---|---|
+| hit@5 | is an answering page in the top 5? | 0.978 [0.93, 1.00] | 1.000 |
+| hit@1 | …at rank 1? | 0.689 [0.56, 0.82] | 0.742 [0.58, 0.87] |
+| MRR | how high is the first answer? | 0.797 [0.70, 0.88] | 0.855 [0.76, 0.94] |
+| nDCG@5 | rank quality over all answering pages | 0.787 | 0.791 |
+| **RAGAS context precision** | are relevant contexts ranked above irrelevant ones? (average precision) | 0.760 [0.68, 0.84] | 0.784 |
+| **RAGAS ID context precision** | share of retrieved pages that are labelled relevant | 0.360 | 0.365 |
+| **RAGAS ID context recall** | share of labelled pages retrieved | 0.919 | 0.866 |
+
+The RAGAS formulas are copied from ragas 0.4.3 and checked against the
+library on the same inputs (`tests/test_metrics.py`); RAGAS normally gets the
+relevance verdicts from an LLM, here they come from the labels. Two caveats
+in reading them: **ID context precision is a lower bound** — the labels are
+not exhaustive, so relevant pages nobody listed count as irrelevant; and
+**ID context recall asks for every listed page**, while the labels list
+alternatives, so hit@k is the measure of "found an answer".
+
+On the 24 website-answerable questions, the full and website graphs do not
+differ measurably (MRR 0.833 [0.73, 0.93] vs 0.861 [0.76, 0.95]): adding the
+docs did not cost website answers.
+
+### 2. Graph relations — `eval/graph_eval.py`
+
+```bash
+scripts/with_kg.sh -m eval.graph_eval [--live] [--json report.json]
+```
+
+| part | what it checks | result (full graph) |
+|---|---|---|
+| integrity | 16 invariants over every relation: one page per section, NEXT is the reading order, CHILD_OF acyclic, LINKS_TO records its href, duplicate_of points at a valid canonical, unique text and URLs among retrievable sections, embeddings present, every MENTIONS edge re-matched against its text (1,846 edges) | **all pass** — a hard gate in `build_graph.sh` |
+| live validity (`--live`) | every cited section URL lands where it claims on the live site (`#id` exists, text-fragment heading present); every LINKS_TO edge's href resolves to its target | section links **99.6%** (496/498); LINKS_TO **100%** (461/461) |
+| usefulness | do relations put answer-bearing pages in front of the model? | page recall@5 0.919 → 0.930 with linked pages (no question answered *only* via a link); topic signal on vs off: MRR 0.797 vs 0.789 — **no measurable effect** |
+| topics | coverage, specificity, alias dominance | 93.8% of sections have a topic; "Explorer cluster", "Storage", "Slurm" each cover >25% (IDF-downweighted in ranking); "Discovery cluster" matched almost entirely by the ambiguous word "Discovery" |
+| topology | components, unlinked pages, cross-site edges | 151 of 170 pages in one component; 20 retrievable pages nothing links to; 54 website→docs and 17 docs→website page edges |
+
+What this says plainly: the graph's relations are **correct** (integrity and
+live validity), and they earn their keep in **citations** (exact anchors,
+dedupe, cross-site link mapping) and **context** (neighbouring sections,
+linked pages shown to the model) — but they **barely move ranking** on this
+eval. The two live failures are sections headed "Overview" whose
+text-fragment target is not visible on the rendered page (a browser lands at
+the page top instead).
+
+### 3. LLM-judged RAGAS — `eval/ragas_llm.py`
+
+```bash
+scripts/eval_env.sh                                        # once: .venv-eval
+scripts/ragas_eval.sh --judge-url http://<node>:<port>/v1 --questions
+scripts/ragas_eval.sh --judge-url http://<node>:<port>/v1 --runs /scratch/$USER/rc_copilot_runs --only RCKG-EVAL
+```
+
+`--questions`: ContextRelevance on the eval questions (catches relevant pages
+the labels miss). `--runs`: Faithfulness, ResponseGroundedness and
+ContextUtilization on real TicketMate drafts (e.g. those `eval/draft_batch.py`
+produces). The judge must be a vLLM inside the university — ticket text goes
+to it. It runs in its own `.venv-eval` (`requirements-eval.txt`; ragas 0.4.3
+needs the langchain 0.3 line) and reaches the graph through the HTTP API.
+Plumbing is tested end to end with `tests/stub_judge.py`; **it has not yet
+run with a real judge model**, so no LLM-judged scores exist yet.
+
 ## Adding topics and eval questions
 
 **Topics** live in `topics.yaml` (`name`, `description`, `aliases`). A section
@@ -470,6 +548,6 @@ seff and job-array tips).
 | `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement and support check, CLI |
 | `api/` | FastAPI service for TicketMate |
 | `API_CONTRACT.md` | The v1 HTTP contract clients rely on |
-| `eval/` | Retrieval eval (`run.py`), citation-check eval (`citation_check.py`), real-draft review (`citation_review.py`, `draft_batch.py`), contract check (`contract_check.py`) |
-| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
+| `eval/` | Retrieval: `run.py` (build gate), `retrieval_eval.py` + `metrics.py` (RAGAS + ranking, CIs), `ragas_llm.py` (LLM-judged). Graph: `graph_eval.py`. Citations: `citation_check.py`, `citation_review.py`, `draft_batch.py`. Contract: `contract_check.py` |
+| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh`, `eval_env.sh`, `ragas_eval.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
 | `tests/` | 72 unit tests: sectioning, anchors, URLs, duplicates, topics, citations, claims, query building |
