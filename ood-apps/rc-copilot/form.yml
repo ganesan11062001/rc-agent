@@ -43,32 +43,33 @@ attributes:
   gpu_layout:
     widget: select
     label: "GPUs"
-    value: "t4"
+    value: "any"
     options:
-      - ["1 x T4 16GB - available now, 4-bit models (recommended)", "t4"]
-      - ["1 x A100 80GB - 32K context, full-precision GLM", "1x80"]
+      - ["Any free GPU - T4, A100 or H200, whichever starts first (recommended)", "any"]
+      - ["1 x T4 16GB - 4-bit models", "t4"]
+      - ["1 x A100 80GB or H200 - 32K context, full-precision GLM", "1x80"]
       - ["1 x A100 40GB - up to Qwen2.5-7B at fp16", "1x40"]
       - ["2 x A100 - 131K context, needs multigpu approval", "2x"]
       - ["4 x A100 - GLM-4.5-Air, needs multigpu approval", "4x"]
     help: >-
-      A100s are heavily contended here; the single T4 node (d1025) is usually
-      free. vLLM permits AWQ 4-bit from sm_75, which a T4 is, so a 4-bit 7B fits
-      in 16 GB with room for KV cache. Pick an A100 only if you need
-      full-precision GLM. Never V100 - torch has no sm_70 kernels.
+      "Any free GPU" asks for one GPU and excludes every V100 node, so the job
+      starts on the first T4, A100 or H200 that frees up. It suits the 4-bit
+      models and the 3B test model, which fit even a 16 GB T4. The fp16 and GLM
+      models need more memory and pick their own GPU whatever is chosen here.
+      Never V100 - torch has no sm_70 kernels.
 
   rc_model:
     widget: select
     label: "Model"
     value: "t4-7b"
     options:
-      - ["Qwen2.5-7B AWQ - 4-bit, runs on a T4 (recommended)", "t4-7b"]
-      - ["Qwen2.5-14B AWQ - 4-bit, T4 but tight, 8K context", "t4-14b"]
+      - ["Qwen2.5-7B AWQ - 4-bit, fits any GPU (recommended)", "t4-7b"]
+      - ["Qwen2.5-14B AWQ - 4-bit, tight on a T4, 8K context", "t4-14b"]
       - ["Qwen2.5-3B - smoke test only, weakest drafts", "small"]
       - ["Qwen2.5-7B fp16 - needs an A100 40GB", "qwen7b"]
-      - ["GLM-4.7-Flash (30B MoE) - needs an A100 80GB", "flash"]
+      - ["GLM-4.7-Flash (30B MoE) - needs an A100 80GB or H200", "flash"]
       - ["GLM-4.5-Air (106B) - 4 GPUs, multigpu approval", "air"]
     help: >-
-      The AWQ builds are 4-bit and fit a T4; the fp16 and GLM builds need an
-      A100. Choosing a model that does not fit the GPU you picked will be
-      rejected at submission rather than after the queue wait. Qwen2.5-3B is
-      only for proving the pipeline - its drafts are noticeably weaker.
+      The AWQ builds are 4-bit and fit any usable GPU; the fp16 and GLM builds
+      need an A100 or H200 and override the GPU choice. Qwen2.5-3B is only for
+      proving the pipeline - its drafts are noticeably weaker.

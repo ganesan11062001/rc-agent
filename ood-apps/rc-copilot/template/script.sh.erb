@@ -27,6 +27,7 @@ GPU_LAYOUT="<%= context.gpu_layout %>"
 # leaving ~12.5 GiB -> roughly 124,000 KV tokens, which is still ~3.8x
 # concurrency at a 32K context. A ticket plus prompt is a few thousand tokens.
 case "$GPU_LAYOUT" in
+  any)  TP=1; MAX_LEN=16384  ;;
   t4)   TP=1; MAX_LEN=16384  ;;
   1x40) TP=1; MAX_LEN=32768  ;;
   1x80) TP=1; MAX_LEN=32768  ;;
@@ -61,6 +62,16 @@ echo "=== layout=${GPU_LAYOUT} -> TP=${TP}, max_model_len=${MAX_LEN} ==="
 
 echo "=== RC Copilot on $(hostname) (job ${SLURM_JOB_ID:-?}) ==="
 nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
+
+# submit.yml.erb keeps V100s out with --exclude, built from sinfo. If one
+# slips through anyway (a node sinfo didn't report), say so now rather than
+# after vLLM fails with "no kernel image is available".
+CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')"
+if [ "$CC" = "7.0" ]; then
+  echo "ERROR: landed on a V100 (sm_70); torch here has no kernels for it."
+  echo "       Relaunch and pick a specific GPU type in the form."
+  exit 1
+fi
 
 source "$TM_ROOT/cluster/env.sh"
 

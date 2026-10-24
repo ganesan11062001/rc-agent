@@ -10,16 +10,25 @@
   # a combination that is guaranteed to OOM at load.
   layout = "4x" if model == "air"
 
-  # 4-bit AWQ builds are T4-sized; force the layout so the form cannot produce
-  # a 4-bit model on an 80 GB card or a GLM model on a T4.
-  layout = "t4"    if model.start_with?("t4-")
+  # 4-bit AWQ builds are T4-sized, so they fit every usable card here. Keep
+  # "any" when it was picked; otherwise pin them to a T4 so the form cannot
+  # produce a GLM model on a T4.
+  layout = "t4"    if model.start_with?("t4-") && layout != "any"
   layout = "1x40"  if model == "qwen7b"
   layout = "1x80"  if model == "flash"
 
-  # The 3B test model is ~6 GB and runs anywhere with sm_75+.
-  layout = "small" if model == "small"
+  # The 3B test model is ~6 GB and runs anywhere with sm_75+. It used to ask
+  # for a bare gpu:1, which lands on a V100 more often than not.
+  layout = "any"   if model == "small"
 
   case layout
+  when "any"
+    # One GPU of any type that can run 4-bit Qwen: T4, A100 or H200. The real
+    # selection is the --exclude list built below.
+    gres       = "gpu:1"
+    constraint = ""
+    mem        = 48
+    cpus       = 8
   when "t4"
     # Single T4. 4-bit weights leave room for KV; the node has plenty of RAM.
     gres       = "gpu:t4:1"
@@ -32,11 +41,6 @@
     constraint = ""
     mem        = 80
     cpus       = 12
-  when "small"
-    gres       = "gpu:1"
-    constraint = ""
-    mem        = 32
-    cpus       = 8
   when "1x80"
     # Weights are ~56 GiB on one card, so a 40GB A100 cannot hold them at all.
     gres       = "gpu:a100:1"
@@ -67,6 +71,43 @@
                 "multigpu" => 24 }.fetch(part, 2)
   hours = max_hours if hours > max_hours
   hours = 1 if hours < 1
+
+  # "Whichever usable GPU frees up first" can't be a --constraint here: GPU
+  # types are not node features on this cluster (a100@80g is the only one). So
+  # ask for any one GPU and --exclude every node in the partition that can't
+  # run the model. The list comes from sinfo at submit time, so a new or
+  # renamed node can't make it stale.
+  exclude = ""
+  if ["any", "1x80"].include?(layout)
+    nodes = []
+    if part =~ /\A[\w-]+\z/
+      nodes = `sinfo -h -N -p #{part} -o '%N|%G|%f' 2>/dev/null`.lines
+                .map { |l| l.strip.split("|", 3) }
+                .select { |n| n.length == 3 }
+                .uniq
+    end
+
+    usable =
+      if layout == "any"
+        # V100 (sm_70) has no kernels in this torch build; everything else does.
+        ->(g, f) { g.include?("gpu:") && !g.include?("v100") }
+      else
+        # ~56 GiB of weights: an 80 GB A100 or an H200.
+        ->(g, f) { g.include?("h200") || f.split(",").include?("a100@80g") }
+      end
+
+    if nodes.any? { |_, g, f| usable.call(g, f) }
+      gres       = "gpu:1"
+      constraint = ""
+      exclude    = nodes.reject { |_, g, f| usable.call(g, f) }.map(&:first).uniq.join(",")
+    elsif layout == "any"
+      # Without the list, gpu:1 would happily start on a V100 and fail there.
+      raise "Couldn't list the GPU nodes in #{part} (sinfo returned nothing), " \
+            "so 'Any free GPU' can't keep V100s out. Pick a specific GPU type instead."
+    end
+    # 1x80 with no node list keeps --constraint=a100@80g: still correct, just
+    # A100-only.
+  end
 -%>
 batch_connect:
   template: "basic"
@@ -77,6 +118,9 @@ script:
     - "--gres=<%= gres %>"
 <%- unless constraint.empty? -%>
     - "--constraint=<%= constraint %>"
+<%- end -%>
+<%- unless exclude.empty? -%>
+    - "--exclude=<%= exclude %>"
 <%- end -%>
     - "--cpus-per-task=<%= cpus %>"
     - "--mem=<%= mem %>G"

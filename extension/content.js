@@ -21,17 +21,16 @@
 
   /* ---------- field discovery ---------- */
 
-  /* Walk the DOM including shadow roots. Next Experience needs this; Classic
-     is unaffected because it simply has no shadow roots to descend into. */
-  function deepCollect(root, out, depth) {
+  /* Every document and shadow root reachable from here. Next Experience needs
+     the shadow roots; Classic is unaffected because it has none.
+
+     Same-origin iframes are followed too. Next Experience opens classic forms
+     (/now/nav/ui/classic/...) in a #gsft_main iframe that sits inside the
+     shell's shadow DOM, so without this the top frame sees no fields at all.
+     Cross-origin frames throw or return null, and are skipped. */
+  function searchRoots(root, out, depth) {
+    out.push(root);
     if (depth > 12) return out; // guard against pathological nesting
-    let nodes;
-    try {
-      nodes = root.querySelectorAll("input, textarea, [contenteditable='true']");
-    } catch (err) {
-      return out;
-    }
-    for (const node of nodes) out.push(node);
 
     let all;
     try {
@@ -40,13 +39,28 @@
       return out;
     }
     for (const el of all) {
-      if (el.shadowRoot) deepCollect(el.shadowRoot, out, depth + 1);
+      if (el.shadowRoot) searchRoots(el.shadowRoot, out, depth + 1);
+      if (el.tagName === "IFRAME" || el.tagName === "FRAME") {
+        let doc = null;
+        try { doc = el.contentDocument; } catch (err) { /* cross-origin */ }
+        if (doc) searchRoots(doc, out, depth + 1);
+      }
+    }
+    return out;
+  }
+
+  function deepQueryAll(selector) {
+    const out = [];
+    for (const root of searchRoots(document, [], 0)) {
+      try {
+        for (const node of root.querySelectorAll(selector)) out.push(node);
+      } catch (err) { /* detached or cross-origin mid-navigation */ }
     }
     return out;
   }
 
   function allFields() {
-    return deepCollect(document, [], 0).filter(function (node) {
+    return deepQueryAll("input, textarea, [contenteditable='true']").filter(function (node) {
       if (node.type === "hidden" || node.disabled) return false;
       if (node.offsetParent === null && node.getClientRects().length === 0) return false;
       return true;
@@ -111,9 +125,10 @@
       ".h-card-wrapper"
     ];
     for (const selector of selectors) {
-      const node = document.querySelector(selector);
-      if (node && node.innerText && node.innerText.trim()) {
-        return node.innerText.trim().slice(0, MAX_ACTIVITY_CHARS);
+      for (const node of deepQueryAll(selector)) {
+        if (node.innerText && node.innerText.trim()) {
+          return node.innerText.trim().slice(0, MAX_ACTIVITY_CHARS);
+        }
       }
     }
     return "";
@@ -150,10 +165,14 @@
       return true;
     }
 
+    // The node may live in a child frame, and instanceof against this frame's
+    // constructors is false for it -- which would pick the input setter for a
+    // textarea and throw. Use the constructors of the node's own window.
+    const win = (node.ownerDocument && node.ownerDocument.defaultView) || window;
     const proto =
-      node instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
+      node instanceof win.HTMLTextAreaElement
+        ? win.HTMLTextAreaElement.prototype
+        : win.HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
     if (!descriptor || !descriptor.set) return false;
 
@@ -589,8 +608,17 @@
     return !!(findField("short_description") || findField("description"));
   }
 
+  /* True in a child frame whose top frame is same-origin. The top frame reads
+     this frame's fields through searchRoots(), so it owns the UI and this
+     frame must not build a second panel. */
+  function topFrameOwns() {
+    if (window === window.top) return false;
+    try { return !!window.top.document; } catch (e) { return false; }
+  }
+
   /* We run in every frame (all_frames:true), so exactly one must own the UI.
-     The frame holding the ticket fields wins. If no frame has fields -- which
+     A same-origin top frame always does (see topFrameOwns). Otherwise the
+     frame holding the ticket fields wins. If no frame has fields -- which
      is what happens when the selectors do not match this ServiceNow UI -- the
      top frame still shows the button, and the panel explains why nothing was
      found. Failing visibly matters more than failing tidily: a missing button
@@ -607,6 +635,7 @@
   }
 
   function mount() {
+    if (topFrameOwns()) return;
     if (document.getElementById(PANEL_ID)) {
       if (isOpen()) refresh();
       return;
@@ -629,13 +658,31 @@
     }, 2500);
   }
 
+  function onPageChanged() {
+    mount();
+    if (isOpen()) renderTicket();
+  }
+
+  /* The top frame's observer can't see inside child frames, so a form that
+     loads into an iframe after the panel was built would never be re-read.
+     Child frames call this instead. Content scripts of one extension share a
+     world across same-origin frames, so window.top's copy is reachable. */
+  if (window === window.top) window.__rcCopilotPageChanged = onPageChanged;
+
   /* ServiceNow swaps forms in without a page load. */
   let pending = null;
   const observer = new MutationObserver(function () {
     clearTimeout(pending);
     pending = setTimeout(function () {
-      mount();
-      if (isOpen()) renderTicket();
+      if (topFrameOwns()) {
+        try {
+          if (typeof window.top.__rcCopilotPageChanged === "function") {
+            window.top.__rcCopilotPageChanged();
+          }
+        } catch (e) { /* top navigated away */ }
+        return;
+      }
+      onPageChanged();
     }, 500);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
