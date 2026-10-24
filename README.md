@@ -341,7 +341,14 @@ ungrounded, with a caveat naming the versions. Bump MAJOR for anything that
 could break an existing client, MINOR for additions; tag releases (`v1.0.0`).
 
 `scripts/contract_test.sh` starts a fresh instance and asserts every field in
-the contract (46 checks). TicketMate's `tests/rc_kg/run_contract.sh` checks
+the contract.
+
+**Tracing (API 1.3).** `/retrieve` and `/cite` return a `trace` (per-stage
+timings, candidate counts, ranking settings, best vector score, graph
+snapshot) and echo the caller's `X-Request-ID`. rc-kg logs one line per
+request with that id, timings and counts — never the query, which may be
+ticket text. TicketMate stores the full trace of each draft in the user's
+private run log. TicketMate's `tests/rc_kg/run_contract.sh` checks
 the other side: grounding, citation numbering and flags, a v2 rc_kg refused,
 and rc_kg down. Run both before tagging or deploying a change to either.
 

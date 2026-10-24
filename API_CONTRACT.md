@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1 (current: 1.2)
+# rc-kg HTTP API contract — v1 (current: 1.3)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -52,6 +52,7 @@ Request: `{"query": str (1–50,000 chars), "k": int 1–20 = 6, "include_events
 | `sources[].last_modified` | string | `YYYY-MM-DD`, may be empty (1.1) |
 | `sources[].site` | string | `rc.northeastern.edu` or `rc-docs.northeastern.edu` (1.1) |
 | `sources[].score` | number | |
+| `trace` | object (1.3) | how the result was produced: `request_id` (echo of the `X-Request-ID` header), `api_version`, `snapshot`, `timings_ms` {embed, vector, fulltext, topics, expand, total}, `candidates`, `settings`, `best_vector_score`, `context_chars` |
 
 ## `POST /cite`
 
@@ -68,9 +69,16 @@ Request: exactly one of `text: str` or `texts: str[]`, plus
 | `removed_urls` | string[] | |
 | `unknown_refs` | string[] | markers naming no source |
 | `support` | `{ref, claim, verdict, score, best_ref, best_score}[]` \| null | `check_support` only, and only once loaded; `verdict` is `"ok"` \| `"better_source"` \| `"weak"` |
+| `trace` | `{request_id, api_version, latency_ms}` (1.3) | |
+
+Send `X-Request-ID` on `/retrieve` and `/cite` to correlate them with your own
+trace; rc-kg logs one line per request with that id, timings and counts, and
+never the query text.
 
 ## Changes
 
+- **1.3** (2026-10-24): `trace` on `/retrieve` and `/cite`; `X-Request-ID` is
+  echoed and logged.
 - **1.2** (2026-10-23): `snapshot.variant` and `snapshot.sites` — which
   graph is being served (`full` or `website`).
 - **1.1** (2026-10-22): `sources[].site` and `sources[].last_modified`, for

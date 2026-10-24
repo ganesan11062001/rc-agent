@@ -16,10 +16,10 @@ _open = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
 FAILS = []
 
 
-def call(base, path, body=None, token=None):
+def call(base, path, body=None, token=None, headers=None):
     req = urllib.request.Request(base + path,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"Content-Type": "application/json",
+        headers={"Content-Type": "application/json", **(headers or {}),
                  **({"Authorization": "Bearer " + token} if token else {})})
     try:
         with _open(req, timeout=60) as r:
@@ -62,7 +62,8 @@ def main() -> int:
 
     print("POST /retrieve")
     expect(call(base, "/retrieve", {"query": "   "}, token)[0] == 400, "empty query -> 400")
-    code, r = call(base, "/retrieve", {"query": "my job was killed out of memory", "k": 4}, token)
+    code, r = call(base, "/retrieve", {"query": "my job was killed out of memory", "k": 4}, token,
+                   headers={"X-Request-ID": "contract-req-1"})
     expect(code == 200, "200")
     for f, t in (("query", str), ("query_topics", list), ("low_confidence", bool),
                  ("context", str), ("allowed_urls", list), ("sources", list)):
@@ -73,6 +74,11 @@ def main() -> int:
                  ("heading", str), ("text", str), ("published", str), ("score", (int, float)),
                  ("last_modified", str), ("site", str)):
         expect(all(has(s, f, t) for s in srcs), "sources[].%s" % f)
+    tr = (r or {}).get("trace") or {}
+    expect(isinstance(tr.get("timings_ms", {}).get("total"), (int, float)), "trace.timings_ms.total")
+    expect(set(tr.get("timings_ms", {})) >= {"embed", "vector", "fulltext", "expand"}, "trace has per-stage timings")
+    expect(isinstance(tr.get("snapshot"), dict) and tr.get("api_version") == "1.3", "trace.snapshot and api_version")
+    expect(tr.get("request_id") == "contract-req-1", "X-Request-ID is echoed in trace.request_id")
     expect([s.get("ref") for s in srcs] == ["S%d" % i for i in range(1, len(srcs) + 1)],
            "refs are S1..Sn in order")
     expect(all(s.get("url") in (r or {}).get("allowed_urls", []) for s in srcs),

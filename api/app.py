@@ -38,6 +38,16 @@ from retrieval.graphrag import retrieve
 
 logger = logging.getLogger(__name__)
 
+# One line per request -- request id, timings, counts -- and never the query:
+# ticket text stays in the caller's private run log, not in rc-kg's log.
+reqlog = logging.getLogger("rc_kg.requests")
+if not reqlog.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+    reqlog.addHandler(_h)
+    reqlog.setLevel(logging.INFO)
+    reqlog.propagate = False
+
 _ready = threading.Event()
 _warm_error: List[str] = []
 
@@ -88,7 +98,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.2"
+API_VERSION = "1.3"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
@@ -179,16 +189,23 @@ def health() -> Dict:
 
 
 @app.post("/retrieve", dependencies=[Depends(require_token), Depends(require_ready)])
-def retrieve_endpoint(req: RetrieveRequest) -> Dict:
+def retrieve_endpoint(req: RetrieveRequest,
+                      x_request_id: Optional[str] = Header(None)) -> Dict:
     try:
         res = retrieve(req.query, k=req.k, include_events=req.include_events)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return asdict(res)
+    body = asdict(res)
+    body["trace"].update(request_id=x_request_id, api_version=API_VERSION, snapshot=_snapshot())
+    reqlog.info("retrieve id=%s k=%d sources=%d best_vec=%.3f low=%s total_ms=%s",
+                x_request_id or "-", req.k, len(res.sources), res.trace["best_vector_score"],
+                res.low_confidence, res.trace["timings_ms"]["total"])
+    return body
 
 
 @app.post("/cite", dependencies=[Depends(require_token)])
-def cite_endpoint(req: CiteRequest) -> Dict:
+def cite_endpoint(req: CiteRequest, x_request_id: Optional[str] = Header(None)) -> Dict:
+    t0 = time.perf_counter()
     if (req.text is None) == (req.texts is None):
         raise HTTPException(422, "send exactly one of `text` or `texts`")
     texts = [req.text] if req.text is not None else req.texts
@@ -198,6 +215,13 @@ def cite_endpoint(req: CiteRequest) -> Dict:
     body["support"] = None
     if req.check_support and _ready.is_set():
         body["support"] = [asdict(v) for v in support.check(texts, req.refs)]
+    body["trace"] = {"request_id": x_request_id, "api_version": API_VERSION,
+                     "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    reqlog.info("cite id=%s texts=%d cited=%d removed=%d unknown=%d flagged=%d ms=%s",
+                x_request_id or "-", len(texts), len(out.cited), len(out.removed_urls),
+                len(out.unknown_refs),
+                sum(1 for v in body["support"] or [] if v["verdict"] != "ok"),
+                body["trace"]["latency_ms"])
     if req.text is not None:
         body["text"] = out.text
         del body["texts"]

@@ -20,6 +20,7 @@ from the graph.
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -105,6 +106,10 @@ class RetrievalResult:
     context: str
     allowed_urls: List[str]
     low_confidence: bool
+    # How this result was produced, for traceability: per-stage timings,
+    # candidate counts, the ranking settings and the best vector score. No
+    # query text (the caller has it).
+    trace: Dict = field(default_factory=dict)
 
 
 def _fulltext_query(text: str) -> str:
@@ -195,6 +200,15 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
     if not query:
         raise ValueError("empty query")
 
+    t_start = time.perf_counter()
+    timings: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+
+    def lap(name: str, since: float) -> float:
+        now = time.perf_counter()
+        timings[name] = round((now - since) * 1000, 1)
+        return now
+
     emb = get_embedder()
     topics = load_topics()
     query_topics = sorted(match_topics(query, topics))
@@ -220,17 +234,26 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
                 "`python -m enrich.run --reembed`" % (model_rows, emb.model)
             )
 
+        t = time.perf_counter()
         vec = emb.embed_query(query)
+        t = lap("embed", t)
         for rank, r in enumerate(sess.run(VECTOR, n=candidates, vec=vec, events=events), 1):
             add(r["sid"], "vector", rank)
             vector_scores[r["sid"]] = r["score"]
+        counts["vector"] = len(vector_scores)
+        t = lap("vector", t)
 
         ft = _fulltext_query(query)
+        n_ft = 0
         if ft:
             for rank, r in enumerate(
                 sess.run(FULLTEXT, q=ft, n=candidates, events=events), 1
             ):
                 add(r["sid"], "fulltext", rank, _FULLTEXT_WEIGHT)
+                n_ft = rank
+        counts["fulltext"] = n_ft
+        t = lap("fulltext", t)
+        topic_weight = 0.0
 
         if query_topics and _TOPIC_MODE != "off":
             topic_weight = _TOPIC_WEIGHT
@@ -244,9 +267,13 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             ):
                 if _TOPIC_INTRODUCES or r["sid"] in found:
                     add(r["sid"], "topic", rank, topic_weight)
+                    counts["topic"] = counts.get("topic", 0) + 1
+        t = lap("topics", t)
 
         order = sorted(fused, key=fused.get, reverse=True)
+        counts["fused"] = len(order)
         rows = {r["sid"]: r for r in sess.run(EXPAND, sids=order[: k * 4])}
+        lap("expand", t)
 
     ranked: List[str] = []
     per_page: Dict[str, int] = {}
@@ -297,13 +324,26 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
         allowed += [src.url, src.page_url] + [l["url"] for l in src.links] + src.external_links
     allowed = list(dict.fromkeys(allowed))
 
+    context = format_context(sources)
+    timings["total"] = round((time.perf_counter() - t_start) * 1000, 1)
     return RetrievalResult(
         query=query,
         query_topics=query_topics,
         sources=sources,
-        context=format_context(sources),
+        context=context,
         allowed_urls=allowed,
         low_confidence=low,
+        trace={
+            "timings_ms": timings,
+            "candidates": counts,
+            "settings": {"k": k, "candidates": candidates, "rrf_k": _RRF_K,
+                         "topic_mode": _TOPIC_MODE, "topic_weight": round(topic_weight, 4),
+                         "fulltext_weight": _FULLTEXT_WEIGHT, "max_per_page": _MAX_PER_PAGE,
+                         "embedding_model": emb.model},
+            "best_vector_score": round(best_vec, 4),
+            "low_confidence_threshold": 0.78,
+            "context_chars": len(context),
+        },
     )
 
 
