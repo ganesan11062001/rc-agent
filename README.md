@@ -105,6 +105,30 @@ queries before reporting ready.
 rc_kg logs only request ids, timings and counts — never ticket text. `/scratch`
 is purged monthly; copy logs you need to keep to a private (mode 700) place.
 
+### Evaluation of every draft
+
+Each draft is evaluated as it is made, and every result is stored as feedback
+on its trace (so `cluster/traces.py stats --by prompt_version` compares them
+across models and prompt revisions):
+
+| metric | how | when | direction |
+|---|---|---|---|
+| **assertions** | code checks of the system prompt's rules — sign-off exact, no placeholder name, no invented ticket number, no promised timeline/exception, confidence consistent with caveats, summary ≤ 2 sentences — plus has steps, no URLs outside the sources, no citations to missing sources, cites sources when they were good | instant; shown in the UI | 1 = pass |
+| **hallucination** | LLM judge: share of claims supported by neither the sources nor the ticket; plus `hallucinated_urls` (invented links removed) and `unsupported_citation_rate` (citation check) | judge in the background | **lower is better** |
+| **correctness** | LLM judge (would it resolve the problem, given the sources); people's *Correct / Partly / Wrong*; `edit_similarity` between the draft and the reply actually sent | judge in background; people any time | higher |
+| **conciseness** | reply length against a target (≤180 words = 1, 0 at 450); LLM judge | instant + background | higher |
+| **answer relevance** | embedding similarity of ticket and reply (rc_kg's local model, `/similarity`); LLM judge | instant + background | higher |
+| **user satisfaction** | 👍/👎, 1–5 rating, *used as is / edited / not used*, comment, the reply as sent | the feedback form | higher |
+
+The judge is the serving model grading its own draft, after the reply has
+been returned (`ONLINE_EVAL`, `ONLINE_EVAL_SAMPLE_RATE`): use its scores for
+trends, and people's feedback as ground truth.
+
+**Feedback form.** Under every draft, in both the extension panel and the web
+page, with the automatic checks shown above it. In the extension, *Capture
+what's in the field* reads the reply as you edited it in ServiceNow, so the
+draft can be compared with what was actually sent.
+
 ### Grounded in the RC website
 
 Each ticket is also matched against the rc.northeastern.edu website and the
@@ -127,7 +151,7 @@ or `website` (RC website only), e.g.
 `sbatch --export=ALL,RC_KG_VARIANT=website cluster/serve_stack.sbatch`;
 `/api/health` names the one in use.
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.3.1`; see its
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.4.0`; see its
 `API_CONTRACT.md`). The backend checks `api_version` and, on a different major
 version, drafts ungrounded with a caveat naming both versions rather than
 misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the

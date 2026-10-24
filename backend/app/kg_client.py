@@ -108,6 +108,20 @@ def _why(exc: Exception) -> str:
     return str(getattr(exc, "reason", exc))
 
 
+async def similarity(query: str, texts: List[str], request_id: str = "") -> Optional[List[float]]:
+    """rc_kg's /similarity (API >= 1.4): cosine of query to each text with the
+    local embedding model. None when rc_kg is off, down, or older."""
+    s = get_settings()
+    if not s.rc_kg_url or not _compatible:
+        return None
+    try:
+        res = await _acall("/similarity", {"query": query, "texts": texts}, request_id=request_id)
+        return res.get("scores")
+    except Exception as exc:                       # noqa: BLE001
+        logger.info("rc_kg similarity unavailable: %s", _why(exc))
+        return None
+
+
 def _version_problem(h: Dict[str, Any]) -> Optional[str]:
     got = str(h.get("api_version") or "")
     if got.split(".")[0] != EXPECTED_API_MAJOR:

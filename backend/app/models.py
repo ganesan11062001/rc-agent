@@ -68,6 +68,8 @@ class DraftResponse(LLMDraft):
     # for it), and the tokens it cost across every model call it took.
     request_id: str = ""
     usage: Optional[Dict[str, int]] = None
+    # Evaluator results at draft time: assertions (pass/fail) and metrics.
+    evaluations: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_llm_draft(
@@ -87,7 +89,10 @@ class FeedbackRequest(BaseModel):
     request_id: str = Field(..., pattern=r"^[0-9a-f]{8}$")
     # e.g. "thumbs" (1 / 0), "correctness" (0..1), "sent_as_is" (1 / 0)
     key: str = Field(..., pattern=r"^[a-z][a-z0-9_]{0,39}$")
-    score: float = Field(..., ge=-1, le=1)
+    # None for comment-only feedback.
+    score: Optional[float] = Field(default=None, ge=-1, le=1)
+    # A categorical answer, e.g. usage: "used_as_is" | "edited" | "not_used".
+    value: str = Field(default="", max_length=40)
     comment: str = Field(default="", max_length=2000)
     # The reply as the engineer actually sent it, if they changed it.
     correction: str = Field(default="", max_length=50_000)

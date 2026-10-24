@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # request per part; best-effort.
     trace_token_breakdown: bool = True
 
+    # Online evaluation: after each draft is returned, the serving model
+    # grades it (hallucination, correctness, conciseness, answer relevance)
+    # in the background; results land as feedback beside the run. Costs one
+    # extra model call per draft; sample to reduce it.
+    online_eval: bool = True
+    online_eval_sample_rate: float = 1.0
+
     # Ticket text may contain sensitive researcher data, so it is NOT logged
     # unless this is explicitly turned on for local debugging.
     debug: bool = False

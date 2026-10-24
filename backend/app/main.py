@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, kg_client, runlog, tracing
+from . import auth, evaluators, kg_client, runlog, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, generate_draft, token_breakdown
 from .models import (
@@ -335,9 +335,33 @@ async def draft(request: DraftRequest):
             "checked against the RC website and has no links." % kg.detail)
     timings["citations"] = int((time.perf_counter() - t) * 1000)
 
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    response = DraftResponse.from_llm_draft(llm_draft, model_name, elapsed_ms)
+    response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
     response.references = references
+
+    # Evaluators that need no LLM, run now so the UI can show failures:
+    # assertions (the system prompt's rules, as code) and metrics.
+    with tracing.run("evaluate", "chain", metadata={"evaluators": "assertions, metrics, answer_relevance"}) as erun:
+        checks = evaluators.assertions(response.model_dump(), request.ticket_text, kg.status,
+                                       kg.low_confidence, cite_trace)
+        measures = evaluators.metrics(response.model_dump(), cite_trace)
+        relevance = await evaluators.answer_relevance(request.ticket_text, response.draft_response, request_id)
+        if relevance is not None:
+            measures["answer_relevance_embedding"] = relevance
+        if erun is not None:
+            erun.end({"assertions": checks, "metrics": measures})
+    for key, ok in checks.items():
+        tr.add_feedback(key, 1 if ok else 0, source="assertion")
+    for key, value in measures.items():
+        tr.add_feedback(key, value, source="metric")
+    passed = sum(checks.values())
+    tr.add_feedback("assertions_passed", round(passed / len(checks), 3) if checks else 1.0, source="assertion")
+    failed = sorted(k for k, ok in checks.items() if not ok)
+    response.evaluations = {"assertions": checks, "assertions_failed": failed, "metrics": measures}
+    if failed:
+        tr.root.tags.append("assertion_failed")
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    response.latency_ms = elapsed_ms
     response.kg_status = kg.status
     response.request_id = request_id
     response.usage = {k: tokens[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
@@ -370,6 +394,8 @@ async def draft(request: DraftRequest):
     saved = record(response.model_dump(), None, model_name, before_citations, cite_trace, tokens)
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
+        # LLM-as-judge in the background; it appends its grades beside the run.
+        evaluators.schedule_judge(request_id, request.ticket_text, kg.context, response.model_dump())
 
     if settings.debug:
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())
@@ -400,11 +426,18 @@ async def feedback(request: FeedbackRequest):
     a score under a key, optionally a comment and the corrected reply. Stored
     beside the draft's run log, so it travels with the trace."""
     saved = runlog.add_feedback(request.request_id, {
-        "key": request.key, "score": request.score, "comment": request.comment,
-        "correction": request.correction, "source": "user",
+        "key": request.key, "score": request.score, "value": request.value,
+        "comment": request.comment, "correction": request.correction, "source": "user",
     })
     if saved is None:
         raise HTTPException(status_code=404, detail="No recorded draft with that request id.")
+    if request.correction.strip():
+        # What the engineer actually sent vs what was drafted: an implicit
+        # correctness signal (1 = sent unchanged).
+        sim = runlog.edit_similarity(request.request_id, request.correction)
+        if sim is not None:
+            runlog.add_feedback(request.request_id, {"key": "edit_similarity", "score": sim,
+                                                     "source": "derived", "comment": "draft vs reply sent"})
     logger.info("feedback | id=%s key=%s score=%s", request.request_id, request.key, request.score)
     return FeedbackResponse(feedback_id=saved, request_id=request.request_id)
 

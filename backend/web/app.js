@@ -224,9 +224,125 @@
     fillList(el("caveats"), data.caveats, "The model flagged nothing — check it yourself anyway.");
 
     el("draft-response").value = data.draft_response || "";
+    renderFeedback(data);
     results.hidden = false;
     results.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  /* ---------- evaluation + feedback ---------- */
+
+  var currentRequestId = "";
+
+  var ASSERT_NAMES = {
+    assert_signoff: "sign-off",
+    assert_no_placeholder: "no placeholder name",
+    assert_no_invented_ticket_number: "no invented ticket number",
+    assert_no_promises: "no promised timeline or exception",
+    assert_confidence_consistent: "confidence matches caveats",
+    assert_summary_short: "summary is 1-2 sentences",
+    assert_has_steps: "has steps",
+    assert_urls_from_sources: "no URLs outside the sources",
+    assert_no_unknown_citations: "no citations to missing sources",
+    assert_cites_when_grounded: "cites the RC sources it was given"
+  };
+
+  function renderFeedback(data) {
+    currentRequestId = data.request_id || "";
+    el("fb-id").textContent = currentRequestId ? "draft " + currentRequestId : "";
+    var ev = data.evaluations || {};
+    var checks = ev.assertions || {};
+    var keys = Object.keys(checks);
+    var failed = keys.filter(function (k) { return !checks[k]; });
+    var m = ev.metrics || {};
+    var box = el("eval-summary");
+    box.className = "eval" + (failed.length ? " has-fail" : "");
+    var parts = [];
+    if (keys.length) {
+      parts.push("Automatic checks: " + (keys.length - failed.length) + " of " + keys.length + " passed" +
+        (failed.length ? " — failed: " + failed.map(function (k) { return ASSERT_NAMES[k] || k; }).join(", ") : "") + ".");
+    }
+    var ms = [];
+    if (typeof m.conciseness === "number") ms.push("conciseness " + m.conciseness.toFixed(2));
+    if (typeof m.answer_relevance_embedding === "number") ms.push("relevance " + m.answer_relevance_embedding.toFixed(2));
+    if (typeof m.reply_words === "number") ms.push(m.reply_words + " words");
+    if (typeof m.hallucinated_urls === "number" && m.hallucinated_urls) ms.push(m.hallucinated_urls + " invented URL(s) removed");
+    if (data.usage && data.usage.total_tokens) ms.push(data.usage.total_tokens + " tokens");
+    if (ms.length) parts.push(ms.join(" · "));
+    box.textContent = parts.join("  ");
+    box.hidden = !parts.length;
+
+    Array.prototype.forEach.call(document.querySelectorAll("#feedback-card .fb-chip"), function (c) {
+      c.classList.remove("on");
+    });
+    el("fb-comment").value = "";
+    el("fb-correction").value = "";
+    el("fb-status").textContent = "";
+    el("fb-submit").disabled = true;
+    el("fb-submit").textContent = "Send feedback";
+  }
+
+  function feedbackChoices() {
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll("#feedback-card .fb-row"), function (row) {
+      var on = row.querySelector(".fb-chip.on");
+      if (on) {
+        out.push({ key: row.getAttribute("data-key"), score: parseFloat(on.getAttribute("data-score")),
+                   value: on.getAttribute("data-value") || "" });
+      }
+    });
+    return out;
+  }
+
+  function refreshFeedbackButton() {
+    var any = feedbackChoices().length || el("fb-comment").value.trim() || el("fb-correction").value.trim();
+    el("fb-submit").disabled = !any || !currentRequestId;
+  }
+
+  document.querySelector("#feedback-card").addEventListener("click", function (e) {
+    var chip = e.target.closest(".fb-chip");
+    if (!chip) return;
+    var row = chip.closest(".fb-row");
+    var wasOn = chip.classList.contains("on");
+    Array.prototype.forEach.call(row.querySelectorAll(".fb-chip"), function (c) { c.classList.remove("on"); });
+    if (!wasOn) chip.classList.add("on");
+    refreshFeedbackButton();
+  });
+  el("fb-comment").addEventListener("input", refreshFeedbackButton);
+  el("fb-correction").addEventListener("input", refreshFeedbackButton);
+
+  async function sendFeedback() {
+    var items = feedbackChoices();
+    var comment = el("fb-comment").value.trim();
+    var correction = el("fb-correction").value.trim();
+    if (comment || correction) items.push({ key: "comment", score: null, value: "", comment: comment, correction: correction });
+    if (!items.length || !currentRequestId) return;
+
+    var btn = el("fb-submit");
+    btn.disabled = true;
+    el("fb-status").textContent = "Sending…";
+    var headers = { "Content-Type": "application/json" };
+    var extra = authHeaders();
+    for (var k in extra) headers[k] = extra[k];
+    var saved = 0;
+    try {
+      for (var i = 0; i < items.length; i++) {
+        var body = Object.assign({ request_id: currentRequestId, comment: "", correction: "" }, items[i]);
+        var res = await fetch("/api/feedback", { method: "POST", headers: headers, body: JSON.stringify(body) });
+        if (res.status === 401) { signOut("Your session expired. Sign in again."); return; }
+        if (!res.ok) {
+          var p = await res.json().catch(function () { return null; });
+          throw new Error((p && p.error) || "HTTP " + res.status);
+        }
+        saved++;
+      }
+      el("fb-status").textContent = "Thanks — " + saved + " item" + (saved === 1 ? "" : "s") + " saved with draft " + currentRequestId + ".";
+      btn.textContent = "Sent ✓";
+    } catch (err) {
+      el("fb-status").textContent = "Could not save feedback: " + err.message;
+      btn.disabled = false;
+    }
+  }
+  el("fb-submit").addEventListener("click", sendFeedback);
 
   /* ---------- actions ---------- */
 

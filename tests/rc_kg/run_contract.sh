@@ -170,6 +170,41 @@ except urllib.error.HTTPError as e:
     notfound = e.code == 404
 check(notfound, "feedback for an unknown draft is 404")
 
+print("A. evaluators: assertions, metrics, LLM judge, people's feedback")
+ev = d.get("evaluations") or {}
+check(len(ev.get("assertions") or {}) >= 9 and "assert_signoff" in ev["assertions"], "assertions returned with the draft")
+check(ev["assertions"].get("assert_signoff") is True and ev["assertions"].get("assert_no_placeholder") is True,
+      "sign-off and no-placeholder rules pass on a compliant draft")
+check("assert_urls_from_sources" in (ev.get("assertions_failed") or []),
+      "a draft that wrote an unretrieved URL fails assert_urls_from_sources")
+mt = ev.get("metrics") or {}
+check(0 <= mt.get("conciseness", -1) <= 1 and -1 <= mt.get("answer_relevance_embedding", -2) <= 1
+      and mt.get("hallucinated_urls") == 1, "metrics: conciseness, embedding relevance, hallucinated URLs")
+srcs = {f.get("source") for f in rt.get("feedback") or []}
+check({"auto", "assertion", "metric"} <= srcs, "trace feedback from auto, assertion and metric evaluators")
+fbfile = logs[-1].replace(".json", ".feedback.jsonl")
+judged = {}
+for _ in range(40):
+    judged = {}
+    for line in open(fbfile).read().splitlines():
+        f = json.loads(line)
+        if f.get("source") == "llm_judge":
+            judged[f["key"]] = f
+    if len(judged) >= 4: break
+    time.sleep(0.5)
+check(set(judged) >= {"hallucination", "correctness", "conciseness", "answer_relevance"},
+      "background LLM judge recorded hallucination, correctness, conciseness, answer_relevance")
+check(judged.get("hallucination", {}).get("lower_is_better") is True
+      and (judged.get("correctness", {}).get("metadata") or {}).get("usage"),
+      "judge grades say their direction and carry the judge call's tokens")
+sent = d["draft_response"].replace("Hi,", "Hello,")
+call(A, "/api/feedback", {"request_id": d["request_id"], "key": "comment", "score": None,
+                         "comment": "fine", "correction": sent}, tok_)
+recs = [json.loads(l) for l in open(fbfile).read().splitlines()]
+es = [f for f in recs if f["key"] == "edit_similarity"]
+check(any(f["key"] == "comment" and f.get("score") is None for f in recs), "comment-only feedback accepted")
+check(len(es) == 1 and 0.9 < es[0]["score"] < 1, "reply as sent -> edit_similarity (small edit, just under 1)")
+
 g = draft(A, GPU)
 check(any(c.startswith("Check citation [2]") for c in g["caveats"]), "wrong citation flagged")
 check(not any(c.startswith("Check citation [1]") for c in g["caveats"]), "correct citation not flagged")

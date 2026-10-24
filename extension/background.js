@@ -280,6 +280,34 @@ async function draft(ticketText, ticketNumber, extraInstructions) {
   );
 }
 
+/* ---------- feedback ---------- */
+
+/* One feedback record for a draft (see backend /api/feedback): a score under
+   a key, optionally a categorical value, a comment, and the reply as sent. */
+async function feedback(item) {
+  if (!item || !item.request_id || !item.key) {
+    return { ok: false, error: "Nothing to send." };
+  }
+  const body = {
+    request_id: item.request_id,
+    key: item.key,
+    score: typeof item.score === "number" ? item.score : null,
+    value: item.value || "",
+    comment: item.comment || "",
+    correction: item.correction || ""
+  };
+  return withSession((sessionToken) =>
+    request("/api/feedback", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + sessionToken
+      },
+      body: JSON.stringify(body)
+    })
+  );
+}
+
 /* ---------- message plumbing ---------- */
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -289,6 +317,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     PING: () => ping(),
     SIGN_IN: () => signIn(),
     DRAFT: () => draft(message.ticketText, message.ticketNumber, message.extraInstructions),
+    FEEDBACK: () => feedback(message.item),
     GET_CONFIG: () => getConfig().then((cfg) => ({ ok: true, data: cfg })),
     SAVE_CONFIG: () => saveConfig(message.baseUrl, message.accessToken)
   };

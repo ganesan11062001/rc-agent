@@ -381,3 +381,19 @@ aside#rc-copilot-panel .rc-foot .rc-btn { margin-top: 0; }
   aside#rc-copilot-panel.rc-panel,
   aside#rc-copilot-panel * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- evaluation + feedback ---------- */
+aside#rc-copilot-panel .rc-eval { margin: 8px 0 0; padding: 7px 9px; border-radius: 8px; font-size: 11.5px;
+  line-height: 1.45; background: #e8effb; color: #1f4a8f; }
+aside#rc-copilot-panel .rc-eval.rc-eval-fail { background: #fdf0da; color: #8a5a05; }
+aside#rc-copilot-panel .rc-fb { display: flex; flex-direction: column; gap: 6px; }
+aside#rc-copilot-panel .rc-fb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+aside#rc-copilot-panel .rc-fb-label { min-width: 64px; font-size: 11.5px; color: var(--rc-ink-3); }
+aside#rc-copilot-panel .rc-fb-chip { border: 1px solid #d5dbe5; background: #fff; color: inherit; border-radius: 999px;
+  padding: 2px 10px; font-size: 12px; cursor: pointer; }
+aside#rc-copilot-panel .rc-fb-chip.rc-on { background: #16202e; border-color: #16202e; color: #fff; }
+aside#rc-copilot-panel .rc-fb-comment { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; }
+aside#rc-copilot-panel .rc-fb-actions { display: flex; gap: 6px; justify-content: flex-end; }
+aside#rc-copilot-panel .rc-fb-status { margin: 0; font-size: 11px; color: var(--rc-ink-3); min-height: 1em; }
+aside#rc-copilot-panel .rc-fb-capture { font-size: 11.5px; }
+aside#rc-copilot-panel .rc-fb-send { min-width: 64px; }

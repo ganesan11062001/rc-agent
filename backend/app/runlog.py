@@ -70,6 +70,19 @@ def find_run(request_id: str) -> Optional[Path]:
     return hits[-1] if hits else None
 
 
+def edit_similarity(request_id: str, sent: str) -> Optional[float]:
+    """difflib ratio between the drafted reply and the reply actually sent."""
+    import difflib
+    path = find_run(request_id)
+    if path is None:
+        return None
+    try:
+        drafted = (json.loads(path.read_text(encoding="utf-8")).get("draft") or {}).get("draft_response") or ""
+    except (OSError, ValueError):
+        return None
+    return round(difflib.SequenceMatcher(None, drafted.strip(), sent.strip()).ratio(), 3)
+
+
 def add_feedback(request_id: str, fb: Dict[str, Any]) -> Optional[str]:
     """Append one feedback record beside a run's log (<run>.feedback.jsonl,
     mode 600). Returns the feedback id, or None if there is no such run."""

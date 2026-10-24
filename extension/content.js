@@ -559,7 +559,12 @@
     const meta = [];
     if (data.model) meta.push(escapeHtml(data.model));
     if (typeof data.latency_ms === "number") meta.push((data.latency_ms / 1000).toFixed(1) + "s");
+    if (data.usage && data.usage.total_tokens) meta.push(data.usage.total_tokens + " tokens");
+    if (data.request_id) meta.push("draft " + escapeHtml(data.request_id));
     if (meta.length) html += '<p class="rc-meta">' + meta.join(" · ") + "</p>";
+
+    html += evaluationHtml(data.evaluations || {});
+    if (data.request_id) html += feedbackHtml();
 
     const foot =
       '<button type="button" class="rc-btn rc-btn-primary rc-copy">Copy</button>' +
@@ -583,6 +588,8 @@
       );
     });
 
+    if (data.request_id) wireFeedback(data.request_id, targetKey);
+
     $(".rc-insert").addEventListener("click", function () {
       // The textarea holds the reply, so it goes to the customer-visible field
       // in "both" mode and to the chosen field otherwise.
@@ -594,6 +601,117 @@
         if (wn && !wn.readOnly) setFieldValue(wn, analysisText(data));
       }
       flash(this, ok ? "Inserted ✓" : "No field");
+    });
+  }
+
+  /* ---------- evaluation + feedback ---------- */
+
+  const ASSERT_NAMES = {
+    assert_signoff: "sign-off",
+    assert_no_placeholder: "no placeholder name",
+    assert_no_invented_ticket_number: "no invented ticket number",
+    assert_no_promises: "no promised timeline or exception",
+    assert_confidence_consistent: "confidence matches caveats",
+    assert_summary_short: "summary is 1-2 sentences",
+    assert_has_steps: "has steps",
+    assert_urls_from_sources: "no URLs outside the sources",
+    assert_no_unknown_citations: "no citations to missing sources",
+    assert_cites_when_grounded: "cites the RC sources it was given"
+  };
+
+  /* The backend's automatic checks for this draft (app/evaluators.py). A
+     failed assertion is shown, not hidden: it is something to fix before Update. */
+  function evaluationHtml(ev) {
+    const checks = ev.assertions || {};
+    const keys = Object.keys(checks);
+    if (!keys.length) return "";
+    const failed = keys.filter((k) => !checks[k]);
+    const m = ev.metrics || {};
+    const bits = [];
+    if (typeof m.conciseness === "number") bits.push("conciseness " + m.conciseness.toFixed(2));
+    if (typeof m.answer_relevance_embedding === "number") bits.push("relevance " + m.answer_relevance_embedding.toFixed(2));
+    if (typeof m.reply_words === "number") bits.push(m.reply_words + " words");
+    return '<p class="rc-eval' + (failed.length ? " rc-eval-fail" : "") + '">' +
+      "Automatic checks: " + (keys.length - failed.length) + "/" + keys.length + " passed" +
+      (failed.length ? " — failed: " + failed.map((k) => escapeHtml(ASSERT_NAMES[k] || k)).join(", ") : "") +
+      (bits.length ? "<br>" + bits.join(" · ") : "") + "</p>";
+  }
+
+  function feedbackHtml() {
+    const row = (key, label, chips) =>
+      '<div class="rc-fb-row" data-key="' + key + '"><span class="rc-fb-label">' + label + "</span>" +
+      chips.map(([text, score, value]) =>
+        '<button type="button" class="rc-fb-chip" data-score="' + score + '" data-value="' + (value || "") + '">' +
+        text + "</button>").join("") + "</div>";
+    return '<h3 class="rc-h">Feedback</h3><div class="rc-fb">' +
+      row("thumbs", "Helpful?", [["👍", 1], ["👎", 0]]) +
+      row("correctness", "Correct?", [["Correct", 1], ["Partly", 0.5], ["Wrong", 0]]) +
+      row("usage", "Used it?", [["As is", 1, "used_as_is"], ["Edited", 0.5, "edited"], ["Not used", 0, "not_used"]]) +
+      '<textarea class="rc-fb-comment" rows="2" placeholder="Comment (optional)"></textarea>' +
+      '<div class="rc-fb-actions">' +
+        '<button type="button" class="rc-btn rc-btn-ghost rc-fb-capture" title="Read the reply from the ServiceNow field, as you edited it">Capture what\u2019s in the field</button>' +
+        '<button type="button" class="rc-btn rc-btn-primary rc-fb-send" disabled>Send</button>' +
+      "</div>" +
+      '<p class="rc-fb-status"></p></div>';
+  }
+
+  function wireFeedback(requestId, targetKey) {
+    const box = $(".rc-fb");
+    if (!box) return;
+    let correction = "";
+    const status = $(".rc-fb-status");
+    const send = $(".rc-fb-send");
+    const choices = () => Array.from(box.querySelectorAll(".rc-fb-row")).map((row) => {
+      const on = row.querySelector(".rc-fb-chip.rc-on");
+      return on ? { key: row.dataset.key, score: parseFloat(on.dataset.score), value: on.dataset.value || "" } : null;
+    }).filter(Boolean);
+    const refresh = () => {
+      send.disabled = !(choices().length || $(".rc-fb-comment").value.trim() || correction);
+    };
+
+    box.addEventListener("click", (e) => {
+      const chip = e.target.closest(".rc-fb-chip");
+      if (!chip) return;
+      const wasOn = chip.classList.contains("rc-on");
+      chip.parentElement.querySelectorAll(".rc-fb-chip").forEach((c) => c.classList.remove("rc-on"));
+      if (!wasOn) chip.classList.add("rc-on");
+      refresh();
+    });
+    $(".rc-fb-comment").addEventListener("input", refresh);
+
+    /* The reply as the engineer left it in ServiceNow: comparing it with the
+       draft tells the backend how much editing the draft needed. */
+    $(".rc-fb-capture").addEventListener("click", () => {
+      const node = findField(targetKey === "both" ? "comments" : targetKey);
+      correction = node && typeof node.value === "string" ? node.value.trim() : "";
+      status.textContent = correction ? "Captured " + correction.length + " characters from the field."
+                                      : "No reply found in the field.";
+      refresh();
+    });
+
+    send.addEventListener("click", async () => {
+      const items = choices();
+      const comment = $(".rc-fb-comment").value.trim();
+      if (comment || correction) items.push({ key: "comment", score: null, value: "", comment, correction });
+      send.disabled = true;
+      status.textContent = "Sending…";
+      let saved = 0;
+      for (const item of items) {
+        let reply;
+        try {
+          reply = await chrome.runtime.sendMessage({ type: "FEEDBACK", item: Object.assign({ request_id: requestId }, item) });
+        } catch (err) {
+          reply = { ok: false, error: "Extension was reloaded — refresh this page." };
+        }
+        if (!reply || !reply.ok) {
+          status.textContent = "Could not save feedback: " + ((reply && reply.error) || "unknown error");
+          send.disabled = false;
+          return;
+        }
+        saved++;
+      }
+      status.textContent = "Thanks — " + saved + " item" + (saved === 1 ? "" : "s") + " saved.";
+      send.textContent = "Sent ✓";
     });
   }
 

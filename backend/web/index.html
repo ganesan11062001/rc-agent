@@ -103,6 +103,49 @@
         <textarea id="draft-response" rows="16" spellcheck="true"></textarea>
         <p class="hint">Editable — tweak it here, then copy it into ServiceNow.</p>
       </div>
+
+      <div class="card" id="feedback-card">
+        <div class="result-head">
+          <h2>How was this draft?</h2>
+          <span class="hint" id="fb-id"></span>
+        </div>
+        <div class="eval" id="eval-summary"></div>
+        <div class="fb-row" data-key="thumbs">
+          <span class="fb-label">Helpful?</span>
+          <button type="button" class="fb-chip" data-score="1">👍 Helpful</button>
+          <button type="button" class="fb-chip" data-score="0">👎 Not helpful</button>
+        </div>
+        <div class="fb-row" data-key="correctness">
+          <span class="fb-label">Correct?</span>
+          <button type="button" class="fb-chip" data-score="1">Correct</button>
+          <button type="button" class="fb-chip" data-score="0.5">Partly</button>
+          <button type="button" class="fb-chip" data-score="0">Wrong</button>
+        </div>
+        <div class="fb-row" data-key="usage">
+          <span class="fb-label">Did you use it?</span>
+          <button type="button" class="fb-chip" data-score="1" data-value="used_as_is">As is</button>
+          <button type="button" class="fb-chip" data-score="0.5" data-value="edited">Edited</button>
+          <button type="button" class="fb-chip" data-score="0" data-value="not_used">Not used</button>
+        </div>
+        <div class="fb-row" data-key="rating">
+          <span class="fb-label">Rating</span>
+          <button type="button" class="fb-chip fb-star" data-score="0" data-value="1">1</button>
+          <button type="button" class="fb-chip fb-star" data-score="0.25" data-value="2">2</button>
+          <button type="button" class="fb-chip fb-star" data-score="0.5" data-value="3">3</button>
+          <button type="button" class="fb-chip fb-star" data-score="0.75" data-value="4">4</button>
+          <button type="button" class="fb-chip fb-star" data-score="1" data-value="5">5</button>
+        </div>
+        <label for="fb-comment" class="fb-label">Comment (optional)</label>
+        <textarea id="fb-comment" rows="2" placeholder="What was wrong, missing, or especially good?"></textarea>
+        <details class="fb-more">
+          <summary>Paste the reply you actually sent (optional)</summary>
+          <textarea id="fb-correction" rows="6" placeholder="Used to measure how much the draft needed editing."></textarea>
+        </details>
+        <div class="actions">
+          <button id="fb-submit" class="primary" type="button" disabled>Send feedback</button>
+          <span class="hint" id="fb-status"></span>
+        </div>
+      </div>
     </section>
   </main>
 

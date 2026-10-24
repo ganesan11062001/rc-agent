@@ -1,4 +1,5 @@
 :root {
+  --chip-on: #16202e;
   --bg: #f4f6f9;
   --surface: #ffffff;
   --border: #dde3ec;
@@ -408,3 +409,21 @@ body.busy { cursor: progress; }
 
   #draft-response { min-height: 200px; }
 }
+
+/* ---------- feedback ---------- */
+#feedback-card .fb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+#feedback-card .fb-label { min-width: 110px; font-size: 13px; color: var(--text-muted); }
+#feedback-card label.fb-label { display: block; margin-top: 10px; }
+.fb-chip {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+}
+.fb-chip:hover { border-color: var(--text-muted); }
+.fb-chip.on { background: var(--chip-on); border-color: var(--chip-on); color: #fff; }
+.fb-star { min-width: 32px; padding: 4px 8px; }
+#feedback-card textarea { width: 100%; box-sizing: border-box; margin-top: 4px; }
+.fb-more { margin-top: 8px; font-size: 13px; }
+.fb-more summary { cursor: pointer; color: var(--text-muted); }
+.eval { font-size: 12.5px; margin-bottom: 6px; padding: 8px 10px; border-radius: var(--radius); background: var(--info-bg); color: var(--info-fg); }
+.eval.has-fail { background: var(--warn-bg); color: var(--warn-fg); }
+.eval code { font-family: var(--mono); font-size: 12px; }

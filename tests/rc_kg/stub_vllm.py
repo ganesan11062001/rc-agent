@@ -29,6 +29,17 @@ class H(BaseHTTPRequestHandler):
             return
         user = body["messages"][1]["content"]
         prompt_tokens = sum(len(m["content"]) for m in body["messages"]) // 4 + 12
+        if "strict evaluator" in body["messages"][0]["content"]:
+            # The background LLM judge (app/evaluators.py): a fixed, valid verdict.
+            out = json.dumps({"hallucination": {"score": 0.1, "unsupported_claims": ["made-up guide"]},
+                              "correctness": {"score": 0.9, "reason": "raises --mem as the sources say"},
+                              "conciseness": {"score": 0.8, "reason": "short"},
+                              "answer_relevance": {"score": 0.95, "reason": "on topic"}})
+            return self._send({"id": "j", "object": "chat.completion", "model": "stub-model",
+                               "choices": [{"index": 0, "finish_reason": "stop",
+                                            "message": {"role": "assistant", "content": out}}],
+                               "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": len(out) // 4,
+                                         "total_tokens": prompt_tokens + len(out) // 4}})
         pass
         # Find which source is the OOM section and which is on the Partitions page, so the
         # stub can cite one correctly and one deliberately wrongly.
