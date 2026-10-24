@@ -101,7 +101,7 @@ kg_instance_stop() {
 kg_python_env() {
   # The embedding model lives on /projects next to the code, so every node
   # finds it, and is never fetched at serve time (compute nodes reach the Hub
-  # only through a flaky proxy; see ticket_mate/cluster/env.sh).
+  # only through a flaky proxy; see ticketmate/cluster/env.sh).
   export HF_HOME="$RC_KG_ROOT/vendor/hf"
   export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}" TRANSFORMERS_OFFLINE="${HF_HUB_OFFLINE:-1}"
   # Offline is intended; without this every start logs "could not reach the Hub".

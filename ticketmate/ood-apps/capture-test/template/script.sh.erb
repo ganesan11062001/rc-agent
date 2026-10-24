@@ -7,7 +7,15 @@
 
 set -uo pipefail
 
-TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+# Where the checkout is. OOD copies this template into the session's own
+# directory, so it cannot find the repo from its own path; publish.sh writes
+# ticketmate.env beside it (TICKETMATE_HOME=<monorepo root>).
+[ -f ./ticketmate.env ] && . ./ticketmate.env
+if [ -z "${TICKETMATE_HOME:-}" ]; then
+  echo "ERROR: TICKETMATE_HOME is unset: publish the app with ticketmate/ood-apps/publish.sh" >&2
+  exit 1
+fi
+TM_ROOT="${TM_ROOT:-$TICKETMATE_HOME/ticketmate}"
 APP_DIR="$TM_ROOT/cluster"
 PYTHON="$TM_ROOT/backend/.venv/bin/python"
 

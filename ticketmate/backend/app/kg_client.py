@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # The rc_kg API major version this client is written against; see
-# rc_kg/API_CONTRACT.md. A different major means fields this file reads may
+# rc-kg/API_CONTRACT.md. A different major means fields this file reads may
 # have changed, so grounding is switched off rather than guessed at.
 EXPECTED_API_MAJOR = "1"
 _compatible: Optional[bool] = None       # cached once rc_kg has answered

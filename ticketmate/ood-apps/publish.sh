@@ -5,7 +5,7 @@
 #   ood-apps/publish.sh --list     show releases and which one is live
 #   ood-apps/publish.sh --rollback switch back to the previous release
 #
-# Members install once with /projects/rc/projects/rc-copilot-ood/install.sh,
+# Members install once with <monorepo>/rc-copilot/install.sh,
 # which symlinks ~/ondemand/dev/rc-copilot to the live release. Publishing
 # therefore changes everyone's app at once, so it is done in two steps that
 # cannot leave anyone with a half-copied app:
@@ -20,7 +20,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TM_ROOT="$(cd "$HERE/.." && pwd)"
-DEST="${RC_COPILOT_RELEASES:-/projects/rc/projects/rc-copilot-ood}"
+# The monorepo root; releases go in its rc-copilot/ (gitignored).
+TICKETMATE_HOME="$(cd "$TM_ROOT/.." && pwd)"
+DEST="${RC_COPILOT_RELEASES:-$TICKETMATE_HOME/rc-copilot}"
 KEEP=3
 
 die() { echo "publish: $*" >&2; exit 1; }
@@ -66,10 +68,12 @@ mkdir "$rel"
 cp -r "$HERE/rc-copilot" "$rel/rc-copilot"
 # A repo-level developer check (it inspects sibling apps); misleading here.
 rm -f "$rel/rc-copilot/check_modes.sh"
+# The one place the install location is recorded; the session script reads it.
+printf 'TICKETMATE_HOME=%q\n' "$TICKETMATE_HOME" > "$rel/rc-copilot/template/ticketmate.env"
 cp "$TM_ROOT/dist/rc-copilot-extension.zip" "$rel/"
 cat > "$rel/VERSION" <<EOF
 RC Copilot $stamp, published $(date -Iseconds) by $USER
-ticket_mate commit: $(git -C "$TM_ROOT" log -1 --format='%h %s')
+ticketmate commit: $(git -C "$TM_ROOT" log -1 --format='%h %s')
 EOF
 chmod -R a+rX "$rel"
 

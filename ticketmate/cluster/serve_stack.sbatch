@@ -48,11 +48,18 @@
 
 set -uo pipefail
 
-TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+# sbatch runs a spooled copy of this script, so ask Slurm where the original is.
+_self="${BASH_SOURCE[0]}"
+if [ -n "${SLURM_JOB_ID:-}" ] && command -v scontrol >/dev/null; then
+  _cmd="$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | sed -n 's/^ *Command=\([^ ]*\).*/\1/p')"
+  [ -f "$_cmd" ] && _self="$_cmd"
+fi
+TM_ROOT="${TM_ROOT:-$(cd "$(dirname "$_self")/.." && pwd)}"
+[ -f "$TM_ROOT/cluster/env.sh" ] || { echo "ERROR: cannot locate the ticketmate checkout (got $TM_ROOT); set TM_ROOT" >&2; exit 1; }
 OOD_HOST="${OOD_HOST:-ood.explorer.northeastern.edu}"
 OOD_ROUTE="${OOD_ROUTE:-rnode}"
 MODEL="${MODEL:-small}"
-RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+RC_KG_ROOT="${RC_KG_ROOT:-$(cd "$TM_ROOT/../rc-kg" 2>/dev/null && pwd)}"
 # "full" (RC website + rc-docs, default) or "website" (RC website only):
 #   sbatch --export=ALL,RC_KG_VARIANT=website serve_stack.sbatch
 RC_KG_VARIANT="${RC_KG_VARIANT:-full}"

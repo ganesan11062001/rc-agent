@@ -2,19 +2,21 @@
 # Source this before running anything: `source env.sh`
 # Sets up the vLLM venv + caches on /projects (home dirs have tight quotas).
 
-# Overridable, like every other TM_ROOT in the tree -- so a checkout somewhere
-# else works without editing this file.
-export TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+# Overridable, like every other TM_ROOT in the tree; by default the checkout
+# this file is in, so a checkout anywhere works without editing it.
+export TM_ROOT="${TM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The monorepo root: the uv toolchain and caches there are shared with rc-kg.
+export TICKETMATE_HOME="${TICKETMATE_HOME:-$(cd "$TM_ROOT/.." && pwd)}"
 
 # uv + the project venv
-export PATH="$TM_ROOT/.uv/bin:$PATH"
-export UV_CACHE_DIR="$TM_ROOT/.cache/uv"
-export UV_PYTHON_INSTALL_DIR="$TM_ROOT/.uv/python"
+export PATH="$TICKETMATE_HOME/.uv/bin:$PATH"
+export UV_CACHE_DIR="$TICKETMATE_HOME/.cache/uv"
+export UV_PYTHON_INSTALL_DIR="$TICKETMATE_HOME/.uv/python"
 export VIRTUAL_ENV="$TM_ROOT/.venv"
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Keep the multi-hundred-GB model downloads off $HOME
-export HF_HOME="$TM_ROOT/.cache/huggingface"
+export HF_HOME="$TICKETMATE_HOME/.cache/huggingface"
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # Never contact huggingface.co from a compute node. Those nodes reach the
@@ -33,12 +35,12 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
 # vLLM scratch: compiled kernels and grammar caches, written on every launch.
-# The shared copies under $TM_ROOT/.cache belong to whoever installed the
+# The shared copies under $TICKETMATE_HOME/.cache belong to whoever installed the
 # project, so other RC members cannot write them; they get their own under
 # /scratch instead (regenerable -- a purge only costs one slower start).
 # The model weights in $HF_HOME are only read, so those stay shared.
 _tm_cache() {
-  if [ -w "$TM_ROOT/.cache/$1" ]; then echo "$TM_ROOT/.cache/$1"
+  if [ -w "$TICKETMATE_HOME/.cache/$1" ]; then echo "$TICKETMATE_HOME/.cache/$1"
   else echo "/scratch/$USER/rc_copilot_cache/$1"; fi
 }
 export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-$(_tm_cache vllm)}"

@@ -1,7 +1,7 @@
 """Send the eval questions through a running TicketMate as tickets, so a real
 model's grounded drafts land in its run logs for eval/citation_review.py.
 
-  # 1. a TicketMate session with a real model, e.g. from ticket_mate/cluster:
+  # 1. a TicketMate session with a real model, e.g. from ticketmate/cluster:
   #      sbatch --gres=gpu:a100:1 --mem=80G --cpus-per-task=12 \\
   #             --export=ALL,MODEL=qwen7b serve_stack.sbatch
   #    its log prints the node and port; the token is in ~/.rc_copilot/token

@@ -23,13 +23,15 @@
 
 set -uo pipefail
 
-TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+TM_ROOT="${TM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The uv toolchain and caches are shared with rc-kg, one level up.
+TICKETMATE_HOME="${TICKETMATE_HOME:-$(cd "$TM_ROOT/.." && pwd)}"
 VLLM_VERSION="${VLLM_VERSION:-0.29.0}"
 CUDA_TAG="${CUDA_TAG:-cu129}"
 PY_VERSION="${PY_VERSION:-3.12}"
 
 VENV="$TM_ROOT/.venv"
-UV="$TM_ROOT/.uv/bin/uv"
+UV="$TICKETMATE_HOME/.uv/bin/uv"
 EXT_GLOB="$VENV/lib/python${PY_VERSION}/site-packages/vllm/_C_stable_libtorch*.so"
 
 CHECK_ONLY=0
@@ -107,14 +109,14 @@ say ""
 say "== installing =="
 # Caches go on /projects: home directories have tight quotas and the model
 # downloads and wheels are tens of GB.
-export UV_CACHE_DIR="$TM_ROOT/.cache/uv"
-export UV_PYTHON_INSTALL_DIR="$TM_ROOT/.uv/python"
+export UV_CACHE_DIR="$TICKETMATE_HOME/.cache/uv"
+export UV_PYTHON_INSTALL_DIR="$TICKETMATE_HOME/.uv/python"
 mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR"
 
 if [ ! -x "$UV" ]; then
-  info "installing uv into $TM_ROOT/.uv"
+  info "installing uv into $TICKETMATE_HOME/.uv"
   curl -LsSf https://astral.sh/uv/install.sh | \
-    UV_INSTALL_DIR="$TM_ROOT/.uv/bin" sh || { bad "uv install failed"; exit 1; }
+    UV_INSTALL_DIR="$TICKETMATE_HOME/.uv/bin" sh || { bad "uv install failed"; exit 1; }
 fi
 info "uv $("$UV" --version 2>/dev/null)"
 

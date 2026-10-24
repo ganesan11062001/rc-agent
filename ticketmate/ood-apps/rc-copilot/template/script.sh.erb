@@ -5,10 +5,18 @@
 
 set -uo pipefail
 
-TM_ROOT="${TM_ROOT:-/projects/rc/projects/ticket_mate}"
+# Where the checkout is. OOD copies this template into the session's own
+# directory, so it cannot find the repo from its own path; publish.sh writes
+# ticketmate.env beside it (TICKETMATE_HOME=<monorepo root>).
+[ -f ./ticketmate.env ] && . ./ticketmate.env
+if [ -z "${TICKETMATE_HOME:-}" ]; then
+  echo "ERROR: TICKETMATE_HOME is unset: publish the app with ticketmate/ood-apps/publish.sh" >&2
+  exit 1
+fi
+TM_ROOT="${TM_ROOT:-$TICKETMATE_HOME/ticketmate}"
 # The RC website knowledge graph. Unset or missing = drafts are not grounded,
 # and everything else works as before.
-RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+RC_KG_ROOT="${RC_KG_ROOT:-$TICKETMATE_HOME/rc-kg}"
 # Which graph: "full" (RC website + rc-docs) or "website" (RC website only).
 RC_KG_VARIANT="${RC_KG_VARIANT:-full}"
 # Files under template/ are rendered with a TemplateBinding, which exposes

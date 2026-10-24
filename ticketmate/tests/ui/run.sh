@@ -8,7 +8,7 @@
 #   PLAYWRIGHT_BROWSERS_PATH=/scratch/$USER/pw_browsers /scratch/$USER/pw_venv/bin/playwright install chromium
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; TM="$(cd "$HERE/../.." && pwd)"
-RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+RC_KG_ROOT="${RC_KG_ROOT:-$(cd "$TM/../rc-kg" && pwd)}"
 PW_PYTHON="${PW_PYTHON:-/scratch/$USER/pw_venv/bin/python}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/scratch/$USER/pw_browsers}"
 [ -x "$PW_PYTHON" ] || { echo "no Playwright python at $PW_PYTHON (see header)" >&2; exit 2; }

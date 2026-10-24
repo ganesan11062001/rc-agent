@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install RC Copilot into your Open OnDemand sandbox -- one symlink, no copy.
 #
-#   /projects/rc/projects/rc-copilot-ood/install.sh             install
-#   /projects/rc/projects/rc-copilot-ood/install.sh --uninstall remove the link
+#   /projects/rc/projects/ticketmate/rc-copilot/install.sh             install
+#   /projects/rc/projects/ticketmate/rc-copilot/install.sh --uninstall remove the link
 #
 # ~/ondemand/dev/rc-copilot becomes a symlink to the shared release, so you
 # always launch the current version and there is nothing in /scratch to be
@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-SHARED="/projects/rc/projects/rc-copilot-ood"
+# publish.sh copies this script into the releases directory; that is SHARED.
+SHARED="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="$SHARED/current/rc-copilot"
 DEV="$HOME/ondemand/dev"
 LINK="$DEV/rc-copilot"

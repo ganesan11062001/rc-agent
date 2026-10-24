@@ -10,7 +10,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TM_ROOT="$(cd "$HERE/../.." && pwd)"
-RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
+RC_KG_ROOT="${RC_KG_ROOT:-$(cd "$TM_ROOT/../rc-kg" && pwd)}"
 PY=python3
 WORK="$(mktemp -d)"; PIDS=()
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }

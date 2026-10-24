@@ -11,16 +11,23 @@
 # integrity checks pass; otherwise the graph TicketMate sessions load stays
 # as it was and this job exits non-zero.
 #
-# One-off:      sbatch /projects/rc/projects/rc_kg/scripts/rebuild.sbatch
+# One-off:      sbatch /projects/rc/projects/ticketmate/rc-kg/scripts/rebuild.sbatch
 # Weekly (Slurm's per-user cron; `scrontab -e` and add this line):
 #   #SCRON --partition=short --time=01:30:00 --cpus-per-task=4 --mem=16G
-#   0 3 * * 1 /projects/rc/projects/rc_kg/scripts/rebuild.sbatch
+#   0 3 * * 1 /projects/rc/projects/ticketmate/rc-kg/scripts/rebuild.sbatch
 #
 # Logs: /scratch/$USER/rc_kg_rebuild/<jobid>.out (create the directory once:
 # mkdir -p /scratch/$USER/rc_kg_rebuild).
 
 set -uo pipefail
-ROOT=/projects/rc/projects/rc_kg
+# sbatch runs a spooled copy of this script, so ask Slurm where the original is.
+_self="${BASH_SOURCE[0]}"
+if [ -n "${SLURM_JOB_ID:-}" ] && command -v scontrol >/dev/null; then
+  _cmd="$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | sed -n 's/^ *Command=\([^ ]*\).*/\1/p')"
+  [ -f "$_cmd" ] && _self="$_cmd"
+fi
+ROOT="${RC_KG_ROOT:-$(cd "$(dirname "$_self")/.." && pwd)}"
+[ -x "$ROOT/scripts/build_graph.sh" ] || { echo "ERROR: cannot locate rc-kg (got $ROOT); set RC_KG_ROOT" >&2; exit 1; }
 echo "rc-kg rebuild on $(hostname -s) at $(date -Iseconds)"
 "$ROOT/scripts/build_graph.sh" --all
 rc=$?
