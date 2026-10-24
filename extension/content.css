@@ -193,6 +193,54 @@ aside#rc-copilot-panel .rc-status[data-state="ok"] .rc-pulse::after {
 aside#rc-copilot-panel .rc-status[data-state="warn"] .rc-pulse i { background: var(--rc-warn); }
 aside#rc-copilot-panel .rc-status[data-state="bad"]  .rc-pulse i { background: var(--rc-bad); }
 aside#rc-copilot-panel .rc-status[data-state="checking"] .rc-pulse i { animation: rc-blink 1.1s ease-in-out infinite; }
+aside#rc-copilot-panel .rc-status[data-state="starting"] .rc-pulse i { background: var(--rc-info); animation: rc-blink 1.1s ease-in-out infinite; }
+
+/* ---------- startup progress ---------- */
+
+aside#rc-copilot-panel .rc-boot {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rc-line);
+  background: var(--rc-info-bg);
+  flex: none;
+  font: 400 12px/1.4 var(--rc-sans);
+  color: var(--rc-ink);
+}
+aside#rc-copilot-panel .rc-boot[hidden] { display: none; }
+aside#rc-copilot-panel .rc-boot-time { font-size: 11px; color: var(--rc-ink-2); }
+aside#rc-copilot-panel .rc-boot-row { display: flex; flex-direction: column; gap: 4px; }
+aside#rc-copilot-panel .rc-boot-head { display: flex; align-items: baseline; gap: 8px; }
+aside#rc-copilot-panel .rc-boot-name { font-weight: 620; flex: none; }
+aside#rc-copilot-panel .rc-boot-stage {
+  flex: 1; min-width: 0; color: var(--rc-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+aside#rc-copilot-panel .rc-boot-pct { font: 600 11px/1 var(--rc-mono); color: var(--rc-ink-2); flex: none; }
+aside#rc-copilot-panel .rc-bar {
+  display: block; height: 6px; border-radius: 999px;
+  background: var(--rc-info-line); overflow: hidden;
+}
+aside#rc-copilot-panel .rc-bar-fill {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--rc-info); transition: width .6s ease;
+}
+aside#rc-copilot-panel .rc-boot-row[data-status="done"] .rc-bar-fill { background: var(--rc-ok); }
+aside#rc-copilot-panel .rc-boot-row[data-status="failed"] .rc-bar-fill { background: var(--rc-bad); }
+aside#rc-copilot-panel .rc-boot-row[data-status="failed"] .rc-boot-stage { color: var(--rc-bad); }
+aside#rc-copilot-panel .rc-boot-detail {
+  font-size: 11px; color: var(--rc-ink-3);
+  overflow-wrap: anywhere;
+}
+aside#rc-copilot-panel .rc-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+aside#rc-copilot-panel .rc-step { font-size: 11px; color: var(--rc-ink-3); padding-left: 16px; position: relative; }
+aside#rc-copilot-panel .rc-step::before { content: "○"; position: absolute; left: 0; }
+aside#rc-copilot-panel .rc-step[data-status="running"] { color: var(--rc-ink); font-weight: 600; }
+aside#rc-copilot-panel .rc-step[data-status="running"]::before { content: "◐"; color: var(--rc-info); }
+aside#rc-copilot-panel .rc-step[data-status="done"] { color: var(--rc-ink-2); }
+aside#rc-copilot-panel .rc-step[data-status="done"]::before { content: "✓"; color: var(--rc-ok); }
+aside#rc-copilot-panel .rc-step[data-status="failed"] { color: var(--rc-bad); }
+aside#rc-copilot-panel .rc-step[data-status="failed"]::before { content: "✕"; }
+aside#rc-copilot-panel .rc-boot-note { margin: 0; font-size: 11px; color: var(--rc-ink-2); }
 
 @keyframes rc-halo {
   0% { opacity: .5; transform: scale(1); }

@@ -245,15 +245,22 @@ async function ping() {
   if (!result.ok) return result;
 
   const data = result.data || {};
+  const startup = data.startup || null;
   if (data.status !== "ok") {
+    // A fresh session: the backend is up, vLLM is still loading. Report the
+    // progress rather than an error, unless the load has actually failed.
+    if (startup && !(startup.vllm && startup.vllm.failed)) {
+      return { ok: false, starting: true, startup: startup, data: data };
+    }
     return {
       ok: false,
+      startup: startup,
       error:
         "rc-copilot is up, but it can't reach vLLM (" +
-        (data.detail || "no detail") + ")."
+        ((startup && startup.vllm && startup.vllm.detail) || data.detail || "no detail") + ")."
     };
   }
-  return { ok: true, data: data };
+  return { ok: true, data: data, startup: startup };
 }
 
 async function draft(ticketText, ticketNumber, extraInstructions) {

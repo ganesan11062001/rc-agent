@@ -99,6 +99,7 @@ cleanup() {
   [ -n "$VLLM_PID" ] && kill "$VLLM_PID" 2>/dev/null
   [ -n "$KG_PID" ]   && kill "$KG_PID"   2>/dev/null   # stops its Neo4j too
   wait 2>/dev/null
+  [ -n "${RC_KG_PROGRESS_DIR:-}" ] && rm -rf "$RC_KG_PROGRESS_DIR"
 }
 trap cleanup EXIT INT TERM
 
@@ -111,6 +112,10 @@ nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
 # ── rc_kg (RC website knowledge graph), loopback only ────────────────────────
 # Started first: it is CPU-only and ready in 1-2 minutes, so it is up
 # by the time vLLM has loaded. See ood-apps/rc-copilot/template/script.sh.erb.
+# Startup progress for /api/health (app/startup.py): rc_kg's checklist and the vLLM log.
+export RC_KG_PROGRESS_DIR="$(pwd)/logs/rc_kg_progress-${SLURM_JOB_ID}"
+mkdir -p -m 700 "$RC_KG_PROGRESS_DIR"
+export VLLM_LOG_FILE="$(pwd)/logs/vllm-${SLURM_JOB_ID}.out"
 if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
   RC_KG_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   export RC_KG_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"

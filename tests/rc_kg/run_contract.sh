@@ -83,7 +83,11 @@ OOM = "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What s
 GPU = "My GPU job has been pending for hours on the gpu partition, what are the limits?"
 
 print("A. real rc_kg")
-check(wait(A, "ok") is not None, "health: knowledge_graph ok")
+h = wait(A, "ok")
+check(h is not None, "health: knowledge_graph ok")
+st = (h or {}).get("startup") or {}
+check(st.get("ready") is True and st.get("vllm", {}).get("stage") == "ready"
+      and st.get("knowledge_graph", {}).get("stage") == "ready", "health: startup reports ready once both are up")
 d = draft(A, OOM)
 check(d["kg_status"] == "ok", "kg_status ok")
 check(len(d["references"]) >= 1 and all({"n", "title", "url"} <= set(r) for r in d["references"]), "references {n,title,url}")

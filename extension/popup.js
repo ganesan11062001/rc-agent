@@ -118,6 +118,18 @@
 
     try {
       const ping = await chrome.runtime.sendMessage({ type: "PING" });
+      if (ping && ping.starting) {
+        // A fresh session still loading; the panel on the ticket page shows the details.
+        const st = ping.startup || {};
+        const v = st.vllm || {};
+        const kg = st.knowledge_graph || {};
+        setConn("loading", "Starting up…",
+          "model " + Math.round(Number(v.pct) || 0) + "% · " + (v.label || "loading"));
+        return say("info", "The session is still starting (" + Math.round(st.elapsed_s || 0) + "s so far). " +
+          "Model: " + (v.label || "loading") + (v.detail ? " (" + v.detail + ")" : "") + ". " +
+          (kg.stage && kg.stage !== "disabled" ? "Knowledge graph: " + (kg.label || kg.stage) + ". " : "") +
+          "Test again in a minute.");
+      }
       if (!ping || !ping.ok) {
         setConn("bad", "Can't reach it", "see the message below");
         return say("error", (ping && ping.error) || "No reply from the service worker.");

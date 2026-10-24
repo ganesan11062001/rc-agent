@@ -125,6 +125,10 @@ class HealthResponse(BaseModel):
     # which stays about the model so existing clients read it unchanged.
     knowledge_graph: str = "disabled"
     knowledge_graph_detail: Optional[str] = None
+    # Startup progress of vLLM and rc_kg (app/startup.py), for the progress
+    # display while a fresh session loads: {ready, model_ready, elapsed_s,
+    # vllm: {stage, label, pct, detail, failed}, knowledge_graph: {..., steps}}.
+    startup: Optional[Dict[str, Any]] = None
 
 
 # --- JSON schema handed to the server for guided decoding -----------------

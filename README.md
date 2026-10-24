@@ -176,6 +176,22 @@ address and token on its own; there's nothing to copy.
 
 **4 — Open a ticket** and click **Draft reply**.
 
+A fresh session takes a few minutes to load the model (longer the first time a
+model is downloaded) and 1–2 minutes to load the knowledge graph. Meanwhile the
+panel shows a progress display instead of an error:
+
+- **the model's loading stage**, read from vLLM's log, with its own counters
+  (weight shards, CUDA-graph passes);
+- **the knowledge graph's checklist**, from Neo4j to query warm-up;
+- **elapsed time**.
+
+It checks every 3 s and signs in when the model is up. If the model is ready
+before the graph, you can draft straight away; those drafts just won't cite RC
+pages yet. A load that fails, such as an out-of-memory error, shows the stage
+it failed at and vLLM's error message. The same data is in the `startup` field
+of `/api/health` (see [`app/startup.py`](backend/app/startup.py)). The web
+page's status line and the toolbar popup show it too.
+
 ### Without the browser at all
 
 The fastest loop for tuning the prompt needs neither the extension nor OOD:
@@ -201,6 +217,7 @@ Paste tickets at `http://127.0.0.1:8080` and edit
 | [`ood-apps/capture-test/`](ood-apps/capture-test) | Same, no model — stores what's sent, for testing the data path |
 | [`cluster/`](cluster) | Slurm launchers, install and diagnostic scripts |
 | [`tests/`](tests) | Standalone inference test — run it on the cluster, no browser or OOD needed |
+| [`tests/startup/`](tests/startup) | Startup progress: the vLLM-log parser against a real log (`test_vllm_progress.py`), and a GPU-free slow start (`run_slow_start.sh`) |
 | [`dist/`](dist) | Packaged extension zip |
 | [`docs/`](docs) | Diagram and extension guide |
 

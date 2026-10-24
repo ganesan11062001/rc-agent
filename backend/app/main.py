@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from . import auth, evaluators, kg_client, runlog, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, generate_draft, token_breakdown
+from . import startup as startup_progress
 from .models import (
     DraftRequest,
     DraftResponse,
@@ -463,6 +464,7 @@ async def health():
             detail=detail,
             knowledge_graph=kg_state,
             knowledge_graph_detail=kg_detail,
+            startup=startup_progress.startup(False, kg_state, kg_detail),
         )
 
     model_available = settings.vllm_model_name in model_ids if model_ids else None
@@ -481,6 +483,7 @@ async def health():
         ),
         knowledge_graph=kg_state,
         knowledge_graph_detail=kg_detail,
+        startup=startup_progress.startup(True, kg_state, kg_detail),
     )
 
 

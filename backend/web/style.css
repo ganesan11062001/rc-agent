@@ -102,6 +102,8 @@ h1::before {
 
 .dot.ok  { background: var(--ok-dot); }
 .dot.bad { background: var(--bad-dot); }
+.dot.busy { background: #175cd3; animation: dot-blink 1.1s ease-in-out infinite; }
+@keyframes dot-blink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
 .header-right {
   display: flex;

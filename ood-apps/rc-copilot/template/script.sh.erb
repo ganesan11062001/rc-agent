@@ -93,6 +93,10 @@ trap cleanup EXIT INT TERM
 # serves retrieval to rc-copilot. CPU only, 1-2 min to ready, so it is up
 # before vLLM; until then rc-copilot drafts without grounding and says so.
 KG_LOG="$(pwd)/rc_kg.log"
+# rc_kg's startup checklist; rc-copilot reads it so the extension can show
+# progress while the graph loads.
+export RC_KG_PROGRESS_DIR="$(pwd)/rc_kg_progress"
+mkdir -p -m 700 "$RC_KG_PROGRESS_DIR"
 if [ -x "$RC_KG_ROOT/scripts/serve_kg.sh" ]; then
   RC_KG_PORT="${RC_KG_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}"
   # Loopback is shared by every user on this node, so rc_kg gets a token too.
@@ -115,11 +119,13 @@ fi
 # connect" rather than "the model is still loading".
 #
 # So the backend comes up immediately. Its /api/health reports vLLM as
-# unreachable until the weights are in, which the extension already surfaces as
-# "rc-copilot is up, but it can't reach vLLM".
+# unreachable until the weights are in, with a `startup` block the extension
+# shows as a progress display (vLLM's loading stage, rc_kg's checklist).
 # Absolute, because the script cd's into the backend before starting vLLM and
 # a relative path would drop the log somewhere unhelpful.
 VLLM_LOG="$(pwd)/vllm.log"
+# rc-copilot reads it to report the model's loading progress (app/startup.py).
+export VLLM_LOG_FILE="$VLLM_LOG"
 
 cd "$TM_ROOT/backend" || exit 1
 
@@ -152,6 +158,10 @@ echo -n "loading weights (the UI will say the model is unreachable until this fi
 READY=0
 for _ in $(seq 1 180); do   # up to ~30 min: a first-time AWQ download is slow
   if ! kill -0 "$VLLM_PID" 2>/dev/null; then
+    wait "$VLLM_PID"; VLLM_RC=$?
+    # Marks the log so the progress display says "failed" even when vLLM
+    # died without a traceback (e.g. killed for memory).
+    echo "rc-copilot: vLLM exited with status ${VLLM_RC}" >> "$VLLM_LOG"
     echo; echo "ERROR: vLLM exited early. Tail of vllm.log:"; tail -40 "$VLLM_LOG"
     echo "NOTE: rc-copilot is still up, so /api/health will report the model"
     echo "      as unreachable rather than the session simply vanishing."

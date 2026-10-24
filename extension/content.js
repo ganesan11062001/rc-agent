@@ -198,6 +198,8 @@
   let extraInstructions = "";   // survives a redraft
   let lastTicket = null;
   let statusTimer = null;
+  let bootTimer = null;
+  let bootSince = 0;
 
   function escapeHtml(text) {
     const div = document.createElement("div");
@@ -263,6 +265,8 @@
         "</span>",
         '<span class="rc-status-go">Test</span>',
       "</button>",
+      // startup progress while a fresh session loads vLLM and the graph
+      '<div class="rc-boot" hidden></div>',
 
       '<div class="rc-scroll">',
         '<section class="rc-sec rc-sec-ticket">',
@@ -311,12 +315,102 @@
     $(".rc-status-go").textContent = action || "Test";
   }
 
+  /* ---------- startup progress ---------- */
+
+  // How long to keep polling a session that is still starting: a first-time
+  // model download can take most of the 30 minutes the job script allows.
+  const BOOT_POLL_MS = 3000;
+  const BOOT_GIVE_UP_MS = 40 * 60 * 1000;
+
+  function fmtElapsed(s) {
+    s = Math.max(0, Math.round(s || 0));
+    return s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s";
+  }
+
+  function bootRow(name, p) {
+    const state = p.failed ? "failed" : p.stage === "ready" ? "done" : "running";
+    const pct = Math.max(0, Math.min(100, Number(p.pct) || 0));
+    return (
+      '<div class="rc-boot-row" data-status="' + state + '">' +
+        '<div class="rc-boot-head">' +
+          '<span class="rc-boot-name">' + escapeHtml(name) + "</span>" +
+          '<span class="rc-boot-stage">' + escapeHtml(p.label || p.stage || "") + "</span>" +
+          '<span class="rc-boot-pct">' + Math.round(pct) + "%</span>" +
+        "</div>" +
+        '<div class="rc-bar"><span class="rc-bar-fill" style="width:' + pct + '%"></span></div>' +
+        (p.detail && state !== "done" ? '<div class="rc-boot-detail">' + escapeHtml(p.detail) + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  function bootSteps(steps) {
+    if (!steps || !steps.length) return "";
+    return (
+      '<ol class="rc-steps">' +
+      steps.map(function (st) {
+        return '<li class="rc-step" data-status="' + escapeHtml(st.status) + '">' + escapeHtml(st.label) + "</li>";
+      }).join("") +
+      "</ol>"
+    );
+  }
+
+  // Shows what the session is doing; returns false once there is nothing left to show.
+  function renderStartup(st, note) {
+    const box = $(".rc-boot");
+    if (!box) return false;
+    if (!st || st.ready) { box.hidden = true; box.innerHTML = ""; return false; }
+    const kg = st.knowledge_graph || {};
+    const showKg = kg.stage && kg.stage !== "disabled";
+    box.innerHTML =
+      '<div class="rc-boot-time">' + (((st.vllm || {}).failed || kg.failed) ? "Startup failed after " : "Starting up · ") +
+        fmtElapsed(st.elapsed_s) + (((st.vllm || {}).failed || kg.failed) ? "" : " elapsed") + "</div>" +
+      bootRow("Model", st.vllm || {}) +
+      (showKg ? bootRow("Knowledge graph", kg) + (kg.stage === "ready" ? "" : bootSteps(kg.steps)) : "") +
+      (note ? '<p class="rc-boot-note">' + escapeHtml(note) + "</p>" : "");
+    box.hidden = false;
+    return true;
+  }
+
+  function pollStartup(fn) {
+    clearTimeout(bootTimer);
+    if (!bootSince) bootSince = Date.now();
+    if (Date.now() - bootSince > BOOT_GIVE_UP_MS) return;   // the strip still offers Retry
+    bootTimer = setTimeout(fn, BOOT_POLL_MS);
+  }
+
+  // After sign-in, only the graph may still be loading: keep its progress up
+  // without signing in again on every poll.
+  async function pollGraph() {
+    const ping = await chrome.runtime.sendMessage({ type: "PING" }).catch(() => null);
+    if (!ping || !ping.ok) { testConnection(); return; }
+    if (renderStartup(ping.startup, "You can draft now; until the graph is ready, drafts won't cite RC pages.")) {
+      pollStartup(pollGraph);
+    } else {
+      bootSince = 0;
+    }
+  }
+
   async function testConnection() {
-    setStatus("checking", "Checking…", "contacting the cluster", "…");
+    clearTimeout(bootTimer);
+    if ($(".rc-status").dataset.state !== "starting") {
+      setStatus("checking", "Checking…", "contacting the cluster", "…");
+    }
 
     const ping = await chrome.runtime.sendMessage({ type: "PING" }).catch(() => null);
+    if (ping && ping.starting) {
+      const st = ping.startup || {};
+      const v = st.vllm || {};
+      setStatus("starting", "Starting up…",
+        "loading the model · " + Math.round(Number(v.pct) || 0) + "% · " + fmtElapsed(st.elapsed_s), "Check");
+      renderStartup(st);
+      pollStartup(testConnection);
+      return false;
+    }
     if (!ping || !ping.ok) {
       setStatus("bad", "Not connected", (ping && ping.error) || "no reply", "Retry");
+      // A failed load keeps its progress up: it shows which stage broke.
+      if (!(ping && ping.startup && renderStartup(ping.startup))) renderStartup(null);
+      bootSince = 0;
       return false;
     }
 
@@ -330,6 +424,11 @@
     const mins = Math.max(0, Math.round((login.expiresAt * 1000 - Date.now()) / 60000));
     const left = mins >= 60 ? Math.floor(mins / 60) + "h " + (mins % 60) + "m" : mins + "m";
     setStatus("ok", "Connected", model + " · " + left + " left", "Recheck");
+    if (renderStartup(ping.startup, "You can draft now; until the graph is ready, drafts won't cite RC pages.")) {
+      pollStartup(pollGraph);
+    } else {
+      bootSince = 0;
+    }
 
     // Keep the countdown honest without re-pinging the cluster.
     clearInterval(statusTimer);

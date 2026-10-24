@@ -437,6 +437,8 @@
     }
   }
 
+  var healthTimer = null;
+
   async function checkHealth() {
     var dot = el("health-dot");
     var text = el("health-text");
@@ -447,13 +449,29 @@
       // A backend started with AUTH_DISABLED shouldn't show a sign-in screen.
       if (typeof data.auth_required === "boolean") authRequired = data.auth_required;
 
-      if (res.ok && data.status === "ok" && data.model_available !== false) {
-        dot.className = "dot ok";
-        text.textContent = "model server up · " + (data.configured_model || "");
+      var st = data.startup || null;
+      var kg = (st && st.knowledge_graph) || {};
+      var kgLoading = st && !st.ready && kg.stage && kg.stage !== "disabled" && kg.stage !== "ready";
+      var vl = (st && st.vllm) || {};
+      clearTimeout(healthTimer);
+      if (data.status !== "ok" && st && !vl.failed) {
+        // Fresh session: show what is loading, and check again soon.
+        dot.className = "dot busy";
+        text.textContent = "starting · model " + Math.round(vl.pct || 0) + "% (" + (vl.label || "loading") + ")" +
+          (kgLoading ? " · graph " + Math.round(kg.pct || 0) + "% (" + kg.label + ")" : "") +
+          " · " + Math.round(st.elapsed_s || 0) + "s";
+        el("health").title = vl.detail || "";
+        healthTimer = setTimeout(checkHealth, 3000);
+      } else if (res.ok && data.status === "ok" && data.model_available !== false) {
+        dot.className = kgLoading ? "dot busy" : "dot ok";
+        text.textContent = "model server up · " + (data.configured_model || "") +
+          (kgLoading ? " · graph loading " + Math.round(kg.pct || 0) + "% (drafts won't cite RC pages yet)" : "");
         el("health").title = data.vllm_base_url;
+        if (kgLoading) healthTimer = setTimeout(checkHealth, 3000);
       } else {
         dot.className = "dot bad";
-        text.textContent = data.status === "ok" ? "model not served" : "model server unreachable";
+        text.textContent = data.status === "ok" ? "model not served" :
+          vl.failed ? "model failed to start · " + (vl.detail || "") : "model server unreachable";
         el("health").title = (data.detail || "") + " (" + (data.vllm_base_url || "") + ")";
       }
     } catch (err) {
