@@ -46,6 +46,38 @@ and the **model runs in the user's own Slurm allocation**.
 
 **Nothing is ever submitted automatically.** A human reviews and clicks Update.
 
+### Every draft is traceable
+
+Each draft writes one private record (`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json`,
+mode 600 in a mode-700 directory, `trace_version: 2`). It answers what went
+into the model, what came out, what it cost, and which code and data produced it:
+
+| part | what is recorded |
+|---|---|
+| `request_id` | also returned by `/api/draft` and sent to rc_kg as `X-Request-ID`, so rc_kg's log lines for this draft carry it too |
+| `input` | the ticket text, the engineer's instructions, the ticket number |
+| `trace.retrieval` | rc_kg status and latency; every source (ref, URL, page, heading, site, score, vector score, which signals found it, topics); query topics, low-confidence flag; rc_kg's own per-stage timings and ranking settings |
+| `trace.llm.attempts[]` | **every** model call, including rejected structured-output strategies and unparseable outputs: the exact messages sent, strategy, response format, latency, finish reason, served model, raw output, **token usage**, outcome |
+| `trace.tokens` | prompt, completion and total tokens summed over all calls; the final call alone; the prompt split by part (system prompt, ticket, RC sources, instructions, template), counted with the model's own tokenizer |
+| `trace.citations` | references, URLs removed, unknown markers, citation-support verdicts, caveats added |
+| `trace.output` | the model's draft before citation rendering, and the reply as returned |
+| `trace.timings_ms` | retrieve, llm, citations, total |
+| `trace.versions` | TicketMate commit (`-dirty` if the backend had local changes), rc_kg API version, the graph's variant, build time and commit |
+
+Failed drafts are recorded too, with whatever attempts were made. Read them
+with `cluster/traces.py`:
+
+```bash
+cluster/traces.py list                      # newest drafts: tokens, latency, grounding
+cluster/traces.py show <request_id>         # one draft, end to end (--prompt for the exact messages)
+cluster/traces.py stats --since 2026-10-24  # tokens and latency per model, fallbacks, failures
+cluster/traces.py export drafts.csv         # one row per draft, no ticket text
+```
+
+The ticket text is only ever written to this private log: rc_kg logs request
+ids, timings and counts, never queries. `/scratch` is purged monthly, so copy
+any logs you need to keep to a private (mode 700) location.
+
 ### Grounded in the RC website
 
 Each ticket is also matched against the rc.northeastern.edu website and the
@@ -68,7 +100,7 @@ or `website` (RC website only), e.g.
 `sbatch --export=ALL,RC_KG_VARIANT=website cluster/serve_stack.sbatch`;
 `/api/health` names the one in use.
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.2.0`; see its
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.3.0`; see its
 `API_CONTRACT.md`). The backend checks `api_version` and, on a different major
 version, drafts ungrounded with a caveat naming both versions rather than
 misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the

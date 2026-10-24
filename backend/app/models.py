@@ -64,6 +64,10 @@ class DraftResponse(LLMDraft):
     # "ok" | "unavailable" | "disabled".
     references: List[Reference] = Field(default_factory=list)
     kg_status: str = "disabled"
+    # Traceability: the id of this draft's run log (and of rc_kg's log lines
+    # for it), and the tokens it cost across every model call it took.
+    request_id: str = ""
+    usage: Optional[Dict[str, int]] = None
 
     @classmethod
     def from_llm_draft(

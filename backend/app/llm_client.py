@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -183,6 +184,14 @@ async def generate_draft(ticket_text: str,
 
     raw = ""
     last_parse_error: Optional[str] = None
+    # Every call to the model is recorded -- including rejected strategies
+    # and unparseable output -- with its exact token usage, so a draft's cost
+    # and history can be reconstructed from its run log.
+    attempts: List[Dict[str, Any]] = trace.setdefault("attempts", []) if trace is not None else []
+    if trace is not None:
+        trace["params"] = {"model": settings.vllm_model_name, "temperature": settings.temperature,
+                           "max_tokens": settings.max_tokens,
+                           "timeout_seconds": settings.request_timeout_seconds}
 
     try:
         for strategy in strategies:
@@ -203,10 +212,22 @@ async def generate_draft(ticket_text: str,
             if response_format is not None:
                 kwargs["response_format"] = response_format
 
+            att: Dict[str, Any] = {
+                "n": len(attempts) + 1, "strategy": strategy,
+                "response_format": (response_format or {}).get("type"),
+                "json_reminder": strategy == "none", "messages": messages,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "outcome": "error", "usage": None,
+            }
+            attempts.append(att)
+            t0 = time.perf_counter()
             try:
                 completion = await client.chat.completions.create(**kwargs)
             except openai.APIStatusError as exc:
+                att.update(latency_ms=int((time.perf_counter() - t0) * 1000),
+                           http_status=exc.status_code, error=_truncate(str(exc)))
                 if strategy != "none" and _is_unsupported_param_error(exc):
+                    att["outcome"] = "unsupported"
                     logger.warning(
                         "server rejected response_format=%s (HTTP %s); "
                         "falling back to the next structured-output strategy",
@@ -215,14 +236,22 @@ async def generate_draft(ticket_text: str,
                     )
                     continue
                 raise
+            except Exception as exc:
+                att.update(latency_ms=int((time.perf_counter() - t0) * 1000), error=_truncate(str(exc)))
+                raise
+            att["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+            att["served_model"] = completion.model
+            att["usage"] = _usage(completion)
 
             if not completion.choices:
                 raise LLMError("The model returned no completions.")
 
             choice = completion.choices[0]
             raw = choice.message.content or ""
+            att.update(finish_reason=choice.finish_reason, raw_response=raw)
 
             if choice.finish_reason == "length":
+                att["outcome"] = "truncated"
                 raise LLMError(
                     "The model's answer was cut off before it finished.",
                     "Increase MAX_TOKENS (currently %d) and try again."
@@ -233,6 +262,7 @@ async def generate_draft(ticket_text: str,
                 draft = LLMDraft.model_validate(extract_json(raw))
             except (ValueError, ValidationError) as exc:
                 last_parse_error = str(exc)
+                att.update(outcome="parse_error", error=_truncate(last_parse_error))
                 logger.warning(
                     "could not parse model output with strategy=%s: %s",
                     strategy,
@@ -251,6 +281,7 @@ async def generate_draft(ticket_text: str,
                     _truncate(last_parse_error),
                 )
 
+            att["outcome"] = "ok"
             _working_strategy = strategy
             if trace is not None:
                 # Enough to reproduce and argue with this draft later.
@@ -318,6 +349,48 @@ async def check_health() -> Tuple[bool, List[str], Optional[str]]:
         return False, [], _truncate(str(exc))
     finally:
         await client.close()
+
+
+def _count_sync(root: str, model: str, text: str, timeout: float) -> int:
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(
+        root + "/tokenize", headers={"Content-Type": "application/json"},
+        data=json.dumps({"model": model, "prompt": text, "add_special_tokens": False}).encode())
+    with opener.open(req, timeout=timeout) as r:
+        return int(json.loads(r.read())["count"])
+
+
+async def token_breakdown(parts: Dict[str, str]) -> Optional[Dict[str, int]]:
+    """Tokens per prompt part, counted by the serving model's own tokenizer
+    (vLLM's /tokenize, beside /v1). Best-effort: None if the server has no
+    /tokenize. The exact totals come from the completion's usage either way;
+    this only says where they went (ticket vs. RC sources vs. instructions)."""
+    import asyncio
+    settings = get_settings()
+    root = settings.vllm_base_url.rstrip("/")
+    root = root[:-3] if root.endswith("/v1") else root
+    async def count(text: str) -> int:
+        if not text:
+            return 0                     # nothing to send; an empty part costs nothing
+        return await asyncio.to_thread(_count_sync, root, settings.vllm_model_name, text, 3.0)
+    try:
+        counts = await asyncio.gather(*(count(text) for text in parts.values()))
+    except Exception as exc:                       # noqa: BLE001
+        logger.info("token breakdown unavailable: %s", _truncate(str(exc), 120))
+        return None
+    return dict(zip(parts.keys(), counts))
+
+
+def _usage(completion: Any) -> Optional[Dict[str, int]]:
+    """Token counts as the server reported them (vLLM returns them on every
+    completion); None if it did not."""
+    u = getattr(completion, "usage", None)
+    if u is None:
+        return None
+    return {"prompt_tokens": int(getattr(u, "prompt_tokens", 0) or 0),
+            "completion_tokens": int(getattr(u, "completion_tokens", 0) or 0),
+            "total_tokens": int(getattr(u, "total_tokens", 0) or 0)}
 
 
 def _truncate(text: Optional[str], limit: int = 400) -> Optional[str]:

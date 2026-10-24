@@ -74,8 +74,13 @@ def record(
     error: Optional[str],
     model: str,
     latency_ms: int,
+    trace: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
-    """Write one run. Returns the path written, or None if recording is off."""
+    """Write one run. Returns the path written, or None if recording is off.
+
+    `trace` is the full trace of the draft (trace_version 2: retrieval, every
+    model call with its tokens, citation processing, timings, versions). The
+    older top-level fields stay, so readers of version-1 logs keep working."""
     base = run_dir()
     if base is None:
         return None
@@ -112,6 +117,9 @@ def record(
             "draft": draft,
             "error": error,
         }
+        if trace is not None:
+            payload["trace_version"] = 2
+            payload["trace"] = trace
 
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

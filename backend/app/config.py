@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # hosted API from behind one during local development.
     use_proxy_env: bool = False
 
+    # Count each prompt part's tokens with the serving model's tokenizer
+    # (vLLM /tokenize) for the run log's token breakdown. One extra local
+    # request per part; best-effort.
+    trace_token_breakdown: bool = True
+
     # Ticket text may contain sensitive researcher data, so it is NOT logged
     # unless this is explicitly turned on for local debugging.
     debug: bool = False

@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 # have changed, so grounding is switched off rather than guessed at.
 EXPECTED_API_MAJOR = "1"
 _compatible: Optional[bool] = None       # cached once rc_kg has answered
+_version: Dict[str, Any] = {}            # rc_kg api_version + graph snapshot, for traces
 
 # The reply is sent as written, so its sign-off is fixed by the prompt.
 # References go above it rather than after "Research Computing".
@@ -68,14 +70,20 @@ class KGContext:
     sources: List[Dict[str, Any]] = field(default_factory=list)
     allowed_urls: List[str] = field(default_factory=list)
     detail: Optional[str] = None
+    # Everything about this retrieval except the ticket text and the source
+    # texts (both are in the prompt): what came back, how it was ranked, how
+    # long it took, and which rc_kg and graph produced it.
+    trace: Dict[str, Any] = field(default_factory=dict)
 
 
-def _call(path: str, body: Optional[Dict] = None, timeout: float = 10.0) -> Dict:
+def _call(path: str, body: Optional[Dict] = None, timeout: float = 10.0,
+          request_id: str = "") -> Dict:
     s = get_settings()
     req = urllib.request.Request(
         s.rc_kg_url.rstrip("/") + path,
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Content-Type": "application/json",
+                 **({"X-Request-ID": request_id} if request_id else {}),
                  **({"Authorization": "Bearer %s" % s.rc_kg_api_token}
                     if s.rc_kg_api_token else {})},
         method="POST" if body is not None else "GET",
@@ -85,9 +93,9 @@ def _call(path: str, body: Optional[Dict] = None, timeout: float = 10.0) -> Dict
 
 
 async def _acall(path: str, body: Optional[Dict] = None,
-                 timeout: Optional[float] = None) -> Dict:
+                 timeout: Optional[float] = None, request_id: str = "") -> Dict:
     t = timeout if timeout is not None else get_settings().rc_kg_timeout_seconds
-    return await asyncio.to_thread(_call, path, body, t)
+    return await asyncio.to_thread(_call, path, body, t, request_id)
 
 
 def _why(exc: Exception) -> str:
@@ -115,33 +123,55 @@ async def _check_compatible() -> Optional[str]:
         return None
     h = await _acall("/health", timeout=3.0)
     problem = _version_problem(h)
+    _version.update(api_version=h.get("api_version"), snapshot=h.get("snapshot"))
     if problem is None and h.get("status") == "ok":
         _compatible = True
     return problem
 
 
-async def retrieve(ticket_text: str) -> KGContext:
+def _source_summary(src: Dict[str, Any]) -> Dict[str, Any]:
+    keep = ("ref", "url", "page_title", "heading", "site", "content_type", "published",
+            "last_modified", "score", "vector_score", "signals", "topics")
+    return {k: src.get(k) for k in keep}
+
+
+async def retrieve(ticket_text: str, request_id: str = "") -> KGContext:
     s = get_settings()
     if not s.rc_kg_url:
-        return KGContext(status="disabled")
+        return KGContext(status="disabled", trace={"status": "disabled"})
+    t0 = time.perf_counter()
+
+    def failed(detail: str) -> KGContext:
+        return KGContext(status="unavailable", detail=detail, trace={
+            "status": "unavailable", "detail": detail, "rc_kg_url": s.rc_kg_url,
+            "latency_ms": int((time.perf_counter() - t0) * 1000), "rc_kg": dict(_version)})
     try:
         problem = await _check_compatible()
     except Exception as exc:                       # noqa: BLE001
-        return KGContext(status="unavailable", detail=_why(exc))
+        return failed(_why(exc))
     if problem:
         logger.error("rc_kg incompatible: %s", problem)
-        return KGContext(status="unavailable", detail=problem)
+        return failed(problem)
     try:
-        res = await _acall("/retrieve", {"query": ticket_text, "k": s.rc_kg_k})
+        res = await _acall("/retrieve", {"query": ticket_text, "k": s.rc_kg_k},
+                           request_id=request_id)
     except Exception as exc:                       # noqa: BLE001
         logger.warning("rc_kg retrieve failed: %s", _why(exc))
-        return KGContext(status="unavailable", detail=_why(exc))
+        return failed(_why(exc))
     logger.info("rc_kg | sources=%d topics=%s low_confidence=%s",
                 len(res["sources"]), ",".join(res["query_topics"]) or "-",
                 res["low_confidence"])
+    trace = {
+        "status": "ok", "rc_kg_url": s.rc_kg_url, "k": s.rc_kg_k,
+        "latency_ms": int((time.perf_counter() - t0) * 1000),
+        "query_topics": res["query_topics"], "low_confidence": res["low_confidence"],
+        "context_chars": len(res["context"]), "allowed_urls": len(res["allowed_urls"]),
+        "sources": [_source_summary(x) for x in res["sources"]],
+        "rc_kg": {**_version, "retrieval": res.get("trace")},   # trace: rc_kg API >= 1.3
+    }
     return KGContext(status="ok", context=res["context"],
                      low_confidence=res["low_confidence"],
-                     sources=res["sources"], allowed_urls=res["allowed_urls"])
+                     sources=res["sources"], allowed_urls=res["allowed_urls"], trace=trace)
 
 
 async def health() -> Tuple[str, Optional[str]]:
@@ -174,14 +204,16 @@ def _title(src: Dict[str, Any]) -> str:
     return "%s - %s" % (src["page_title"], heading)
 
 
-async def apply_citations(draft: Dict[str, Any], kg: KGContext) -> Tuple[Dict[str, Any], List[Dict]]:
+async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = ""
+                          ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, Any]]:
     """Turn [S#] markers into [1], [2].. with one numbering across the whole
     draft, add a References block to the reply and a Sources line to the
     steps, and drop any URL the model wrote that retrieval did not return.
 
-    Returns (draft, references). On any rc_kg error the draft is returned with
-    markers stripped, so a raw "[S3]" never reaches a researcher.
+    Returns (draft, references, trace). On any rc_kg error the draft is
+    returned with markers stripped, so a raw "[S3]" never reaches a researcher.
     """
+    t0 = time.perf_counter()
     steps = list(draft["suggested_steps"])
     caveats = list(draft["caveats"])
     # Reply first, so the researcher's References read 1, 2, 3 in order.
@@ -190,10 +222,13 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext) -> Tuple[Dict[st
     try:
         out = await _acall("/cite", {"texts": texts, "refs": refs,
                                      "allowed_urls": kg.allowed_urls,
-                                     "style": "numbered", "check_support": True})
+                                     "style": "numbered", "check_support": True},
+                           request_id=request_id)
     except Exception as exc:                       # noqa: BLE001
         logger.warning("rc_kg cite failed, stripping markers: %s", _why(exc))
-        return strip_citations(draft), []
+        return strip_citations(draft), [], {
+            "status": "failed", "detail": _why(exc), "markers_stripped": True,
+            "latency_ms": int((time.perf_counter() - t0) * 1000)}
 
     t = out["texts"]
     reply, summary = t[0], t[1]
@@ -234,6 +269,13 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext) -> Tuple[Dict[st
             "Removed %d link(s) the model wrote that were not among the RC pages "
             "it was given: %s" % (len(out["removed_urls"]), ", ".join(out["removed_urls"])))
 
+    added = new_caveats[len(caveats):]
     draft.update(draft_response=reply, problem_summary=summary,
                  suggested_steps=new_steps, caveats=new_caveats)
-    return draft, references
+    return draft, references, {
+        "status": "ok", "latency_ms": int((time.perf_counter() - t0) * 1000),
+        "cited": out["cited"], "references": references,
+        "removed_urls": out["removed_urls"], "unknown_refs": out["unknown_refs"],
+        "support": out.get("support"), "caveats_added": added,
+        "rc_kg": out.get("trace"),
+    }

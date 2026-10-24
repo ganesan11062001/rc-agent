@@ -2,9 +2,11 @@
 
 import logging
 import os
+import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -14,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth, kg_client, runlog
 from .config import get_settings
-from .llm_client import LLMError, check_health, generate_draft
+from .llm_client import LLMError, check_health, generate_draft, token_breakdown
 from .models import (
     DraftRequest,
     DraftResponse,
@@ -26,6 +28,24 @@ from .models import (
 )
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+def _ticket_mate_version() -> dict:
+    """Which code produced a draft: this checkout's commit (and whether it had
+    local changes), plus the shared OOD release when launched from one."""
+    root = Path(__file__).resolve().parents[2]
+    try:
+        commit = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                                capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = bool(subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", "backend"],
+                                    capture_output=True, text=True, timeout=5).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        commit, dirty = "", False
+    return {"commit": commit + ("-dirty" if dirty else ""),
+            "release": os.environ.get("RC_COPILOT_RELEASE") or None}
+
+
+_TM_VERSION = _ticket_mate_version()
 
 logger = logging.getLogger("rc_copilot")
 
@@ -156,6 +176,7 @@ async def draft(request: DraftRequest):
     settings = get_settings()
     request_id = uuid.uuid4().hex[:8]
     started = time.perf_counter()
+    started_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
     logger.info(
         "draft request | id=%s ticket=%s input_chars=%d instruction_chars=%d",
@@ -167,31 +188,20 @@ async def draft(request: DraftRequest):
     if settings.debug:
         logger.debug("draft request | id=%s ticket_text=%r", request_id, request.ticket_text)
 
-    # Collects the exact prompt, the raw model output and which structured
-    # output strategy worked, so this draft can be explained afterwards.
+    # Filled by generate_draft: every model call (strategy, exact messages,
+    # raw output, token usage, timing, outcome) and the final prompt/output.
     trace: dict = {}
+    timings: dict = {}
 
     # Ground the draft in the RC website. Never fatal: without it the draft is
     # produced exactly as before, with a caveat saying so.
-    kg = await kg_client.retrieve(request.ticket_text)
+    t = time.perf_counter()
+    kg = await kg_client.retrieve(request.ticket_text, request_id=request_id)
+    timings["retrieve"] = int((time.perf_counter() - t) * 1000)
 
-    try:
-        llm_draft, model_name = await generate_draft(
-            request.ticket_text, request.extra_instructions, trace,
-            kg_context=kg.context, kg_low_confidence=kg.low_confidence,
-        )
-    except LLMError as exc:
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        logger.error(
-            "draft failed | id=%s input_chars=%d latency_ms=%d error=%s detail=%s",
-            request_id,
-            len(request.ticket_text),
-            elapsed_ms,
-            exc.message,
-            exc.detail,
-        )
-        # Record failures too: a draft that never arrived is worth explaining.
-        runlog.record(
+    def record(draft_out, error, model, before_citations=None, cite_trace=None, tokens=None):
+        timings["total"] = int((time.perf_counter() - started) * 1000)
+        return runlog.record(
             request_id=request_id,
             ticket_number=request.ticket_number,
             ticket_text=request.ticket_text,
@@ -199,19 +209,67 @@ async def draft(request: DraftRequest):
             messages=trace.get("messages", []),
             raw_response=trace.get("raw_response", ""),
             strategy=trace.get("strategy", "n/a"),
-            draft=None,
-            error=exc.message,
-            model=settings.vllm_model_name,
-            latency_ms=elapsed_ms,
-        )
-        return JSONResponse(
-            status_code=502,
-            content={"error": exc.message, "detail": exc.detail},
+            draft=draft_out,
+            error=error,
+            model=model,
+            latency_ms=timings["total"],
+            trace={
+                "request_id": request_id,
+                "started_at": started_at,
+                "versions": {"ticket_mate": _TM_VERSION, "rc_kg": kg.trace.get("rc_kg")},
+                "retrieval": kg.trace,
+                "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
+                        "attempts": trace.get("attempts", [])},
+                "tokens": tokens or _token_summary(trace.get("attempts", []), None),
+                "citations": cite_trace,
+                "output": {"model_draft": before_citations, "response": draft_out},
+                "timings_ms": timings,
+                "error": error,
+            },
         )
 
+    t = time.perf_counter()
+    try:
+        llm_draft, model_name = await generate_draft(
+            request.ticket_text, request.extra_instructions, trace,
+            kg_context=kg.context, kg_low_confidence=kg.low_confidence,
+        )
+    except LLMError as exc:
+        timings["llm"] = int((time.perf_counter() - t) * 1000)
+        logger.error(
+            "draft failed | id=%s input_chars=%d latency_ms=%d error=%s detail=%s",
+            request_id,
+            len(request.ticket_text),
+            int((time.perf_counter() - started) * 1000),
+            exc.message,
+            exc.detail,
+        )
+        # Record failures too: a draft that never arrived is worth explaining.
+        record(None, exc.message, settings.vllm_model_name)
+        return JSONResponse(
+            status_code=502,
+            content={"error": exc.message, "detail": exc.detail, "request_id": request_id},
+        )
+    timings["llm"] = int((time.perf_counter() - t) * 1000)
+    before_citations = llm_draft.model_dump()
+
+    # Where the prompt's tokens went, by the model's own tokenizer.
+    breakdown = None
+    if settings.trace_token_breakdown and trace.get("messages"):
+        breakdown = await token_breakdown({
+            "system_prompt": trace["messages"][0]["content"],
+            "ticket_text": request.ticket_text,
+            "rc_sources": kg.context,
+            "engineer_instructions": request.extra_instructions,
+        })
+    tokens = _token_summary(trace.get("attempts", []), breakdown)
+
     references = []
+    cite_trace = None
+    t = time.perf_counter()
     if kg.status == "ok":
-        fields, refs = await kg_client.apply_citations(llm_draft.model_dump(), kg)
+        fields, refs, cite_trace = await kg_client.apply_citations(
+            llm_draft.model_dump(), kg, request_id=request_id)
         llm_draft = LLMDraft(**fields)
         references = [Reference(**r) for r in refs]
         if kg.low_confidence and not references:
@@ -224,15 +282,19 @@ async def draft(request: DraftRequest):
         llm_draft.caveats.append(
             "The RC knowledge graph was unavailable (%s), so this draft was not "
             "checked against the RC website and has no links." % kg.detail)
+    timings["citations"] = int((time.perf_counter() - t) * 1000)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     response = DraftResponse.from_llm_draft(llm_draft, model_name, elapsed_ms)
     response.references = references
     response.kg_status = kg.status
+    response.request_id = request_id
+    response.usage = {k: tokens[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
 
     logger.info(
         "draft ok | id=%s input_chars=%d confidence=%.2f label=%s steps=%d "
-        "caveats=%d references=%d kg=%s latency_ms=%d model=%s",
+        "caveats=%d references=%d kg=%s tokens=%d (prompt %d, completion %d, calls %d) "
+        "latency_ms=%d model=%s",
         request_id,
         len(request.ticket_text),
         response.confidence,
@@ -241,22 +303,12 @@ async def draft(request: DraftRequest):
         len(response.caveats),
         len(response.references),
         response.kg_status,
+        tokens["total_tokens"], tokens["prompt_tokens"], tokens["completion_tokens"],
+        tokens["model_calls"],
         elapsed_ms,
         model_name,
     )
-    saved = runlog.record(
-        request_id=request_id,
-        ticket_number=request.ticket_number,
-        ticket_text=request.ticket_text,
-        extra_instructions=request.extra_instructions,
-        messages=trace.get("messages", []),
-        raw_response=trace.get("raw_response", ""),
-        strategy=trace.get("strategy", "unknown"),
-        draft=response.model_dump(),
-        error=None,
-        model=model_name,
-        latency_ms=elapsed_ms,
-    )
+    saved = record(response.model_dump(), None, model_name, before_citations, cite_trace, tokens)
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
 
@@ -264,6 +316,22 @@ async def draft(request: DraftRequest):
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())
 
     return response
+
+
+def _token_summary(attempts, breakdown):
+    """Totals over every model call this draft made (fallback strategies
+    included -- they cost tokens too), the final call alone, and where the
+    prompt tokens went."""
+    used = [a["usage"] for a in attempts if a.get("usage")]
+    total = {k: sum(u[k] for u in used) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+    final = next((a["usage"] for a in reversed(attempts) if a.get("outcome") == "ok"), None)
+    out = {**total, "model_calls": len(attempts), "calls_with_usage": len(used), "final_call": final}
+    if breakdown is not None:
+        out["prompt_breakdown"] = dict(breakdown)
+        if final:
+            # Chat template, the JSON reminder and the fixed prompt scaffolding.
+            out["prompt_breakdown"]["template_and_scaffolding"] = final["prompt_tokens"] - sum(breakdown.values())
+    return out
 
 
 @app.get("/api/health", response_model=HealthResponse)
