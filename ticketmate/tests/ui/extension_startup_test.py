@@ -20,6 +20,7 @@ timeline = json.load(open(sys.argv[1]))
 shots = sys.argv[2] if len(sys.argv) > 2 else "/tmp"
 bg = open(os.path.join(EXT, "background.js")).read()
 ping_src = re.search(r"async function ping\(\) \{.*?\n\}\n", bg, re.S).group(0)
+request_src = re.search(r"async function request\(path, options\) \{.*?\n\}\n", bg, re.S).group(0)
 
 def health(snap):
     return {"status": snap["status"], "configured_model": "stub-model", "detail": None, "startup": snap["startup"]}
@@ -43,7 +44,8 @@ PAGE = """<!doctype html><html><body style="font-family:sans-serif;margin:0">
 
 INIT = """
 window.__health = null;
-const request = async () => ({ ok: true, data: window.__health });
+// {__raw: ...} stands for what request() itself returns, e.g. OOD's error page.
+const request = async () => (window.__health && window.__health.__raw) || { ok: true, data: window.__health };
 %s
 window.chrome = { runtime: {
   sendMessage: async (m) => {
@@ -100,6 +102,36 @@ with sync_playwright() as p:
 
     show({"status": "ok", "configured_model": "stub-model", "startup": last})
     check(pg.is_hidden(panel + " .rc-boot"), "all ready: the progress block goes away")
+
+    # The real request() on what OOD sends back: its "Failed to connect" page
+    # while nothing listens yet is not the SSO login page.
+    def classify(status, html):
+        return pg.evaluate("""async ([status, html]) => {
+            const TIMEOUT_MS = 5000;
+            const getConfig = async () => ({ baseUrl: "https://ood.test/rnode/d4054/24980" });
+            const fetch = async () => new Response(html, { status, headers: { "content-type": "text/html" } });
+            %s
+            return request("/api/health");
+        }""" % request_src, [status, html])
+    r = classify(404, "<html><body><h1>Failed to connect to d4054:24980</h1></body></html>")
+    check(r.get("backendDown") and "d4054:24980" in r.get("error", ""), "OOD 'Failed to connect' page: backend not up, address named")
+    check(not r.get("needsOodLogin"), "OOD 'Failed to connect' page: not called a login page")
+    r = classify(502, "<html><body>Bad Gateway</body></html>")
+    check(r.get("backendDown"), "HTML 5xx: backend not up")
+    r = classify(200, "<html><body><form action='/idp/profile/SAML2'>Sign in</form></body></html>")
+    check(r.get("needsOodLogin") and not r.get("backendDown"), "SSO login page: still asks to sign in")
+
+    # The panel keeps waiting while nothing answers, and gives up after 5 min.
+    down = {"__raw": {"ok": False, "backendDown": True,
+                      "error": "Nothing is answering at d4054:24980 yet."}}
+    show(down)
+    check(pg.get_attribute(panel + " .rc-status", "data-state") == "starting", "backend not up: the strip says starting")
+    check("Waiting for the session" in pg.inner_text(panel + " .rc-status"), "backend not up: waiting, not 'sign in'")
+    pg.evaluate("() => { const real = Date.now; Date.now = () => real() + 6 * 60 * 1000; }")
+    show(down)
+    check(pg.get_attribute(panel + " .rc-status", "data-state") == "bad", "backend still not up after 5 min: not connected")
+    check("Nothing is answering" in pg.inner_text(panel + " .rc-status"), "backend still not up after 5 min: says why")
+    pg.screenshot(path=os.path.join(shots, "ext-backend-down.png"))
 
     show({"status": "unreachable", "configured_model": "stub-model", "detail": "connection refused", "startup": oom})
     check(pg.get_attribute(panel + " .rc-status", "data-state") == "bad", "OOM: the strip says not connected")

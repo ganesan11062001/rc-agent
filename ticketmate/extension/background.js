@@ -144,9 +144,25 @@ async function request(path, options) {
 
   const contentType = response.headers.get("content-type") || "";
 
-  /* A 200 carrying HTML means SSO gave us a login page, not the backend.
-     This is the most confusing failure mode there is, so name it exactly. */
+  /* HTML is never the backend. Two very different things send it: OOD's own
+     error page when nothing listens on the session's port yet ("Failed to
+     connect to d4054:24980" -- a new session starts its backend a minute or
+     two after the card says Running), and SSO's login page. Telling the
+     first one to sign in sends people the wrong way, so tell them apart. */
   if (contentType.includes("text/html")) {
+    const html = await response.text().catch(() => "");
+    const down = html.match(/Failed to connect to\s+([\w.-]+:\d+)/i);
+    if (down || response.status >= 500) {
+      return {
+        ok: false,
+        status: response.status,
+        backendDown: true,
+        error:
+          "Nothing is answering at " + (down ? down[1] : "the session's address") +
+          " yet. A new session starts its backend a minute or two after the card " +
+          "says Running. If this lasts, open output.log from the session card."
+      };
+    }
     return {
       ok: false,
       status: response.status,

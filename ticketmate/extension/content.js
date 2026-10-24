@@ -321,6 +321,9 @@
   // model download can take most of the 30 minutes the job script allows.
   const BOOT_POLL_MS = 3000;
   const BOOT_GIVE_UP_MS = 40 * 60 * 1000;
+  // Nothing listening at all (OOD's "Failed to connect"): normal for the first
+  // minute or two of a session, a dead job after that.
+  const BACKEND_WAIT_MS = 5 * 60 * 1000;
 
   function fmtElapsed(s) {
     s = Math.max(0, Math.round(s || 0));
@@ -403,6 +406,13 @@
       setStatus("starting", "Starting up…",
         "loading the model · " + Math.round(Number(v.pct) || 0) + "% · " + fmtElapsed(st.elapsed_s), "Check");
       renderStartup(st);
+      pollStartup(testConnection);
+      return false;
+    }
+    if (ping && ping.backendDown && (!bootSince || Date.now() - bootSince < BACKEND_WAIT_MS)) {
+      const waited = bootSince ? (Date.now() - bootSince) / 1000 : 0;
+      setStatus("starting", "Waiting for the session…",
+        "its backend is not answering yet · " + fmtElapsed(waited), "Check");
       pollStartup(testConnection);
       return false;
     }
