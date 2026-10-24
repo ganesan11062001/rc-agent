@@ -1,0 +1,5 @@
+# Shared toolchain and caches (uv's Python, model weights, compile caches).
+/.uv/
+/.cache/
+# Published OOD releases: a deploy target written by ticketmate/ood-apps/publish.sh.
+/rc-copilot/
