@@ -8,7 +8,7 @@ is sent; nothing is submitted automatically.
 ## Install (once, ~1 minute)
 
 ```bash
-/projects/rc/projects/rc-copilot-ood/install.sh
+/projects/rc/projects/ticketmate/rc-copilot/install.sh
 ```
 
 This links `~/ondemand/dev/rc-copilot` to the shared app here. There is no
@@ -23,8 +23,8 @@ extension (`rc-copilot-extension.zip`, in this directory).
 ## Use
 
 1. **Open OnDemand → Develop → My Sandbox Apps → RC Copilot → Launch.**
-   The default small model on any free GPU starts in a minute or two; pick a
-   bigger model in the form for better drafts.
+   The default, Qwen2.5-7B (4-bit) on any free GPU, starts in a few minutes;
+   pick GLM-4.7-Flash with an 80 GB GPU in the form for stronger drafts.
 2. Open **My Interactive Sessions**. The extension picks up the session
    automatically.
 3. Open a ticket in ServiceNow and click **Draft reply**. The draft lands in
@@ -45,7 +45,7 @@ inside your job.
 
 ## Version and problems
 
-- `cat /projects/rc/projects/rc-copilot-ood/current/VERSION` shows the
+- `cat /projects/rc/projects/ticketmate/rc-copilot/current/VERSION` shows the
   version you are running.
 - The session's `output.log` (open it from the session card) shows startup.
   `rc_kg.log` in the same directory shows the knowledge graph.

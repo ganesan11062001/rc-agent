@@ -40,7 +40,8 @@ and the **model runs in the user's own Slurm allocation**.
 2. The extension reads the ticket and offers a box for anything the model should
    know that the ticket doesn't say.
 3. It goes through Open OnDemand's authenticated proxy to a FastAPI service in
-   your Slurm job, which prompts a GLM model served by vLLM.
+   your Slurm job, which prompts a model served by vLLM (Qwen2.5-7B AWQ by
+   default; GLM-4.7-Flash on an 80 GB GPU).
 4. You get back a summary, suggested steps, a confidence score, caveats, and a
    ready-to-edit draft — written into **work notes**, unsaved.
 
@@ -133,7 +134,7 @@ draft can be compared with what was actually sent.
 
 Each ticket is also matched against the rc.northeastern.edu website and the
 rc-docs.northeastern.edu documentation, served from a Neo4j knowledge graph by
-[rc_kg](../rc_kg) in the same job. The most
+[rc-kg](../rc-kg) in the same job. The most
 relevant sections go into the prompt as numbered sources; the model cites them
 as `[S1]`, and the backend turns those into a numbered **References** block in
 the reply (and a Sources line in the steps) with the exact page links. The
@@ -141,7 +142,7 @@ model never writes a URL: one it writes anyway is checked against what was
 retrieved and removed if it is not there, with a caveat saying so.
 
 rc_kg starts automatically with the session and needs no setup beyond a graph
-snapshot (`/projects/rc/projects/rc_kg/scripts/build_graph.sh`, run once). If
+snapshot (`rc-kg/scripts/build_graph.sh`, run once). If
 it is missing or still loading, drafts work exactly as before, with a caveat
 that they were not checked against the website. `/api/health` reports it as
 `knowledge_graph`.
@@ -162,14 +163,21 @@ incompatible rc_kg refused, and rc_kg down.
 
 ## Quick start
 
-**1 — Launch the backend.** In Open OnDemand: *Develop → My Sandbox Apps →
-RC Copilot → Launch*. It defaults to a small 3B model on any free GPU, which
-schedules in seconds; switch to GLM-4.7-Flash once you're happy it works.
+**0 — Install the OOD app, once:**
+`/projects/rc/projects/ticketmate/rc-copilot/install.sh`. It links
+`~/ondemand/dev/rc-copilot` to the published release, so updates reach you on
+your next launch. (Setting up a fresh checkout is covered in the
+[repository README](../README.md#running-it).)
 
-**2 — Install the extension.** Download
-[`dist/rc-copilot-extension.zip`](dist/rc-copilot-extension.zip),
-unzip it, then `chrome://extensions` → Developer mode → **Load unpacked** →
-select the folder.
+**1 — Launch the backend.** In Open OnDemand: *Develop → My Sandbox Apps →
+RC Copilot → Launch*. It defaults to Qwen2.5-7B AWQ (4-bit) on any free GPU,
+which fits a T4 and schedules in seconds; pick GLM-4.7-Flash with an 80 GB GPU
+for stronger drafts.
+
+**2 — Install the extension.** Unzip `rc-copilot-extension.zip` (published in
+`/projects/rc/projects/ticketmate/rc-copilot/`; built into
+[`dist/`](dist/rc-copilot-extension.zip) here), then `chrome://extensions` →
+Developer mode → **Load unpacked** → select the folder.
 
 **3 — Open OOD's "My Interactive Sessions".** The extension picks up the
 address and token on its own; there's nothing to copy.
@@ -198,12 +206,15 @@ The fastest loop for tuning the prompt needs neither the extension nor OOD:
 
 ```bash
 cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --port 8080
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env            # point VLLM_BASE_URL at a running vLLM
+.venv/bin/uvicorn app.main:app --port 8080
 ```
 
-Paste tickets at `http://127.0.0.1:8080` and edit
-[`app/prompts.py`](backend/app/prompts.py).
+Sign in at `http://127.0.0.1:8080` with the access token printed at startup,
+paste tickets, and edit [`app/prompts.py`](backend/app/prompts.py). Getting a
+vLLM endpoint and tunnelling to it is in
+[backend/README.md](backend/README.md#standard-process-the-node-changes-every-time).
 
 ---
 
@@ -211,18 +222,21 @@ Paste tickets at `http://127.0.0.1:8080` and edit
 
 | Path | What it is |
 | --- | --- |
-| [`backend/`](backend) | FastAPI service — prompt, vLLM client, auth. Knows nothing about ServiceNow |
+| [`backend/`](backend) | FastAPI service — prompt, vLLM client, auth, rc-kg grounding, run logs, evaluation. Knows nothing about ServiceNow |
 | [`extension/`](extension) | Chrome MV3 extension |
 | [`ood-apps/rc-copilot/`](ood-apps/rc-copilot) | OOD interactive app: vLLM + backend in one job |
 | [`ood-apps/capture-test/`](ood-apps/capture-test) | Same, no model — stores what's sent, for testing the data path |
 | [`cluster/`](cluster) | Slurm launchers, install and diagnostic scripts |
 | [`tests/`](tests) | Standalone inference test — run it on the cluster, no browser or OOD needed |
+| [`tests/rc_kg/`](tests/rc_kg) | Contract test against a real rc-kg (`run_contract.sh`, no GPU) |
+| [`tests/ui/`](tests/ui) | Headless-browser tests of the extension panel and the web page (`run.sh`) |
 | [`tests/startup/`](tests/startup) | Startup progress: the vLLM-log parser against a real log (`test_vllm_progress.py`), and a GPU-free slow start (`run_slow_start.sh`) |
 | [`dist/`](dist) | Packaged extension zip |
 | [`docs/`](docs) | Diagram and extension guide |
+| [`../rc-kg/`](../rc-kg) | The knowledge graph the drafts are grounded in (a sibling in this monorepo) |
 
 Helper scripts live in `cluster/`: `install_vllm.sh --check`, `check_gpus.sh`,
-`vllm_status.sh`, `smoke_test.py`.
+`vllm_status.sh`, `smoke_test.py`, `traces.py`.
 
 ---
 
@@ -263,6 +277,11 @@ either way; a human still clicks Update.
 - **Real inference on the cluster.** Qwen2.5-3B on a T4 (`d1025`) produced a
   schema-valid draft from the real prompt in 13.9s — summary, 5 steps,
   confidence 0.80, 4 caveats, a 729-character reply
+- **Real tickets.** Qwen2.5-7B AWQ, the OOD default, has drafted replies to
+  real INC/TASK tickets from the extension (September and October 2026). Those
+  runs predate the rc-kg grounding and the trace format above
+- **Grounding and tracing** pass the contract test against a real rc-kg, with a
+  stub model
 
 **Not yet good enough**
 
@@ -271,11 +290,16 @@ either way; a human still clicks Update.
   contradicted by the ticket), signed off `[Your Name]`, and gave generic
   "check your versions" advice where the error text already named the fault.
   All three are now addressed in `prompts.py` and need re-testing
-- The GLM stack hasn't completed a run on a GPU node — only the 3B model has
+- **No grounded draft from a real model on record yet.** The rc-kg-grounded
+  path has been exercised only with a stub model
+- **Long tickets go to the model as scraped.** The extension cuts the activity
+  stream at 4,000 characters (keeping the *oldest* entries) and nothing removes
+  email headers, CC lists, quoted reply chains or signatures. The per-draft
+  token breakdown measures what this costs but nothing reduces it yet
 
-**Next step:** re-run `tests/` with the revised prompt, then work through 20–30
-real tickets, tuning [`app/prompts.py`](backend/app/prompts.py) until the drafts
-are worth sending.
+**Next step:** work through 20–30 real tickets in grounded sessions, tuning
+[`app/prompts.py`](backend/app/prompts.py) until the drafts are worth sending,
+and clean up the ticket text before it is prompted.
 
 ---
 
@@ -287,6 +311,9 @@ are worth sending.
 | [VLLM_SETUP.md](VLLM_SETUP.md) | Model layer: which GLM fits A100 hardware, and the CUDA install trap |
 | [docs/EXTENSION.md](docs/EXTENSION.md) | Extension + OOD apps in detail |
 | [backend/README.md](backend/README.md) | Backend configuration and API |
+| [tests/README.md](tests/README.md) | Running the inference test on a GPU |
+| [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md) | Install and use, for RC team members |
+| [../rc-kg/README.md](../rc-kg/README.md) | The knowledge graph: build, serve, evaluate |
 
 ---
 

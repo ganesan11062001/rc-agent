@@ -1,13 +1,18 @@
-# RC Copilot (v0)
+# RC Copilot backend
 
-An internal tool that helps Research Computing staff draft replies to ServiceNow
-tickets using a local LLM served by [vLLM](https://docs.vllm.ai) on Discovery.
+The FastAPI service behind RC Copilot. It takes ticket text in and returns a
+structured draft reply, using a model served by [vLLM](https://docs.vllm.ai)
+on Explorer and grounded in the RC website through [rc-kg](../../rc-kg).
 
-**Manual copy-paste only.** There is no ServiceNow integration, no scraping, and
-no write-back — RC policy doesn't give us API access, so an RC member pastes the
-ticket text in, reads the draft, and copies it out. The point of v0 is to find
-out whether the prompt produces useful drafts and whether the vLLM connection
-holds up end to end.
+Two clients use it: the browser extension in [`../extension`](../extension),
+which reads the open ServiceNow ticket and writes the draft into the ticket
+unsaved, and the single-page web UI served from [`web/`](web), where you paste
+ticket text by hand. The backend itself knows nothing about ServiceNow.
+
+In normal use the OOD app (or `cluster/serve_stack.sbatch`) starts this backend
+for you, together with vLLM and rc-kg; see the
+[repository README](../../README.md#running-it). This page is for running it
+by hand, configuring it, and tuning the prompt.
 
 Every draft is a *starting point*. Nothing is sent anywhere automatically, and
 the model can be confidently wrong — read the **Check before sending** list.
@@ -16,11 +21,14 @@ the model can be confidently wrong — read the **Check before sending** list.
 
 ## What it does
 
-1. You paste ticket text (short description, description, work notes — whatever
-   you copied) into a box.
-2. The backend builds a prompt and calls the vLLM server's OpenAI-compatible
-   `/v1/chat/completions` endpoint.
-3. You get back a structured draft:
+1. Ticket text arrives (short description, description, work notes) from the
+   extension or the web UI's paste box.
+2. The backend retrieves the most relevant RC website and rc-docs sections from
+   rc-kg (when it is running), builds a prompt with them as numbered sources,
+   and calls the vLLM server's OpenAI-compatible `/v1/chat/completions`
+   endpoint.
+3. You get back a structured draft, with `[S1]`-style citations turned into a
+   References block of exact page links:
 
    | Field | What it is |
    | --- | --- |
@@ -30,7 +38,9 @@ the model can be confidently wrong — read the **Check before sending** list.
    | `caveats` | What to verify before sending (missing job ID, no error text, …) |
    | `draft_response` | Ready-to-paste reply to the researcher |
 
-4. You edit the draft in the browser and hit **Copy to clipboard**.
+4. The draft is checked automatically (see the
+   [app README](../README.md#evaluation-of-every-draft)) and recorded to a
+   private run log. You edit it and send it yourself.
 
 ---
 
@@ -54,7 +64,8 @@ Run it:
 uvicorn app.main:app --reload --port 8080
 ```
 
-Open <http://127.0.0.1:8080>.
+Open <http://127.0.0.1:8080> and sign in with the access token printed in the
+console at startup (see [Authentication](#authentication)).
 
 `--port 8080` is worth typing: uvicorn's own default is 8000, which is also
 vLLM's default, so plain `uvicorn app.main:app --reload` will collide with a
@@ -88,7 +99,7 @@ If you're running the app on your laptop and vLLM on a compute node, forward the
 port and leave the URL as localhost:
 
 ```bash
-ssh -N -L 8000:d1234:8000 you@login.discovery.neu.edu
+ssh -N -L 8000:d1234:8000 you@login.explorer.northeastern.edu
 ```
 
 vLLM needs no auth by default. If you started it with `--api-key`, set
@@ -96,7 +107,7 @@ vLLM needs no auth by default. If you started it with `--api-key`, set
 
 ### A note on proxies
 
-If `HTTP_PROXY`/`HTTPS_PROXY` are set in your shell (they are on some Discovery
+If `HTTP_PROXY`/`HTTPS_PROXY` are set in your shell (they are on some Explorer
 nodes), the HTTP client would otherwise try to reach the model server *through*
 the site proxy, which rejects internal traffic with a 403. The app therefore adds
 the vLLM host to `NO_PROXY` automatically. Set `USE_PROXY_ENV=true` if you
@@ -165,7 +176,7 @@ laptop                                    cluster
 **1. Start vLLM** (on a login node):
 
 ```bash
-cd /projects/rc/projects/ticket_mate/cluster
+cd /projects/rc/projects/ticketmate/ticketmate/cluster
 sbatch --partition=gpu-short --time=02:00:00 \
        --gres=gpu:a100:1 --mem=80G --export=ALL,MODEL=qwen7b serve_stack.sbatch
 ```
@@ -188,7 +199,7 @@ To skip the copy-paste, on the laptop:
 
 ```bash
 eval "$(ssh you@login.explorer.northeastern.edu \
-        /projects/rc/projects/ticket_mate/vllm_status.sh --env)"
+        /projects/rc/projects/ticketmate/ticketmate/cluster/vllm_status.sh --env)"
 uvicorn app.main:app --port 8080
 ```
 
@@ -205,7 +216,7 @@ maintenance burden.
 
 Two things bite on shared nodes.
 
-**Don't use `--reload` on a login node.** `.venv` lives inside `rc-copilot`, so
+**Don't use `--reload` on a login node.** `.venv` lives inside `backend/`, so
 uvicorn's file watcher recursively scans thousands of files on `/projects` at
 startup. That resource spike gets the process `Killed` by the node's enforcement
 daemon, usually seconds after `Application startup complete`. Either drop the
@@ -230,9 +241,9 @@ uvicorn app.main:app --port 18080
 ```
 
 A note on `--host`: uvicorn binds `127.0.0.1` by default. Keep it that way. On a
-shared node "localhost" still means every user logged into that host, and this
-app has no auth, so ticket text in a running instance is readable by them. Never
-add `--host 0.0.0.0` on a login node.
+shared node "localhost" still means every user logged into that host. The
+access token keeps them out of the API, but never add `--host 0.0.0.0` on a
+login node, and never run with `AUTH_DISABLED=true` on a shared one.
 
 ---
 
@@ -251,8 +262,23 @@ installed is genuinely confusing.
 Note the deployment difference: the current extension expects this backend to be
 reachable **through OOD**, which means it runs on a compute node bound to
 `0.0.0.0` and requires the access token described under Authentication. The
-tunnel-to-localhost setup below is still the right choice for local prompt
+tunnel-to-localhost setup above is still the right choice for local prompt
 iteration.
+
+---
+
+## Authentication
+
+Every `/api/*` route except `/api/health` needs a session. You get one by
+posting the **access token** to `/api/login`; the response is a signed session
+token valid for `SESSION_HOURS`. The web UI and the extension do this for you.
+
+- Unset `AUTH_TOKEN` (the default): a random token is minted per run and
+  printed to the console only. Under the OOD app it is set to the password OOD
+  generated for the session, which the extension reads from the session card.
+- `cluster/serve_stack.sbatch` writes it to `~/.rc_copilot/token` (mode 600).
+- Don't put `AUTH_TOKEN` in `.env` on the cluster: `/projects` is
+  group-readable.
 
 ---
 
@@ -260,13 +286,16 @@ iteration.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /` | The single-page frontend |
-| `POST /api/draft` | `{"ticket_text": "..."}` → `DraftResponse` |
-| `GET /api/health` | Pings the vLLM server; `200` reachable, `503` not |
+| `GET /` | The single-page web UI (from `web/`) |
+| `POST /api/login` | `{"access_token": "..."}` → `{"session_token", "expires_at"}` |
+| `POST /api/draft` | `{"ticket_text", "extra_instructions"?, "ticket_number"?}` → `DraftResponse`, including `request_id`, references, checks and token usage |
+| `POST /api/feedback` | `{"request_id", "key", "score"?: -1..1, "value"?, "comment"?, "correction"?}` — stored beside the draft's run log |
+| `GET /api/health` | Model server, knowledge graph (`knowledge_graph`) and `startup` progress. Always `200`, so it can't be confused with OOD's own 503; read the body |
 | `GET /docs` | FastAPI's generated API docs |
 
-Errors come back as `{"error": "...", "detail": "..."}` — `502` when the model
-server can't be used, `422` for an empty paste.
+Errors come back as `{"error": "...", "detail": "..."}` — `401` without a valid
+session, `502` when the model server can't be used, `422` for an empty or
+oversized ticket (50,000 characters max).
 
 ---
 
@@ -279,11 +308,22 @@ All settings live in `.env` (see `.env.example` for the annotated version).
 | `VLLM_BASE_URL` | `http://localhost:8000/v1` | Include the trailing `/v1` |
 | `VLLM_MODEL_NAME` | `meta-llama/Llama-3.1-8B-Instruct` | Must match `/v1/models` |
 | `VLLM_API_KEY` | *(empty)* | Only if the server requires auth |
+| `AUTH_TOKEN` | *(minted per run)* | See [Authentication](#authentication); leave unset on the cluster |
+| `SESSION_HOURS` | `3.0` | How long a sign-in lasts |
+| `AUTH_DISABLED` | `false` | Loopback on your own machine only |
+| `RC_KG_URL` | *(unset)* | rc-kg API, e.g. `http://127.0.0.1:8090`. Unset = drafts are not grounded |
+| `RC_KG_API_TOKEN` | *(unset)* | Bearer token for rc-kg; the session job generates it |
+| `RC_KG_K` | `6` | Website sections put in the prompt per ticket |
+| `RC_KG_TIMEOUT_SECONDS` | `15` | Only matters if rc-kg is wedged |
 | `APP_PORT` | `8080` | Used by `python -m app.main` |
 | `TEMPERATURE` | `0.2` | Low keeps the JSON stable |
 | `MAX_TOKENS` | `1400` | Raise if drafts get truncated |
 | `REQUEST_TIMEOUT_SECONDS` | `120` | Cluster queues can be slow |
 | `USE_PROXY_ENV` | `false` | See the proxy note above |
+| `TRACE_TOKEN_BREAKDOWN` | `true` | Count prompt tokens per part (system / ticket / sources / instructions) with vLLM's `/tokenize` |
+| `ONLINE_EVAL` | `true` | The serving model grades each draft in the background |
+| `ONLINE_EVAL_SAMPLE_RATE` | `1.0` | Share of drafts graded |
+| `RUN_LOG_DIR` | `/scratch/$USER/rc_copilot_runs` | One private JSON trace per draft; empty = off. Read by `app/runlog.py` directly |
 | `DEBUG` | `false` | **Logs full ticket text** — see below |
 | `LOG_FILE` | `logs/rc_copilot.log` | Empty value = stdout only |
 
@@ -301,38 +341,50 @@ confidence, label, step/caveat counts, latency, model:
   confidence=0.86 label=high steps=3 caveats=1 latency_ms=15 model=stub-model
 ```
 
-Ticket text is **not** logged. Setting `DEBUG=true` logs the full ticket text and
-model output; it's for debugging a prompt on your own machine and prints a
-warning at startup. Don't set it on a shared host. There is no database — logs go
-to stdout and `LOG_FILE`.
+Ticket text is **not** written to the log. Setting `DEBUG=true` logs the full
+ticket text and model output; it's for debugging a prompt on your own machine
+and prints a warning at startup. Don't set it on a shared host. Logs go to
+stdout and `LOG_FILE`.
+
+The **run log** is separate and does hold ticket text: one JSON trace per draft
+under `RUN_LOG_DIR`, in a mode-700 directory with mode-600 files, so only you
+can read it. That is what `cluster/traces.py` reads. There is no database.
 
 ---
 
 ## Tuning the prompt
 
-`backend/prompts.py` is the file you'll actually iterate on. `SYSTEM_PROMPT`
+`app/prompts.py` is the file you'll actually iterate on. `SYSTEM_PROMPT`
 holds the role, the JSON contract, the confidence rubric, and the rules about
 what the draft must not do (invent partitions or paths, promise timelines or
 quota increases). With `--reload`, saving it restarts the server.
 
 If you change the *shape* of the output, update `LLMDraft` and
-`DRAFT_JSON_SCHEMA` in `backend/models.py` and the renderer in
-`frontend/app.js` to match.
+`DRAFT_JSON_SCHEMA` in `app/models.py`, the renderer in `web/app.js`, and the
+panel in `../extension/content.js` to match. Every prompt template is hashed
+into the trace's `prompt_version`, so
+`../cluster/traces.py stats --by prompt_version` compares revisions.
 
 ---
 
 ## Layout
 
 ```
-rc-copilot/
-  backend/
-    main.py         FastAPI app: API routes + serves the frontend
+backend/
+  app/
+    main.py         FastAPI app: API routes + serves web/
     config.py       Settings from env / .env
-    llm_client.py   vLLM calls, structured-output fallback, JSON extraction
+    auth.py         Access token, signed sessions
+    llm_client.py   vLLM calls, structured-output fallback, JSON extraction, token counts
     models.py       Pydantic models + the JSON schema sent to the server
     prompts.py      Prompt templates  <- tune here
-  frontend/
-    index.html      Sign-in + paste box, button, results panel
+    kg_client.py    rc-kg retrieval and citation processing
+    evaluators.py   Per-draft checks and the background LLM judge
+    runlog.py       The private per-draft run log
+    tracing.py      Run trees (LangSmith-style) written into the run log
+    startup.py      Startup progress from vLLM's log and rc-kg's checklist
+  web/
+    index.html      Sign-in + paste box, button, results panel, feedback form
     app.js          fetch() + rendering, no build step
     style.css
   .env.example
@@ -346,7 +398,8 @@ The browser extension lives one level up, in
 
 ## Scope
 
-No vector store or retrieval, and no database — drafts are not stored anywhere.
+Retrieval is rc-kg's job, over HTTP; this backend holds no index or database.
+Drafts are stored only in your own run log.
 
 This backend has no knowledge of ServiceNow: it takes text in and returns a
 draft. The reading and writing of ticket pages lives entirely in

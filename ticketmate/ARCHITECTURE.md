@@ -327,8 +327,8 @@ cards vLLM aborts at startup. `serve_glm.sh` reads the compute capability and
 falls back to `--dtype float16`. This matters because the older cards are
 usually the idle ones.
 
-A 3B test model (`Qwen2.5-3B-Instruct`, ~6 GB) is the default for exactly this
-reason: it takes any free GPU, starts in about a minute, and is enough to
+A 3B test model (`Qwen2.5-3B-Instruct`, ~6 GB) is the default of
+`serve_stack.sbatch` and the inference test for exactly this reason: it takes any free GPU, starts in about a minute, and is enough to
 exercise the pipeline and iterate on the prompt.
 
 ---
@@ -385,12 +385,12 @@ ls /scratch/$USER/rc_copilot_captures/
 
 # 2. The real thing
 #    OOD → My Sandbox Apps → "RC Copilot" → Launch
-#    Defaults: Qwen2.5-3B on any free GPU. Switch to GLM-4.7-Flash once
-#    the pipeline is confirmed.
+#    Defaults: Qwen2.5-7B AWQ on any free GPU (fits a T4). GLM-4.7-Flash
+#    needs an 80 GB GPU.
 
 # 3. Prompt iteration — fastest loop, no extension, no OOD
-cd backend && uvicorn app.main:app --port 8080
-#    then paste tickets at http://127.0.0.1:8080
+cd backend && .venv/bin/uvicorn app.main:app --port 8080
+#    then sign in with the printed token and paste tickets at http://127.0.0.1:8080
 ```
 
 Helper scripts: `install_vllm.sh --check`, `check_gpus.sh`, `vllm_status.sh`,

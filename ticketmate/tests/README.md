@@ -16,7 +16,7 @@ and writes only into `tests/logs/`. Nothing outside `tests/` is modified.
 
 ```bash
 ssh you@login.explorer.northeastern.edu
-cd /projects/rc/projects/ticket_mate/tests
+cd /projects/rc/projects/ticketmate/ticketmate/tests
 sbatch --gres=gpu:t4:1 --export=ALL,MODEL=small run_inference_test.sbatch
 tail -F logs/inftest-<jobid>.out
 ```
@@ -51,8 +51,8 @@ The last line is either:
 
 ### Against GLM-4.7-Flash (the real model)
 
-Already fully cached locally, so this downloads nothing — unlike the 3B
-default, whose weights are not cached yet.
+Already fully cached locally, so this downloads nothing (so are the 3B
+default, `qwen7b` and `t4-7b`).
 
 General-access GPU partitions cap at one GPU per job, and the weights are
 ~56 GiB, so it needs an **80 GB** A100:

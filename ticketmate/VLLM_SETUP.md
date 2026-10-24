@@ -18,7 +18,8 @@ sbatch --gres=gpu:a100:1 --mem=80G --cpus-per-task=12 \
 ```
 
 See the comment block at the top of that file for the per-model allocations
-(`qwen7b`, `qwen14b`, `flash`, `t4-7b`, `small`).
+(`qwen7b`, `qwen14b`, `flash`, `t4-7b`, `t4-14b`, `small`). The OOD app's
+form defaults to `t4-7b`, which fits any usable GPU.
 
 For the model *alone* — which is what the rest of this page is about — grab a
 GPU node interactively:
@@ -79,13 +80,16 @@ or 8×H100 for the W4A8 variant.
 
 Every general-access GPU partition on Explorer allows **1 GPU per job**, so the
 practical choices are the single-GPU ones. All are BF16 — no FP8 hardware
-needed, native on sm80.
+needed, native on sm80 — except the `t4-*` presets, which are 4-bit AWQ so they
+fit a 16 GB T4 (sm75).
 
 | `MODEL=` | Model | Weights | GPUs | Card | Context | On disk |
 |---|---|---|---|---|---|---|
 | `qwen7b` | Qwen2.5-7B-Instruct | 15.2 GB | **1** | A100-40GB | 32K | ✅ |
 | `qwen14b` | Qwen2.5-14B-Instruct | 29.6 GB | **1** | A100-80GB | 32K | ✗ |
 | `small` | Qwen2.5-3B-Instruct | 6 GB | **1** | any sm75+ | 16K | ✅ |
+| `t4-7b` | Qwen2.5-7B-Instruct-AWQ (4-bit) | 5.5 GB | **1** | T4 or better | 16K | ✅ |
+| `t4-14b` | Qwen2.5-14B-Instruct-AWQ (4-bit) | 9.5 GB | **1** | T4 or better | 8K | ✗ |
 | `flash` | GLM-4.7-Flash | 59 GB | 1 | A100-80GB | ≤32K † | ✅ |
 | `flash` | GLM-4.7-Flash | 59 GB | 2 | A100-80GB | 131K | ✅ |
 | `air` | GLM-4.5-Air | 221 GB | 4 | A100-80GB | 131K | ✗ |
@@ -120,7 +124,7 @@ only has 16 GB — enough for `small`, not for `qwen7b`.
 
 ## Environment notes
 
-- Everything (venv, uv, HF cache, Triton cache) lives under `/projects/rc/projects/ticket_mate`
+- Everything (venv, uv, HF cache, Triton cache) lives under `/projects/rc/projects/ticketmate` (venv in `ticketmate/.venv`; uv, HF and compile caches shared at the top level)
   to stay off the home quota. `env.sh` sets `HF_HOME` accordingly.
 - torch is pinned to the **cu129** build. vLLM 0.29.0 requires torch 2.13.0,
   which is published only on the cu129 and cu130 indexes. cu129 is the safer
