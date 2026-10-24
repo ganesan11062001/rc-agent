@@ -56,6 +56,13 @@ _warm_error: List[str] = []
 # with no snapshot, while the graph is still being built), so warm-up waits
 # for a graph that answers and has embeddings rather than failing at once.
 _WARM_TIMEOUT_S = float(os.environ.get("RC_KG_WARM_TIMEOUT", "900"))
+_WARMUP_QUERIES = [
+    "job killed out of memory on the gpu partition",
+    "how do I transfer data with globus to scratch",
+    "conda environment and modules for python on explorer",
+    "slurm job pending in the queue, sbatch srun",
+    "storage quota for projects and home directory",
+]
 
 
 def _graph_ready() -> bool:
@@ -80,6 +87,18 @@ def _warm() -> None:
             if time.monotonic() > deadline:
                 raise RuntimeError("graph not ready after %.0f s" % _WARM_TIMEOUT_S)
             time.sleep(1)
+        # A few varied throwaway queries before reporting ready. Neo4j's JVM
+        # compiles and optimizes each query over its first executions; traces
+        # showed every session's first real ticket paying for it (retrieval
+        # 3.1 s cold vs 0.17 s warm; topic boost and vector search the worst).
+        # One warm-up query was not enough (first ticket still 0.96 s); five
+        # varied ones bring it to ~0.13 s, measured 2026-10-24.
+        for q in _WARMUP_QUERIES:
+            try:
+                retrieve(q, k=6)
+            except Exception:                      # noqa: BLE001 -- warm-up is best-effort
+                logger.warning("warm-up query failed", exc_info=True)
+                break
         _ready.set()
         logger.info("rc-kg ready")
     except Exception as exc:                       # noqa: BLE001

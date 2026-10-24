@@ -104,7 +104,9 @@ metadata calls; `scripts/build_runtime.sh` packs site-packages into one
 archive that serving unpacks to local disk once per node, and the API's
 imports overlap Neo4j's load. What remains is Neo4j itself (~26 s, three JVM
 starts). Without a current archive, serving falls back to the venv — slower,
-never wrong.
+never wrong. Before reporting ready it runs five varied warm-up queries:
+Neo4j's JVM optimises each query over its first executions, and without this
+every session's first ticket took ~3 s to retrieve instead of ~0.15 s.
 
 **TicketMate starts it automatically**: `ood-apps/rc-copilot/template/script.sh.erb`
 and `cluster/serve_stack.sbatch` launch `serve_kg.sh` before vLLM, with a
