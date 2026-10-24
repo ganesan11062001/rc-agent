@@ -112,7 +112,9 @@ fresh port and token, and point the backend at it (`RC_KG_URL`,
 `RC_KG_API_TOKEN`). It is ready well before vLLM finishes loading weights;
 until then drafts are produced ungrounded and say so.
 
-To refresh the graph after the website changes, re-run `build_graph.sh`; new
+To refresh on a schedule, submit `scripts/rebuild.sbatch` from `scrontab`
+(weekly, CPU only; instructions in its header). To refresh by hand, re-run
+`build_graph.sh`; new
 TicketMate sessions pick it up. Running sessions keep the graph they loaded
 (no reload, no dropped connections), so a session can be at most one build
 out of date.
@@ -532,8 +534,9 @@ seff and job-array tips).
   misses about 1 in 6 wrong citations on held-out sentences, and it cannot
   flag a wrong citation when no retrieved page supports the claim (there is
   no better source to point to).
-- Nothing rebuilds the snapshot on a schedule yet: re-run
-  `scripts/build_graph.sh` when either site changes (a cron'd sbatch would do).
+- The weekly rebuild (`scripts/rebuild.sbatch`) has to be scheduled by its
+  owner with `scrontab` (see the script's header); until then the graphs
+  only change when someone runs `build_graph.sh`.
 
 ---
 
