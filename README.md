@@ -49,34 +49,61 @@ and the **model runs in the user's own Slurm allocation**.
 ### Every draft is traceable
 
 Each draft writes one private record (`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json`,
-mode 600 in a mode-700 directory, `trace_version: 2`). It answers what went
-into the model, what came out, what it cost, and which code and data produced it:
+mode 600 in a mode-700 directory, `trace_version: 3`), modelled on what
+LangSmith tracks, with no external service: ticket text never leaves your run
+log.
 
-| part | what is recorded |
-|---|---|
-| `request_id` | also returned by `/api/draft` and sent to rc_kg as `X-Request-ID`, so rc_kg's log lines for this draft carry it too |
-| `input` | the ticket text, the engineer's instructions, the ticket number |
-| `trace.retrieval` | rc_kg status and latency; every source (ref, URL, page, heading, site, score, vector score, which signals found it, topics); query topics, low-confidence flag; rc_kg's own per-stage timings and ranking settings |
-| `trace.llm.attempts[]` | **every** model call, including rejected structured-output strategies and unparseable outputs: the exact messages sent, strategy, response format, latency, finish reason, served model, raw output, **token usage**, outcome |
-| `trace.tokens` | prompt, completion and total tokens summed over all calls; the final call alone; the prompt split by part (system prompt, ticket, RC sources, instructions, template), counted with the model's own tokenizer |
-| `trace.citations` | references, URLs removed, unknown markers, citation-support verdicts, caveats added |
-| `trace.output` | the model's draft before citation rendering, and the reply as returned |
-| `trace.timings_ms` | retrieve, llm, citations, total |
-| `trace.versions` | TicketMate commit (`-dirty` if the backend had local changes), rc_kg API version, the graph's variant, build time and commit |
+**Run tree.** The draft is a trace: a tree of runs, each with its own id,
+parent, type, start/end time, latency, status, error, inputs, outputs,
+metadata and tags.
 
-Failed drafts are recorded too, with whatever attempts were made. Read them
-with `cluster/traces.py`:
-
-```bash
-cluster/traces.py list                      # newest drafts: tokens, latency, grounding
-cluster/traces.py show <request_id>         # one draft, end to end (--prompt for the exact messages)
-cluster/traces.py stats --since 2026-10-24  # tokens and latency per model, fallbacks, failures
-cluster/traces.py export drafts.csv         # one row per draft, no ticket text
+```
+draft                          chain       ticket in, reply out, total tokens
+├── rc_kg.retrieve             retriever   query in, documents (content + url, scores, signals) out
+│   ├── rc_kg.embed_query      embedding   ┐
+│   ├── rc_kg.vector_search    retriever   │ rc_kg's own stage timings
+│   ├── rc_kg.fulltext_search  retriever   │ (marked derived)
+│   ├── rc_kg.topic_boost      tool        │
+│   └── rc_kg.graph_expand     tool        ┘
+├── generate_draft             chain
+│   ├── llm  (each call)       llm         messages, invocation params, completion, finish reason, tokens
+│   └── parse_draft            parser      JSON validation (an error run if it fails)
+├── tokenize.prompt_breakdown  tool        prompt tokens by part: system / ticket / RC sources / instructions
+└── rc_kg.cite                 tool        references, removed URLs, citation-support verdicts
 ```
 
-The ticket text is only ever written to this private log: rc_kg logs request
-ids, timings and counts, never queries. `/scratch` is purged monthly, so copy
-any logs you need to keep to a private (mode 700) location.
+**Grouping and versions** (on the root run): `project` (which graph the draft
+was grounded in, e.g. `rc-copilot/full`), `session_id` (the Slurm job),
+`thread_id` (the ticket — all drafts for one ticket share it), node, GPU,
+model, the **prompt version** (a hash of every prompt template, so outputs can
+be compared across prompt revisions), the TicketMate commit, the rc_kg API
+version and the graph's build. The same `request_id` is returned by
+`/api/draft` and sent to rc_kg as `X-Request-ID`.
+
+**Feedback.** Every draft gets automatic feedback (`grounded`, `references`,
+`citations_flagged`, `urls_removed`, `retrieval_low_confidence`,
+`needed_fallback`). People add their own with `POST /api/feedback`
+(`{"request_id", "key", "score": -1..1, "comment", "correction"}`) or the CLI;
+it is stored beside the run.
+
+**Reading traces** — `cluster/traces.py`:
+
+```bash
+cluster/traces.py list                                  # newest drafts: tokens, latency, grounding
+cluster/traces.py show <request_id> [--io] [--prompt]   # the run tree, inputs/outputs, exact prompts
+cluster/traces.py runs --type llm --status error        # runs across all drafts, filtered
+cluster/traces.py runs --name rc_kg.retrieve --min-ms 1000 --meta strategy=json_object
+cluster/traces.py stats --by prompt_version             # per-step p50/p95, tokens, errors, feedback
+cluster/traces.py feedback <request_id> --key thumbs --score 1 --comment "sent as is"
+cluster/traces.py export drafts.csv                     # one row per draft, no ticket text
+```
+
+The run tree already paid for itself: it showed every session's first ticket
+spending ~3 s in retrieval (vs 0.15 s warm), which led to rc_kg warming its
+queries before reporting ready.
+
+rc_kg logs only request ids, timings and counts — never ticket text. `/scratch`
+is purged monthly; copy logs you need to keep to a private (mode 700) place.
 
 ### Grounded in the RC website
 
@@ -100,7 +127,7 @@ or `website` (RC website only), e.g.
 `sbatch --export=ALL,RC_KG_VARIANT=website cluster/serve_stack.sbatch`;
 `/api/health` names the one in use.
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.3.0`; see its
+Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.3.1`; see its
 `API_CONTRACT.md`). The backend checks `api_version` and, on a different major
 version, drafts ungrounded with a caveat naming both versions rather than
 misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the

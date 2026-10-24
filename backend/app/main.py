@@ -14,12 +14,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, kg_client, runlog
+from . import auth, kg_client, runlog, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, generate_draft, token_breakdown
 from .models import (
     DraftRequest,
     DraftResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     HealthResponse,
     LLMDraft,
     LoginRequest,
@@ -46,6 +48,19 @@ def _ticket_mate_version() -> dict:
 
 
 _TM_VERSION = _ticket_mate_version()
+_PROMPT_VERSION = tracing.prompt_version()
+
+
+def _gpu_name() -> str:
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return ", ".join(sorted({l.strip() for l in out.splitlines() if l.strip()}))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+_GPU = _gpu_name()
 
 logger = logging.getLogger("rc_copilot")
 
@@ -193,14 +208,38 @@ async def draft(request: DraftRequest):
     trace: dict = {}
     timings: dict = {}
 
+    # The run tree (LangSmith's model): this draft is the root `chain` run;
+    # retrieval, each model call, parsing and citation are child runs.
+    thread = runlog.ticket_folder(request.ticket_number, request.ticket_text)
+    tr = tracing.Trace(
+        "draft",
+        inputs={"ticket_text": request.ticket_text, "extra_instructions": request.extra_instructions,
+                "ticket_number": request.ticket_number},
+        metadata={"request_id": request_id, "thread_id": thread,
+                  "session_id": os.environ.get("SLURM_JOB_ID") or "local",
+                  "project": "rc-copilot",
+                  "node": os.uname().nodename, "gpu": _GPU, "model": settings.vllm_model_name,
+                  "prompt_version": _PROMPT_VERSION, "versions": {"ticket_mate": _TM_VERSION}},
+        tags=["rc-copilot"],
+    )
+
     # Ground the draft in the RC website. Never fatal: without it the draft is
     # produced exactly as before, with a caveat saying so.
     t = time.perf_counter()
     kg = await kg_client.retrieve(request.ticket_text, request_id=request_id)
     timings["retrieve"] = int((time.perf_counter() - t) * 1000)
+    tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
+    # The project is the deployment: which graph this draft was grounded in.
+    variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
+    tr.root.metadata["project"] = "rc-copilot/" + (variant or "no-kg")
+    tr.root.tags.append("kg:" + kg.status)
 
     def record(draft_out, error, model, before_citations=None, cite_trace=None, tokens=None):
         timings["total"] = int((time.perf_counter() - started) * 1000)
+        tokens = tokens or _token_summary(trace.get("attempts", []), None)
+        tr.root.usage = {k: tokens.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        tr.root.tags.append("model:" + (model or "?"))
+        tr.finish({"draft": draft_out} if draft_out else None, error=error)
         return runlog.record(
             request_id=request_id,
             ticket_number=request.ticket_number,
@@ -220,20 +259,29 @@ async def draft(request: DraftRequest):
                 "retrieval": kg.trace,
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
-                "tokens": tokens or _token_summary(trace.get("attempts", []), None),
+                "tokens": tokens,
                 "citations": cite_trace,
                 "output": {"model_draft": before_citations, "response": draft_out},
                 "timings_ms": timings,
                 "error": error,
+                # LangSmith-style run tree: every step with id, parent, type,
+                # timing, status, inputs, outputs, metadata, tags; plus feedback.
+                "run_tree": tr.to_dict(),
             },
         )
 
     t = time.perf_counter()
     try:
-        llm_draft, model_name = await generate_draft(
-            request.ticket_text, request.extra_instructions, trace,
-            kg_context=kg.context, kg_low_confidence=kg.low_confidence,
-        )
+        with tracing.run("generate_draft", "chain",
+                         inputs={"ticket_chars": len(request.ticket_text), "kg_context_chars": len(kg.context),
+                                 "kg_low_confidence": kg.low_confidence},
+                         metadata={"prompt_version": _PROMPT_VERSION["version"]}) as grun:
+            llm_draft, model_name = await generate_draft(
+                request.ticket_text, request.extra_instructions, trace,
+                kg_context=kg.context, kg_low_confidence=kg.low_confidence,
+            )
+            if grun is not None:
+                grun.end({"draft": llm_draft.model_dump(), "strategy": trace.get("strategy")})
     except LLMError as exc:
         timings["llm"] = int((time.perf_counter() - t) * 1000)
         logger.error(
@@ -256,12 +304,15 @@ async def draft(request: DraftRequest):
     # Where the prompt's tokens went, by the model's own tokenizer.
     breakdown = None
     if settings.trace_token_breakdown and trace.get("messages"):
-        breakdown = await token_breakdown({
-            "system_prompt": trace["messages"][0]["content"],
-            "ticket_text": request.ticket_text,
-            "rc_sources": kg.context,
-            "engineer_instructions": request.extra_instructions,
-        })
+        with tracing.run("tokenize.prompt_breakdown", "tool") as krun:
+            breakdown = await token_breakdown({
+                "system_prompt": trace["messages"][0]["content"],
+                "ticket_text": request.ticket_text,
+                "rc_sources": kg.context,
+                "engineer_instructions": request.extra_instructions,
+            })
+            if krun is not None:
+                krun.end({"counts": breakdown}, error=None if breakdown else "model server has no /tokenize")
     tokens = _token_summary(trace.get("attempts", []), breakdown)
 
     references = []
@@ -308,6 +359,14 @@ async def draft(request: DraftRequest):
         elapsed_ms,
         model_name,
     )
+    # Automatic feedback, LangSmith-style: scores attached to this trace that
+    # can be filtered and compared across models and prompt versions.
+    tr.add_feedback("grounded", 1 if kg.status == "ok" else 0)
+    tr.add_feedback("references", len(references))
+    tr.add_feedback("citations_flagged", sum(1 for c in response.caveats if c.startswith("Check citation")))
+    tr.add_feedback("urls_removed", len((cite_trace or {}).get("removed_urls") or []))
+    tr.add_feedback("retrieval_low_confidence", 1 if kg.low_confidence else 0)
+    tr.add_feedback("needed_fallback", 1 if tokens["model_calls"] > 1 else 0)
     saved = record(response.model_dump(), None, model_name, before_citations, cite_trace, tokens)
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
@@ -332,6 +391,22 @@ def _token_summary(attempts, breakdown):
             # Chat template, the JSON reminder and the fixed prompt scaffolding.
             out["prompt_breakdown"]["template_and_scaffolding"] = final["prompt_tokens"] - sum(breakdown.values())
     return out
+
+
+@app.post("/api/feedback", response_model=FeedbackResponse,
+          dependencies=[Depends(auth.require_session)])
+async def feedback(request: FeedbackRequest):
+    """Attach a person's judgement to a draft (LangSmith-style feedback):
+    a score under a key, optionally a comment and the corrected reply. Stored
+    beside the draft's run log, so it travels with the trace."""
+    saved = runlog.add_feedback(request.request_id, {
+        "key": request.key, "score": request.score, "comment": request.comment,
+        "correction": request.correction, "source": "user",
+    })
+    if saved is None:
+        raise HTTPException(status_code=404, detail="No recorded draft with that request id.")
+    logger.info("feedback | id=%s key=%s score=%s", request.request_id, request.key, request.score)
+    return FeedbackResponse(feedback_id=saved, request_id=request.request_id)
 
 
 @app.get("/api/health", response_model=HealthResponse)

@@ -81,6 +81,23 @@ class DraftResponse(LLMDraft):
         )
 
 
+class FeedbackRequest(BaseModel):
+    """A person's judgement of one draft, by its request_id."""
+
+    request_id: str = Field(..., pattern=r"^[0-9a-f]{8}$")
+    # e.g. "thumbs" (1 / 0), "correctness" (0..1), "sent_as_is" (1 / 0)
+    key: str = Field(..., pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    score: float = Field(..., ge=-1, le=1)
+    comment: str = Field(default="", max_length=2000)
+    # The reply as the engineer actually sent it, if they changed it.
+    correction: str = Field(default="", max_length=50_000)
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    request_id: str
+
+
 class LoginRequest(BaseModel):
     access_token: str = Field(..., min_length=1, max_length=512)
 

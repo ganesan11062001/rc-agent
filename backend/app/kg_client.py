@@ -26,6 +26,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import tracing
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,46 @@ def _source_summary(src: Dict[str, Any]) -> Dict[str, Any]:
 
 async def retrieve(ticket_text: str, request_id: str = "") -> KGContext:
     s = get_settings()
+    with tracing.run("rc_kg.retrieve", "retriever", inputs={"query": ticket_text},
+                     metadata={"k": s.rc_kg_k, "rc_kg_url": s.rc_kg_url}) as rrun:
+        kg = await _retrieve(ticket_text, request_id)
+        if rrun is not None:
+            _record_retrieval(rrun, kg)
+    return kg
+
+
+_STAGES = [("embed", "rc_kg.embed_query", "embedding"), ("vector", "rc_kg.vector_search", "retriever"),
+           ("fulltext", "rc_kg.fulltext_search", "retriever"), ("topics", "rc_kg.topic_boost", "tool"),
+           ("expand", "rc_kg.graph_expand", "tool")]
+
+
+def _record_retrieval(rrun, kg: "KGContext") -> None:
+    if kg.status != "ok":
+        rrun.end({"status": kg.status}, error=None if kg.status == "disabled" else kg.detail)
+        return
+    rrun.metadata.update(rc_kg=kg.trace.get("rc_kg"), query_topics=kg.trace.get("query_topics"),
+                         low_confidence=kg.low_confidence)
+    rrun.end({"documents": [{"page_content": x.get("text", ""), "metadata": _source_summary(x)}
+                            for x in kg.sources],
+              "context_chars": len(kg.context)})
+    server = ((kg.trace.get("rc_kg") or {}).get("retrieval")) or {}
+    times = server.get("timings_ms") or {}
+    if not times:
+        return                                   # rc_kg older than API 1.3
+    # rc_kg ran these stages one after another inside its own total; centre
+    # that total in our client-side latency (the rest is HTTP and queueing).
+    offset = max(0.0, (rrun.latency_ms - (times.get("total") or 0)) / 2)
+    counts = server.get("candidates") or {}
+    for key, name, rtype in _STAGES:
+        if key in times:
+            tracing.add_derived(rrun, name, rtype, offset, times[key],
+                                outputs={"candidates": counts.get(key)} if key in counts else None,
+                                metadata={"source": "rc_kg server timings"})
+            offset += times[key]
+
+
+async def _retrieve(ticket_text: str, request_id: str = "") -> KGContext:
+    s = get_settings()
     if not s.rc_kg_url:
         return KGContext(status="disabled", trace={"status": "disabled"})
     t0 = time.perf_counter()
@@ -213,6 +254,18 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str 
     Returns (draft, references, trace). On any rc_kg error the draft is
     returned with markers stripped, so a raw "[S3]" never reaches a researcher.
     """
+    with tracing.run("rc_kg.cite", "tool", metadata={"style": "numbered", "check_support": True}) as crun:
+        draft, references, trace = await _apply_citations(draft, kg, request_id)
+        if crun is not None:
+            crun.inputs = {"refs": {x["ref"]: x["url"] for x in kg.sources}}
+            crun.end({k: trace.get(k) for k in ("references", "removed_urls", "unknown_refs",
+                                                "support", "caveats_added")},
+                     error=trace.get("detail") if trace.get("status") == "failed" else None)
+    return draft, references, trace
+
+
+async def _apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = ""
+                           ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, Any]]:
     t0 = time.perf_counter()
     steps = list(draft["suggested_steps"])
     caveats = list(draft["caveats"])

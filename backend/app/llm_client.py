@@ -12,6 +12,7 @@ import openai
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
+from . import tracing
 from .config import Settings, get_settings
 from .models import DRAFT_JSON_SCHEMA, LLMDraft
 from .prompts import build_messages
@@ -215,71 +216,93 @@ async def generate_draft(ticket_text: str,
             att: Dict[str, Any] = {
                 "n": len(attempts) + 1, "strategy": strategy,
                 "response_format": (response_format or {}).get("type"),
-                "json_reminder": strategy == "none", "messages": messages,
+                "json_reminder": strategy == "none",
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "outcome": "error", "usage": None,
             }
             attempts.append(att)
-            t0 = time.perf_counter()
-            try:
-                completion = await client.chat.completions.create(**kwargs)
-            except openai.APIStatusError as exc:
-                att.update(latency_ms=int((time.perf_counter() - t0) * 1000),
-                           http_status=exc.status_code, error=_truncate(str(exc)))
-                if strategy != "none" and _is_unsupported_param_error(exc):
-                    att["outcome"] = "unsupported"
-                    logger.warning(
-                        "server rejected response_format=%s (HTTP %s); "
-                        "falling back to the next structured-output strategy",
-                        strategy,
-                        exc.status_code,
+            invocation = {k: v for k, v in kwargs.items() if k != "messages"}
+            with tracing.run("llm", "llm", inputs={"messages": messages},
+                             metadata={"invocation_params": invocation, "strategy": strategy,
+                                       "attempt": att["n"], "ls_provider": "vllm",
+                                       "ls_model_name": settings.vllm_model_name},
+                             tags=["strategy:" + strategy]) as lrun:
+                if lrun is not None:
+                    att["run_id"] = lrun.id
+                t0 = time.perf_counter()
+                try:
+                    completion = await client.chat.completions.create(**kwargs)
+                except openai.APIStatusError as exc:
+                    att.update(latency_ms=int((time.perf_counter() - t0) * 1000),
+                               http_status=exc.status_code, error=_truncate(str(exc)))
+                    if strategy != "none" and _is_unsupported_param_error(exc):
+                        att["outcome"] = "unsupported"
+                        if lrun is not None:
+                            lrun.end({"http_status": exc.status_code},
+                                     error="unsupported response_format: %s" % _truncate(str(exc), 200))
+                        logger.warning(
+                            "server rejected response_format=%s (HTTP %s); "
+                            "falling back to the next structured-output strategy",
+                            strategy,
+                            exc.status_code,
+                        )
+                        continue
+                    raise
+                except Exception as exc:
+                    att.update(latency_ms=int((time.perf_counter() - t0) * 1000), error=_truncate(str(exc)))
+                    raise
+                att["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+                att["served_model"] = completion.model
+                att["usage"] = _usage(completion)
+
+                if not completion.choices:
+                    raise LLMError("The model returned no completions.")
+
+                choice = completion.choices[0]
+                raw = choice.message.content or ""
+                att.update(finish_reason=choice.finish_reason, raw_response=raw)
+                if lrun is not None:
+                    lrun.usage = att["usage"]
+                    lrun.end({"completion": raw, "finish_reason": choice.finish_reason,
+                              "served_model": completion.model},
+                             error="output truncated (max_tokens)" if choice.finish_reason == "length" else None)
+
+                if choice.finish_reason == "length":
+                    att["outcome"] = "truncated"
+                    raise LLMError(
+                        "The model's answer was cut off before it finished.",
+                        "Increase MAX_TOKENS (currently %d) and try again."
+                        % settings.max_tokens,
                     )
-                    continue
-                raise
-            except Exception as exc:
-                att.update(latency_ms=int((time.perf_counter() - t0) * 1000), error=_truncate(str(exc)))
-                raise
-            att["latency_ms"] = int((time.perf_counter() - t0) * 1000)
-            att["served_model"] = completion.model
-            att["usage"] = _usage(completion)
 
-            if not completion.choices:
-                raise LLMError("The model returned no completions.")
-
-            choice = completion.choices[0]
-            raw = choice.message.content or ""
-            att.update(finish_reason=choice.finish_reason, raw_response=raw)
-
-            if choice.finish_reason == "length":
-                att["outcome"] = "truncated"
-                raise LLMError(
-                    "The model's answer was cut off before it finished.",
-                    "Increase MAX_TOKENS (currently %d) and try again."
-                    % settings.max_tokens,
-                )
-
-            try:
-                draft = LLMDraft.model_validate(extract_json(raw))
-            except (ValueError, ValidationError) as exc:
-                last_parse_error = str(exc)
-                att.update(outcome="parse_error", error=_truncate(last_parse_error))
-                logger.warning(
-                    "could not parse model output with strategy=%s: %s",
-                    strategy,
-                    last_parse_error,
-                )
-                # Constrained decoding failing to parse means the constraint
-                # isn't really being applied — drop to the next strategy.
-                if strategy != "none":
-                    continue
-                if trace is not None:
-                    trace["messages"] = messages
-                    trace["raw_response"] = raw
-                    trace["strategy"] = strategy
-                raise LLMError(
-                    "The model did not return valid JSON in the expected format.",
-                    _truncate(last_parse_error),
-                )
+            with tracing.run("parse_draft", "parser", inputs={"completion_chars": len(raw)},
+                             metadata={"strategy": strategy}) as prun:
+                try:
+                    draft = LLMDraft.model_validate(extract_json(raw))
+                except (ValueError, ValidationError) as exc:
+                    last_parse_error = str(exc)
+                    att.update(outcome="parse_error", error=_truncate(last_parse_error))
+                    if prun is not None:
+                        prun.end(error=_truncate(last_parse_error, 300))
+                    logger.warning(
+                        "could not parse model output with strategy=%s: %s",
+                        strategy,
+                        last_parse_error,
+                    )
+                    # Constrained decoding failing to parse means the constraint
+                    # isn't really being applied — drop to the next strategy.
+                    if strategy != "none":
+                        continue
+                    if trace is not None:
+                        trace["messages"] = messages
+                        trace["raw_response"] = raw
+                        trace["strategy"] = strategy
+                    raise LLMError(
+                        "The model did not return valid JSON in the expected format.",
+                        _truncate(last_parse_error),
+                    )
+                if prun is not None:
+                    prun.end({"draft": draft.model_dump()})
 
             att["outcome"] = "ok"
             _working_strategy = strategy

@@ -61,6 +61,34 @@ def ticket_folder(explicit: str, text: str) -> str:
     return safe[:64] or "unknown-ticket"
 
 
+def find_run(request_id: str) -> Optional[Path]:
+    """The run log written for a request id, if recording is on and it exists."""
+    base = run_dir()
+    if base is None or not re.fullmatch(r"[0-9a-f]{8}", request_id or ""):
+        return None
+    hits = sorted(base.glob("*/*-%s.json" % request_id))
+    return hits[-1] if hits else None
+
+
+def add_feedback(request_id: str, fb: Dict[str, Any]) -> Optional[str]:
+    """Append one feedback record beside a run's log (<run>.feedback.jsonl,
+    mode 600). Returns the feedback id, or None if there is no such run."""
+    path = find_run(request_id)
+    if path is None:
+        return None
+    rec = {"id": uuid.uuid4().hex, "request_id": request_id,
+           "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+           "by": os.environ.get("USER", ""), **fb}
+    target = path.with_suffix(".feedback.jsonl")
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        return None
+    return rec["id"]
+
+
 def record(
     *,
     request_id: str,
@@ -118,7 +146,7 @@ def record(
             "error": error,
         }
         if trace is not None:
-            payload["trace_version"] = 2
+            payload["trace_version"] = 3      # 3: + run_tree (runs, feedback)
             payload["trace"] = trace
 
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

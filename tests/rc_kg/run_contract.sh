@@ -53,7 +53,7 @@ W="$(backend "http://127.0.0.1:$KWP")"
 E="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-e" "$VRP")"
 
 $PY - "$A" "$B" "$C" "$W" "$WORK/runs" "$E" "$WORK/runs-e" <<'PY'
-import json, sys, time, urllib.request
+import json, sys, time, urllib.request, urllib.error
 op = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
 A, B, C, W, RUNS, E, RUNS_E = sys.argv[1:]
 fails = []
@@ -99,8 +99,8 @@ logs = sorted(glob.glob(os.path.join(RUNS, "*", "*.json")), key=os.path.getmtime
 check(len(logs) == 1, "one run log written")
 run = json.load(open(logs[-1])) if logs else {}
 tr = run.get("trace") or {}
-check(run.get("trace_version") == 2 and tr.get("request_id") == d.get("request_id") and d.get("request_id"),
-      "trace_version 2, same request_id as the API response")
+check(run.get("trace_version") == 3 and tr.get("request_id") == d.get("request_id") and d.get("request_id"),
+      "trace_version 3, same request_id as the API response")
 tok = tr.get("tokens") or {}
 check(isinstance(tok.get("total_tokens"), int) and tok["total_tokens"] > 0
       and tok["total_tokens"] == tok["prompt_tokens"] + tok["completion_tokens"], "token totals add up")
@@ -111,8 +111,8 @@ bd = tok.get("prompt_breakdown") or {}
 check({"system_prompt", "ticket_text", "rc_sources", "template_and_scaffolding"} <= set(bd)
       and bd["rc_sources"] > 0, "prompt token breakdown (incl. RC sources)")
 att = ((tr.get("llm") or {}).get("attempts") or [{}])[-1]
-check(att.get("outcome") == "ok" and att.get("messages") and att.get("raw_response") and att.get("latency_ms") is not None,
-      "final attempt: messages, raw output, latency, outcome")
+check(att.get("outcome") == "ok" and att.get("raw_response") and att.get("latency_ms") is not None and att.get("run_id"),
+      "final attempt: raw output, latency, outcome, link to its llm run")
 ret = tr.get("retrieval") or {}
 check(ret.get("status") == "ok" and ret.get("sources") and all(x.get("url") for x in ret["sources"]),
       "retrieval: sources with URLs")
@@ -129,6 +129,46 @@ tm = tr.get("timings_ms") or {}
 check({"retrieve", "llm", "citations", "total"} <= set(tm), "per-stage timings")
 check(bool(((tr.get("versions") or {}).get("ticket_mate") or {}).get("commit")), "TicketMate version recorded")
 check(run.get("prompt") and run.get("raw_response") and run.get("input"), "version-1 fields kept for existing readers")
+
+print("A. run tree (LangSmith model) and feedback")
+rt = tr.get("run_tree") or {}
+runs = rt.get("runs") or []
+byid = {x["id"]: x for x in runs}
+roots = [x for x in runs if x.get("parent_id") is None]
+check(len(roots) == 1 and roots[0]["name"] == "draft" and roots[0]["run_type"] == "chain"
+      and roots[0]["status"] == "success" and rt.get("root_run_id") == roots[0]["id"], "one root chain run 'draft'")
+check(all(x.get("parent_id") is None or x["parent_id"] in byid for x in runs), "every run's parent exists")
+check(all(x.get("end_time") and x.get("latency_ms") is not None and x.get("status") in ("success", "error") for x in runs),
+      "every run finished, with latency and status")
+names = {x["name"] for x in runs}
+check({"rc_kg.retrieve", "generate_draft", "llm", "parse_draft", "rc_kg.cite", "tokenize.prompt_breakdown"} <= names,
+      "steps present: retrieve, generate_draft, llm, parse_draft, cite, tokenize")
+derived = [x for x in runs if (x.get("metadata") or {}).get("derived")]
+check({"rc_kg.embed_query", "rc_kg.vector_search", "rc_kg.fulltext_search"} <= {x["name"] for x in derived}
+      and all(byid[x["parent_id"]]["name"] == "rc_kg.retrieve" for x in derived), "rc_kg's stages nested under retrieve")
+ret_run = next(x for x in runs if x["name"] == "rc_kg.retrieve")
+check(ret_run["run_type"] == "retriever" and ret_run["outputs"].get("documents")
+      and all(dct.get("page_content") and dct["metadata"].get("url") for dct in ret_run["outputs"]["documents"]),
+      "retriever run: documents with content and metadata")
+llm_run = byid.get(att.get("run_id")) or {}
+check(llm_run.get("run_type") == "llm" and llm_run.get("inputs", {}).get("messages")
+      and llm_run.get("outputs", {}).get("completion") and llm_run.get("usage") == att.get("usage")
+      and (llm_run.get("metadata") or {}).get("invocation_params", {}).get("temperature") is not None,
+      "llm run: messages, completion, invocation params, same usage as the attempt")
+m = roots[0].get("metadata") or {}
+check(m.get("project") == "rc-copilot/full" and m.get("thread_id") and m.get("session_id")
+      and (m.get("prompt_version") or {}).get("version"), "project, thread, session, prompt version on the root")
+fbk = {f["key"] for f in rt.get("feedback") or []}
+check({"grounded", "references", "citations_flagged", "urls_removed"} <= fbk, "automatic feedback attached")
+tok_ = call(A, "/api/login", {"access_token": "contract"})["session_token"]
+fbr = call(A, "/api/feedback", {"request_id": d["request_id"], "key": "thumbs", "score": 1, "comment": "good"}, tok_)
+lines = open(logs[-1].replace(".json", ".feedback.jsonl")).read().splitlines() if logs else []
+check(fbr.get("feedback_id") and len(lines) == 1 and json.loads(lines[0])["key"] == "thumbs", "POST /api/feedback stored beside the run")
+try:
+    call(A, "/api/feedback", {"request_id": "00000000", "key": "thumbs", "score": 1}, tok_); notfound = False
+except urllib.error.HTTPError as e:
+    notfound = e.code == 404
+check(notfound, "feedback for an unknown draft is 404")
 
 g = draft(A, GPU)
 check(any(c.startswith("Check citation [2]") for c in g["caveats"]), "wrong citation flagged")
@@ -171,6 +211,9 @@ check(tok.get("model_calls") == 2 and tok.get("calls_with_usage") == 1
       and tok.get("total_tokens") == (att[-1].get("usage") or {}).get("total_tokens"),
       "tokens counted from the call that returned usage")
 check(d["kg_status"] == "ok" and d["references"], "draft still grounded after the fallback")
+lr = [x for x in ((tr.get("run_tree") or {}).get("runs") or []) if x["run_type"] == "llm"]
+check([x["status"] for x in lr] == ["error", "success"] and "unsupported" in (lr[0].get("error") or ""),
+      "run tree: rejected call is an error run, the fallback a success run")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)
