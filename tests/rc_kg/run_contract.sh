@@ -16,7 +16,13 @@ TM_ROOT="$(cd "$HERE/../.." && pwd)"
 RC_KG_ROOT="${RC_KG_ROOT:-/projects/rc/projects/rc_kg}"
 PY=python3
 WORK="$(mktemp -d)"; PIDS=()
-cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }
+# backend() runs inside $(...), a subshell, so its PIDs cannot go into PIDS;
+# it appends them to a file the cleanup reads instead (an array silently
+# lost them, leaking four backends per run).
+cleanup() {
+  for p in "${PIDS[@]}" $(cat "$WORK/backend.pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
+  wait 2>/dev/null; rm -rf "$WORK"
+}
 trap cleanup EXIT
 free() { $PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 
@@ -26,7 +32,7 @@ backend() {   # backend <kg_url> -> prints port
       VLLM_MODEL_NAME=stub-model AUTH_TOKEN=contract LOG_FILE= RUN_LOG_DIR= USE_PROXY_ENV=false \
       exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$port" ) \
       >"$WORK/app-$port.log" 2>&1 &
-  PIDS+=($!); echo "$port"
+  echo $! >> "$WORK/backend.pids"; echo "$port"
 }
 
 VP="$(free)"; $PY "$HERE/stub_vllm.py" "$VP" & PIDS+=($!)
