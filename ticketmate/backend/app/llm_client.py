@@ -78,6 +78,9 @@ def get_client(settings: Optional[Settings] = None) -> AsyncOpenAI:
 
 
 def _response_format(strategy: str) -> Optional[Dict[str, Any]]:
+    """The response_format for a structured-output strategy: a strict JSON schema,
+    JSON mode, or None for prompt-only ("none").
+    """
     if strategy == "json_schema":
         return {
             "type": "json_schema",
@@ -377,6 +380,7 @@ async def check_health() -> Tuple[bool, List[str], Optional[str]]:
 
 
 def _count_sync(root: str, model: str, text: str, timeout: float) -> int:
+    """Blocking POST to vLLM's /tokenize under `root`; the token count of `text`."""
     import urllib.request
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     req = urllib.request.Request(
@@ -396,10 +400,13 @@ async def context_window() -> Optional[int]:
     name = settings.vllm_model_name
     if name in _context_window:
         return _context_window[name]
+    client = get_client(settings)
     try:
-        listing = await get_client(settings).models.list()
+        listing = await client.models.list()
     except Exception:          # the draft call reports real errors
         return None
+    finally:
+        await client.close()
     for m in listing.data:
         n = getattr(m, "max_model_len", None) or (getattr(m, "model_extra", None) or {}).get("max_model_len")
         if m.id == name and n:
@@ -418,6 +425,7 @@ async def token_breakdown(parts: Dict[str, str]) -> Optional[Dict[str, int]]:
     root = settings.vllm_base_url.rstrip("/")
     root = root[:-3] if root.endswith("/v1") else root
     async def count(text: str) -> int:
+        """Tokens in one prompt part (0 for an empty one), counted on a worker thread."""
         if not text:
             return 0                     # nothing to send; an empty part costs nothing
         return await asyncio.to_thread(_count_sync, root, settings.vllm_model_name, text, 3.0)
@@ -441,6 +449,7 @@ def _usage(completion: Any) -> Optional[Dict[str, int]]:
 
 
 def _truncate(text: Optional[str], limit: int = 400) -> Optional[str]:
+    """`text` with whitespace collapsed, cut to `limit` characters with an ellipsis."""
     if text is None:
         return None
     text = " ".join(text.split())

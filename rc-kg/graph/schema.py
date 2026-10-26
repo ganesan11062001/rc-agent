@@ -55,6 +55,7 @@ FULLTEXT: List[str] = [
 
 
 def vector_index_statement(dim: int) -> str:
+    """Cypher creating the cosine vector index on Section.embedding for `dim`-dim vectors."""
     return (
         "CREATE VECTOR INDEX section_embeddings IF NOT EXISTS "
         "FOR (s:Section) ON (s.embedding) "

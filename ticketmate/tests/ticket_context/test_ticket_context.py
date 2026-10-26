@@ -101,6 +101,7 @@ fails = []
 
 
 def check(cond, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if cond else "  FAIL  ") + what)
     if not cond:
         fails.append(what)

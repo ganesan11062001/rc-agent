@@ -17,6 +17,8 @@ FAILS = []
 
 
 def call(base, path, body=None, token=None, headers=None):
+    """GET (or POST `body` as JSON) to base+path, bypassing any proxy;
+    returns (status, parsed JSON), or (status, None) on an HTTP error."""
     req = urllib.request.Request(base + path,
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Content-Type": "application/json", **(headers or {}),
@@ -29,16 +31,20 @@ def call(base, path, body=None, token=None, headers=None):
 
 
 def expect(cond, what):
+    """Print an ok/FAIL line for one assertion and record failures in FAILS."""
     print(("  ok    " if cond else "  FAIL  ") + what)
     if not cond:
         FAILS.append(what)
 
 
 def has(obj, field, typ):
+    """True if `obj` is a dict whose `field` exists and is of type `typ`."""
     return isinstance(obj, dict) and field in obj and isinstance(obj[field], typ)
 
 
 def main() -> int:
+    """Check /health, auth, /retrieve, /similarity and /cite in turn; exits 1
+    on any failure."""
     base = sys.argv[1].rstrip("/")
     token = sys.argv[2] if len(sys.argv) > 2 else None
 
@@ -77,20 +83,23 @@ def main() -> int:
     tr = (r or {}).get("trace") or {}
     expect(isinstance(tr.get("timings_ms", {}).get("total"), (int, float)), "trace.timings_ms.total")
     expect(set(tr.get("timings_ms", {})) >= {"embed", "vector", "fulltext", "expand"}, "trace has per-stage timings")
-    expect(isinstance(tr.get("snapshot"), dict) and tr.get("api_version") == "1.4", "trace.snapshot and api_version")
+    # The contract promises the MAJOR version only; the trace must agree with /health.
+    expect(isinstance(tr.get("snapshot"), dict) and tr.get("api_version") == (h or {}).get("api_version")
+           and str(tr.get("api_version", "")).split(".")[0] == "1",
+           "trace.snapshot and api_version (1.x, as /health says)")
     expect(tr.get("request_id") == "contract-req-1", "X-Request-ID is echoed in trace.request_id")
-    print("POST /similarity")
-    code, sim = call(base, "/similarity", {"query": "my job ran out of memory",
-                                            "texts": ["Request more memory with --mem.", "Globus transfers files."]}, token)
-    sc = (sim or {}).get("scores") or []
-    expect(code == 200 and len(sc) == 2 and all(-1 <= x <= 1 for x in sc), "scores in [-1, 1], one per text")
-    expect(len(sc) == 2 and sc[0] > sc[1], "the relevant text scores higher")
     expect([s.get("ref") for s in srcs] == ["S%d" % i for i in range(1, len(srcs) + 1)],
            "refs are S1..Sn in order")
     expect(all(s.get("url") in (r or {}).get("allowed_urls", []) for s in srcs),
            "every source url is in allowed_urls")
     expect(all("[%s]" % s.get("ref") in (r or {}).get("context", "") for s in srcs),
            "context numbers every source")
+    print("POST /similarity")
+    code, sim = call(base, "/similarity", {"query": "my job ran out of memory",
+                                            "texts": ["Request more memory with --mem.", "Globus transfers files."]}, token)
+    sc = (sim or {}).get("scores") or []
+    expect(code == 200 and len(sc) == 2 and all(-1 <= x <= 1 for x in sc), "scores in [-1, 1], one per text")
+    expect(len(sc) == 2 and sc[0] > sc[1], "the relevant text scores higher")
 
     print("POST /cite")
     refs = {s["ref"]: s["url"] for s in srcs}

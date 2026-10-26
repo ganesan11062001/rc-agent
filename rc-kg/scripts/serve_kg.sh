@@ -58,6 +58,8 @@ INST="$(kg_new_dir "${SLURM_JOB_ID:-local}")" || exit 1
 
 API_PID=""
 WD_PID=""
+# On exit (including SIGTERM from the session ending): stop the API and Neo4j
+# and remove the instance dir, keeping Neo4j's logs first if startup failed.
 cleanup() {
   local rc=$?
   # A failed start would otherwise take Neo4j's own logs with the directory,

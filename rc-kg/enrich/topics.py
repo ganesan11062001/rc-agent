@@ -18,6 +18,8 @@ TOPICS_FILE = Path(__file__).resolve().parents[1] / "topics.yaml"
 
 @dataclass
 class Topic:
+    """One topics.yaml entry; `aliases` includes the name, `pattern` matches any alias."""
+
     name: str
     description: str
     aliases: List[str]
@@ -25,6 +27,7 @@ class Topic:
 
 
 def _alias_pattern(aliases: List[str]) -> Pattern:
+    """Case-insensitive regex matching any alias as a whole word."""
     # Longest first so "Slurm arrays" wins over "Slurm" in the alternation.
     # \b does not work next to "/" or ".", so word boundaries are spelled out
     # as "not preceded/followed by a word character".
@@ -34,6 +37,7 @@ def _alias_pattern(aliases: List[str]) -> Pattern:
 
 
 def load_topics(path: Path = TOPICS_FILE) -> List[Topic]:
+    """Read topics.yaml into Topics; raises on a duplicate topic name."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     out: List[Topic] = []
     seen = set()

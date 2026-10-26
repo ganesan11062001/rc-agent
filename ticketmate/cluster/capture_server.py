@@ -13,7 +13,9 @@ Instead of drafting, /api/draft writes the ticket text to a file and returns a
 draft that echoes back what it received, so you can confirm in ServiceNow that
 the round trip worked and read exactly what was scraped.
 
-Captures go to $HOME (mode 600), never to group-readable /projects.
+Captures go to /scratch/$USER/rc_copilot_captures (or $CAPTURE_DIR; $HOME if
+scratch is unavailable), directories 700 and files 600, never to
+group-readable /projects.
 """
 
 import json
@@ -72,6 +74,7 @@ app = FastAPI(title="RC Copilot — capture only", version="0.1.0")
 
 
 class DraftRequest(BaseModel):
+    """The /api/draft request body, the same fields as the real backend's."""
     ticket_text: str = Field(..., min_length=1, max_length=200_000)
     ticket_number: str = Field(default="", max_length=64)
     extra_instructions: str = Field(default="", max_length=10_000)
@@ -99,6 +102,9 @@ async def health():
 
 @app.post("/api/login")
 async def login(body: dict):
+    """POST /api/login: the real backend's sign-in, via its auth module; returns
+    the session token, expiry and session length, or 401.
+    """
     token = (body or {}).get("access_token", "")
     if not auth.check_access_token(token):
         raise HTTPException(status_code=401, detail="That access token isn't right.")
@@ -112,6 +118,9 @@ async def login(body: dict):
 
 @app.post("/api/draft", dependencies=[Depends(auth.require_session)])
 async def draft(request: DraftRequest):
+    """POST /api/draft: store the ticket text under CAPTURE_DIR (mode 600) and
+    return a DraftResponse-shaped echo of what was received.
+    """
     started = time.perf_counter()
     text = request.ticket_text
 

@@ -26,6 +26,8 @@ _SKIP_SITEMAPS = ("taxonomies", "coblocks")
 
 @dataclass
 class SitemapEntry:
+    """One <url> from a content sitemap, URL already normalized."""
+
     url: str
     lastmod: str
     sitemap: str          # which child sitemap it came from
@@ -36,6 +38,7 @@ def _child_sitemaps(index_xml: str) -> List[str]:
 
 
 def _entries(xml: str, source: str) -> List[SitemapEntry]:
+    """Parse one child sitemap's <url> blocks; `source` is the sitemap's file name."""
     out: List[SitemapEntry] = []
     for block in re.findall(r"(?is)<url>(.*?)</url>", xml):
         loc = re.search(r"<loc>\s*([^<]+?)\s*</loc>", block)

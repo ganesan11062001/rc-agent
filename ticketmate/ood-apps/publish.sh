@@ -25,8 +25,10 @@ TICKETMATE_HOME="$(cd "$TM_ROOT/.." && pwd)"
 DEST="${RC_COPILOT_RELEASES:-$TICKETMATE_HOME/rc-copilot}"
 KEEP=3
 
+# Print an error and stop.
 die() { echo "publish: $*" >&2; exit 1; }
 
+# One line per release: '*' marks the live one, then its name and VERSION line.
 list() {
   local live; live="$(readlink "$DEST/current" 2>/dev/null || true)"
   for r in "$DEST"/releases/*/; do
@@ -45,7 +47,9 @@ case "${1:-}" in
   --list) list; exit 0 ;;
   --rollback)
     live="$(basename "$(readlink "$DEST/current")")"
-    prev="$(ls -1 "$DEST/releases" | grep -v "^$live$" | sort | tail -1)"
+    # The newest release *older* than the live one (names start with a sortable
+    # date), so rolling back twice goes two steps back, never forward.
+    prev="$(ls -1 "$DEST/releases" | sort | awk -v live="$live" '$0 < live' | tail -1)"
     [ -n "$prev" ] || die "no earlier release to roll back to"
     swap_to "$prev"; echo "live release is now $prev"; list; exit 0 ;;
   "") ;;

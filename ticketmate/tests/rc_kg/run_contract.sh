@@ -29,8 +29,11 @@ cleanup() {
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+# A loopback port that is free right now.
 free() { $PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 
+# Start a TicketMate backend in the background against the given rc_kg URL
+# (and stub vLLM), on a free port, recording its PID for cleanup.
 backend() {   # backend <kg_url> [run_log_dir] [vllm_port] -> prints port
   local port; port="$(free)"
   ( cd "$TM_ROOT/backend" && RC_KG_URL="$1" VLLM_BASE_URL="http://127.0.0.1:${3:-$VP}/v1" \

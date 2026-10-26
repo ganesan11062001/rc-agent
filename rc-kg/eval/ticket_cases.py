@@ -32,6 +32,9 @@ def _host(url: str) -> str:
 
 
 def check(k: int = 6, sites=None) -> List[Dict]:
+    """Retrieve every case's query and return one row per case: id, why, ok,
+    the problems found, low_confidence and the top-k titles. `sites` limits
+    which expected pages count (see the module docstring)."""
     spec = yaml.safe_load(CASES.read_text(encoding="utf-8"))
     never = {_page(u) for u in spec.get("never", [])}
     out = []
@@ -57,6 +60,7 @@ def check(k: int = 6, sites=None) -> List[Dict]:
 
 
 def main() -> int:
+    """CLI entry point: print failing (or, with --all, every) case; exit 1 if any fail."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-k", type=int, default=6, help="TicketMate's rc_kg_k")
     ap.add_argument("--all", action="store_true")

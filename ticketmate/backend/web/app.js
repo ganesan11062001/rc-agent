@@ -5,16 +5,16 @@
   var el = function (id) { return document.getElementById(id); };
 
   /* ---------- session ----------
-     Stored per-origin. Note that inside the browser-extension side panel this
-     is partitioned storage, so signing in there is separate from signing in
-     in a normal tab. Expiry here is only for the UI -- the backend signs the
-     session token and enforces the deadline itself. */
+     Stored per-origin in localStorage, so a sign-in survives a reload. Expiry here
+     is only for the UI -- the backend signs the session token and enforces the
+     deadline itself. */
 
   var SESSION_KEY = "rc_copilot_session";
   var session = null;      // {token, expires_at}
   var authRequired = true;
   var countdownTimer = null;
 
+  /* The stored session, or null if missing, malformed or expired. */
   function loadSession() {
     try {
       var raw = window.localStorage.getItem(SESSION_KEY);
@@ -28,6 +28,7 @@
     }
   }
 
+  /* Keep the session in memory and localStorage; null signs out. */
   function saveSession(value) {
     session = value;
     try {
@@ -40,6 +41,7 @@
     return session ? { Authorization: "Bearer " + session.token } : {};
   }
 
+  /* "signed in · 1h 5m left" for the session chip. */
   function remainingText() {
     if (!session) return "";
     var mins = Math.max(0, Math.round((session.expires_at * 1000 - Date.now()) / 60000));
@@ -50,6 +52,7 @@
     return "signed in · " + mins + "m left";
   }
 
+  /* The header chip showing time left; hidden when signed out. */
   function renderSessionChip() {
     var box = el("session");
     if (!session) {
@@ -60,6 +63,7 @@
     box.hidden = false;
   }
 
+  /* Show the sign-in screen, with an error message if given. */
   function showLogin(message) {
     el("login-main").hidden = false;
     el("app-main").hidden = true;
@@ -101,6 +105,7 @@
     showLogin(message);
   }
 
+  /* Exchange the pasted access token for a session token (POST /api/login). */
   async function signIn() {
     var input = el("access-token");
     var value = input.value.trim();
@@ -150,6 +155,7 @@
 
   /* ---------- helpers ---------- */
 
+  /* The status box above the results: a bold message and optional detail. */
   function showStatus(kind, message, detail) {
     statusBox.className = "status " + kind;
     statusBox.innerHTML = "";
@@ -170,12 +176,14 @@
     statusBox.hidden = true;
   }
 
+  /* Disable the draft button and mark the page busy while a draft runs. */
   function setBusy(busy) {
     draftBtn.disabled = busy;
     draftBtn.textContent = busy ? "Drafting…" : "Draft Response";
     document.body.classList.toggle("busy", busy);
   }
 
+  /* Replace a list's items with text (never HTML), or one muted placeholder. */
   function fillList(node, items, emptyText) {
     node.innerHTML = "";
     if (!items || items.length === 0) {
@@ -202,6 +210,8 @@
 
   /* ---------- rendering ---------- */
 
+  /* Show a /api/draft response: summary, confidence, steps, caveats, lookups,
+     the draft itself and the feedback card. */
   function render(data) {
     el("problem-summary").textContent = data.problem_summary || "(none returned)";
 
@@ -273,6 +283,8 @@
     assert_cites_when_grounded: "cites the RC sources it was given"
   };
 
+  /* Reset the feedback card for a new draft and summarise its automatic
+     checks and metrics. */
   function renderFeedback(data) {
     currentRequestId = data.request_id || "";
     el("fb-id").textContent = currentRequestId ? "draft " + currentRequestId : "";
@@ -308,6 +320,7 @@
     el("fb-submit").textContent = "Send feedback";
   }
 
+  /* The selected chip in each feedback row, as {key, score, value}. */
   function feedbackChoices() {
     var out = [];
     Array.prototype.forEach.call(document.querySelectorAll("#feedback-card .fb-row"), function (row) {
@@ -337,6 +350,8 @@
   el("fb-comment").addEventListener("input", refreshFeedbackButton);
   el("fb-correction").addEventListener("input", refreshFeedbackButton);
 
+  /* POST one /api/feedback record per chosen item, plus one for the comment
+     and correction, all under the current draft's request_id. */
   async function sendFeedback() {
     var items = feedbackChoices();
     var comment = el("fb-comment").value.trim();
@@ -373,6 +388,7 @@
 
   /* ---------- actions ---------- */
 
+  /* Send the pasted ticket for a draft and render the result. */
   async function requestDraft() {
     var text = ticketText.value.trim();
     if (!text) {
@@ -434,6 +450,8 @@
     }
   }
 
+  /* Copy the draft, falling back to execCommand where the Clipboard API is
+     unavailable. */
   async function copyDraft() {
     var box = el("draft-response");
     if (!box.value) return;
@@ -466,6 +484,9 @@
 
   var healthTimer = null;
 
+  /* The header health indicator from /api/health. While the session starts
+     (or the graph loads) it polls every 3 s; otherwise the 30 s interval in
+     boot refreshes it. Also learns whether sign-in is required. */
   async function checkHealth() {
     var dot = el("health-dot");
     var text = el("health-text");
@@ -545,6 +566,7 @@
 
   /* ---------- boot ---------- */
 
+  /* Show the app or the sign-in screen, depending on auth and a stored session. */
   async function start() {
     // Learn whether auth is on before deciding what to show.
     await checkHealth();

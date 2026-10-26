@@ -56,6 +56,7 @@ _PROMPT_VERSION = tracing.prompt_version()
 
 
 def _gpu_name() -> str:
+    """The GPU model(s) on this node from nvidia-smi, recorded in traces; '' if none."""
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                              capture_output=True, text=True, timeout=5).stdout
@@ -70,6 +71,7 @@ logger = logging.getLogger("rc_copilot")
 
 
 def configure_logging() -> None:
+    """Log to stdout, and to LOG_FILE as well when it is set and can be opened."""
     settings = get_settings()
     handlers = [logging.StreamHandler()]
     if settings.log_file:
@@ -100,6 +102,7 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Startup hook: log the configuration, warn if DEBUG is on, print the sign-in banner."""
     settings = get_settings()
     logger.info(
         "RC Copilot starting | vllm_base_url=%s model=%s rc_kg=%s debug=%s",
@@ -133,6 +136,9 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def _validation_handler(request, exc: RequestValidationError):
+    """Return a 422 in the frontend's {error, detail} shape for an invalid request
+    (in practice: no ticket text).
+    """
     return JSONResponse(
         status_code=422,
         content={
@@ -167,6 +173,11 @@ async def _unhandled_handler(request, exc: Exception):
 
 @app.post("/api/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
+    """POST /api/login: exchange the access token for a session token.
+
+    Returns LoginResponse (session token, expiry, session length); 401 if the
+    access token is wrong.
+    """
     settings = get_settings()
 
     if not auth.check_access_token(request.access_token):
@@ -192,6 +203,13 @@ async def login(request: LoginRequest):
     },
 )
 async def draft(request: DraftRequest):
+    """POST /api/draft: draft a reply to one ticket.
+
+    Cleans the ticket, runs cluster lookups and rc_kg retrieval, calls vLLM,
+    applies citations and evaluators, and returns a DraftResponse. Drafts and
+    model failures alike are written to the run log (when recording is on); a
+    model failure returns 502 with {error, detail, request_id}.
+    """
     settings = get_settings()
     request_id = uuid.uuid4().hex[:8]
     started = time.perf_counter()
@@ -238,9 +256,9 @@ async def draft(request: DraftRequest):
             crun.end({"chars": len(prepared.text), "stats": prepared.stats})
     ticket = prepared.text
 
-    # Read-only cluster lookups for the names and job IDs in the ticket, run
-    # while rc_kg retrieves. Never fatal, never anything that changes data.
     async def cluster_lookups():
+        """Read-only cluster lookups for the names and job IDs in the ticket, run
+        while rc_kg retrieves. Never fatal, never anything that changes data."""
         t0 = time.perf_counter()
         with tracing.run("cluster.lookups", "tool", metadata={"read_only": True}) as lrun:
             found = await lookups.run(ticket, settings.cluster_lookup_timeout_seconds)
@@ -286,6 +304,7 @@ async def draft(request: DraftRequest):
     tr.root.tags.append("kg:" + kg.status)
 
     def record(draft_out, error, model, before_citations=None, cite_trace=None, tokens=None):
+        """Finish the trace and write this draft's run log; returns the path written or None."""
         timings["total"] = int((time.perf_counter() - started) * 1000)
         tokens = tokens or _token_summary(trace.get("attempts", []), None)
         tr.root.usage = {k: tokens.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
@@ -505,6 +524,10 @@ async def feedback(request: FeedbackRequest):
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health():
+    """GET /api/health: whether vLLM and rc_kg are up, as a HealthResponse.
+
+    Always 200; the body's status says whether the model server answered.
+    """
     settings = get_settings()
     reachable, model_ids, detail = await check_health()
     kg_state, kg_detail = await kg_client.health()

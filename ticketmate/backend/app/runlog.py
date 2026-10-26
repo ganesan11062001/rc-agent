@@ -119,8 +119,9 @@ def record(
 ) -> Optional[str]:
     """Write one run. Returns the path written, or None if recording is off.
 
-    `trace` is the full trace of the draft (trace_version 2: retrieval, every
-    model call with its tokens, citation processing, timings, versions). The
+    `trace` is the full trace of the draft (trace_version 3: retrieval, every
+    model call with its tokens, citation processing, timings, versions, and
+    the run tree with its feedback). The
     older top-level fields stay, so readers of version-1 logs keep working."""
     base = run_dir()
     if base is None:

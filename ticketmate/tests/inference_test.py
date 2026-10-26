@@ -35,12 +35,14 @@ results = []
 
 
 def record(name, status, detail=""):
+    """Print one PASS/FAIL/SKIP result and keep it for the summary."""
     colour = {"PASS": "\033[32m", "FAIL": "\033[31m", "SKIP": "\033[33m"}[status]
     print("  %s%-4s\033[0m  %-38s %s" % (colour, status, name, detail), flush=True)
     results.append((name, status, detail))
 
 
 def rule(title):
+    """Print a section heading."""
     print("\n" + title)
     print("-" * 74, flush=True)
 
@@ -177,6 +179,7 @@ def test_prompt(client, model, ticket, instructions, guided, args):
 
 
 def show(draft):
+    """Print the model's draft in full, for a person to judge."""
     rule("5. What the model actually wrote -- judge this yourself")
     print("  PROBLEM SUMMARY")
     print("    " + draft.problem_summary)
@@ -197,6 +200,7 @@ def show(draft):
 # --------------------------------------------------------------------------- #
 
 def main():
+    """Run the checks in order against the vLLM server; returns the exit status."""
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-url", default=os.environ.get("VLLM_BASE_URL",
@@ -254,6 +258,7 @@ def main():
 
 
 def summarise():
+    """Print the pass/fail summary; returns 1 if anything failed, else 0."""
     rule("Summary")
     passed = sum(1 for _, s, _ in results if s == PASS)
     failed = [n for n, s, _ in results if s == FAIL]

@@ -1,5 +1,7 @@
 # shellcheck shell=bash
-# Sourced by build_graph.sh and serve_kg.sh: one private Neo4j per caller.
+# Sourced by build_graph.sh, serve_kg.sh and with_kg.sh (and, for its helpers,
+# by kg_ps.sh, build_runtime.sh and the eval/test wrappers): one private Neo4j
+# per caller.
 #
 # start_neo4j.sh is the single-developer path -- it writes its config into the
 # shared vendor/ tree and its password into the repo's .env. That is wrong for
@@ -19,8 +21,11 @@ RC_KG_PY="$RC_KG_ROOT/.venv/bin/python"
 NEO4J_HOME="$(echo "$RC_KG_ROOT"/vendor/neo4j-community-*)"
 export NEO4J_HOME
 
+# Timestamped log line; everything here logs through this so job output reads in order.
 kg_log() { echo "[rc-kg $(date +%H:%M:%S)] $*"; }
 
+# A loopback port the kernel says is free right now (compute nodes are shared,
+# so nothing is hard-coded).
 kg_free_port() {
   "$RC_KG_PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 }
@@ -44,6 +49,9 @@ kg_pick_java() {
   return 1
 }
 
+# kg_instance_init DIR: lay out a private Neo4j in DIR (config, store, logs),
+# pick a free Bolt port, set a fresh random password, and export the NEO4J_*
+# variables that point the Python side at it. Does not start Neo4j.
 kg_instance_init() {
   KG_DIR="$1"
   [ -d "$NEO4J_HOME" ] || kg_die "Neo4j not found under $RC_KG_ROOT/vendor (run scripts/install_neo4j.sh)"
@@ -85,6 +93,8 @@ EOF
   KG_BOLT="$bolt"
 }
 
+# kg_instance_load DUMP_DIR: restore DUMP_DIR/neo4j.dump (the published graph
+# snapshot) into this instance's store.
 kg_instance_load() {
   # Before start: neo4j-admin refuses to load into a running database.
   local from="$1"
@@ -99,6 +109,8 @@ kg_instance_load() {
   kg_log "snapshot loaded in $((SECONDS - t0))s ($(du -sh "$KG_DIR/data" 2>/dev/null | cut -f1) on disk)"
 }
 
+# Start this instance's Neo4j and return once Bolt accepts connections; dies
+# with Neo4j's own log tail if it exits or never opens the port.
 kg_instance_start() {
   "$NEO4J_HOME/bin/neo4j" start >"$KG_DIR/logs/start.log" 2>&1 \
     || { tail -n 20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/start.log" >&2 2>/dev/null
@@ -127,6 +139,8 @@ kg_instance_start() {
   kg_die "Neo4j never opened bolt on 127.0.0.1:$KG_BOLT within ${wait}s"
 }
 
+# Stop this instance's Neo4j; a no-op if kg_instance_init never ran, so it is
+# safe in any cleanup trap.
 kg_instance_stop() {
   [ -n "${NEO4J_CONF:-}" ] || return 0
   "$NEO4J_HOME/bin/neo4j" stop >/dev/null 2>&1 || true
@@ -156,6 +170,8 @@ kg_python_env() {
 
 KG_PARENT="${RC_KG_TMP:-${TMPDIR:-/tmp}}"
 
+# Kernel start time of a PID (field 22 of /proc/PID/stat); empty if it is gone.
+# Paired with the PID it identifies one process even after the PID is reused.
 _kg_starttime() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 
 # The dir only appears under its swept name once it has an owner. Created
@@ -177,6 +193,7 @@ kg_new_dir() {
   kg_die "cannot name an instance dir under $KG_PARENT"
 }
 
+# True if the process recorded in DIR/owner is still the same process.
 _kg_owner_alive() {
   local pid start
   read -r pid start < "$1/owner" 2>/dev/null || return 1
@@ -198,6 +215,8 @@ _kg_procs_in() {
   } | sort -un
 }
 
+# Stop whatever still runs from this user's ownerless instance dirs and
+# delete them. Called before a new instance starts, and by kg_ps.sh --clean.
 kg_sweep_stale() {
   local d pids n=0
   for d in "$KG_PARENT"/rc_kg_"${USER}"_*; do
@@ -225,6 +244,8 @@ kg_sweep_stale() {
   return 0
 }
 
+# One line per instance dir of this user on this node: live or STALE, size,
+# and the PIDs running from it (kg_ps.sh).
 kg_list() {
   local d state any=0
   for d in "$KG_PARENT"/rc_kg_"${USER}"_*; do
@@ -270,6 +291,8 @@ kg_runtime_stamp() {
   ls -1 "$KG_SITE" 2>/dev/null | grep -E '\.dist-info$' | sha256sum | cut -c1-16
 }
 
+# Set KG_PYTHON (and PYTHONPATH) to import from the node-local unpacked copy
+# of site-packages, unpacking it first if this node has none yet.
 kg_runtime() {
   KG_PYTHON=("$RC_KG_PY")
   local stamp; stamp="$(cat "${KG_RUNTIME_TAR%.tar}.stamp" 2>/dev/null)"
@@ -316,6 +339,7 @@ kg_runtime() {
 # RC_KG_SNAPSHOT, if set, overrides the directory for any variant.
 KG_VARIANTS="full website"
 
+# Published snapshot directory for a variant (default: full).
 kg_snapshot_dir() {
   case "${1:-full}" in
     full)    echo "$RC_KG_ROOT/data/graph" ;;

@@ -52,6 +52,7 @@ def normalize(url: str, base_host: str = "rc.northeastern.edu") -> Optional[str]
 
 
 def host_of(url: str) -> str:
+    """Lower-case host of `url`, without port or a leading "www."."""
     host = urlparse(url).netloc.lower().split(":")[0]
     return host[4:] if host.startswith("www.") else host
 

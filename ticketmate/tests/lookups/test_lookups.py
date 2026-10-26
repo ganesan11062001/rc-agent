@@ -84,12 +84,14 @@ fails = []
 
 
 def check(cond, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if cond else "  FAIL  ") + what)
     if not cond:
         fails.append(what)
 
 
 def ran():
+    """The commands the fake binaries recorded, one dict per call."""
     if not calls.exists():
         return []
     return [json.loads(l) for l in calls.read_text().splitlines()]

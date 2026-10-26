@@ -2,6 +2,7 @@
 import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 class H(BaseHTTPRequestHandler):
+    """Answers /health as API 2.0 and every POST with an unrecognised shape."""
     def _send(self, obj, code=200):
         out = json.dumps(obj).encode()
         self.send_response(code); self.send_header("content-type", "application/json")

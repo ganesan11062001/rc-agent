@@ -38,6 +38,7 @@ def _schemas(text: str):
 
 
 def _fill(schema, defs):
+    """A minimal value satisfying `schema`, resolving $ref against `defs`."""
     if "$ref" in schema:
         return _fill(defs[schema["$ref"].split("/")[-1]], defs)
     for key in ("anyOf", "oneOf", "allOf"):
@@ -54,6 +55,8 @@ def _fill(schema, defs):
 
 
 class H(BaseHTTPRequestHandler):
+    """GET lists one model; POST answers any chat completion with a filled-in schema."""
+
     def _send(self, obj):
         out = json.dumps(obj).encode()
         self.send_response(200); self.send_header("content-type", "application/json")

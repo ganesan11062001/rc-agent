@@ -13,6 +13,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """All rc-kg settings; each field is read from the env var of the same
+    name (case-insensitive), then .env, then the default here."""
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
@@ -47,7 +50,7 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
 
     # --- Embeddings -------------------------------------------------------
-    # "sentence_transformers" | "openai" | "vllm"
+    # "sentence_transformers" | "openai" | "vllm" | "openai_compatible"
     embedding_provider: str = "sentence_transformers"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
@@ -86,4 +89,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """The process-wide Settings, read once and cached."""
     return Settings()

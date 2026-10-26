@@ -23,6 +23,7 @@ ping_src = re.search(r"async function ping\(\) \{.*?\n\}\n", bg, re.S).group(0)
 request_src = re.search(r"async function request\(path, options\) \{.*?\n\}\n", bg, re.S).group(0)
 
 def health(snap):
+    """A /api/health body for one recorded timeline snapshot."""
     return {"status": snap["status"], "configured_model": "stub-model", "detail": None, "startup": snap["startup"]}
 
 # Synthetic states the recorded run did not pass through.
@@ -59,6 +60,7 @@ window.chrome = { runtime: {
 
 fails = []
 def check(c, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if c else "  FAIL  ") + what)
     if not c: fails.append(what)
 
@@ -77,7 +79,8 @@ with sync_playwright() as p:
     panel = "aside#rc-copilot-panel"
     pg.wait_for_selector(panel + " .rc-boot:not([hidden])", timeout=10000)
 
-    def show(h, wait_for=None):
+    def show(h):
+        """Make the stubbed health return `h` and refresh the panel's status now."""
         pg.evaluate("h => { window.__health = h; }", h)
         pg.click(panel + " .rc-status")     # same as the 3 s poll, without waiting for it
         pg.wait_for_timeout(400)
@@ -106,6 +109,9 @@ with sync_playwright() as p:
     # The real request() on what OOD sends back: its "Failed to connect" page
     # while nothing listens yet is not the SSO login page.
     def classify(status, html):
+        """Run the extension's real request() against a fake response with this
+        status and HTML body; returns what request() returns.
+        """
         return pg.evaluate("""async ([status, html]) => {
             const TIMEOUT_MS = 5000;
             const getConfig = async () => ({ baseUrl: "https://ood.test/rnode/d4054/24980" });

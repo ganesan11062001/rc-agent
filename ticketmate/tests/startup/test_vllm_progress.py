@@ -24,6 +24,7 @@ order = [k for k, *_ in st.VLLM_STAGES]
 seen = list(dict.fromkeys(stages))
 fails = []
 def check(c, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if c else "  FAIL  ") + what)
     if not c: fails.append(what)
 check(seen == ["starting", "engine", "weights", "compile", "profile", "graphs", "server"], "stages in order: %s" % seen)

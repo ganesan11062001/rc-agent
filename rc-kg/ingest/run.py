@@ -1,4 +1,4 @@
-"""Phase 1 orchestrator: WP API -> sections -> anchors -> links -> Neo4j.
+"""Phase 1 orchestrator: WP API (+ rc-docs, ingest/rtd.py) -> sections -> anchors -> links -> Neo4j.
 
 Deliberately contains no LLM call and no embedding call. Phase 1 has to be
 runnable, repeatable and cheap, so that the parts most likely to be wrong --
@@ -35,6 +35,9 @@ logger = logging.getLogger("ingest")
 
 @dataclass
 class Report:
+    """The Phase 1 ingest report, written as JSON by ingest(): per-type counts,
+    anchor and link statistics, sitemap cross-check, warnings, graph census."""
+
     started_at: str = ""
     finished_at: str = ""
     types_endpoint: Dict[str, str] = field(default_factory=dict)
@@ -58,6 +61,7 @@ class Report:
 
 
 def section_id(content_type: str, wp_id: int, order: int) -> str:
+    """Stable Section id for the `order`-th section of a WordPress item."""
     return "%s-%d-%03d" % (content_type, wp_id, order)
 
 
@@ -191,6 +195,13 @@ def _resolve_internal(
 
 
 def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
+    """Run Phase 1 end to end: fetch the website (WP API, cross-checked
+    against the sitemap) and, if enabled, the docs site; split sections,
+    resolve anchors and links, and write it all to Neo4j.
+
+    Makes network requests and writes to Neo4j; `clear` wipes the graph's
+    data first. Writes the report to `report_path` if given, and returns it.
+    """
     s = get_settings()
     rep = Report(started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
@@ -508,6 +519,7 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
 
 
 def main() -> int:
+    """CLI entry point: parse flags and run ingest()."""
     ap = argparse.ArgumentParser(description="Phase 1 ingest (no LLM, no embeddings)")
     ap.add_argument("--clear", action="store_true", help="wipe the graph first")
     ap.add_argument("--report", default="data/phase1_report.json")

@@ -26,6 +26,9 @@ STYLES = ("markdown", "plain", "numbered")
 
 @dataclass
 class Rendered:
+    """Result of rendering: the texts with links in, plus which refs were
+    cited, which URLs were removed and which refs were not in `refs`."""
+
     texts: List[str]
     cited: List[str] = field(default_factory=list)          # refs, first-use order
     # numbered style only: [{"n": 1, "ref": "S3", "url": ...}] in n order
@@ -35,6 +38,7 @@ class Rendered:
 
     @property
     def text(self) -> str:
+        """The first (usually only) rendered text, or "" if there is none."""
         return self.texts[0] if self.texts else ""
 
 
@@ -66,6 +70,8 @@ def render_many(texts: List[str], refs: Dict[str, str], allowed_urls: List[str],
 
     # 1. Validate the URLs the model wrote itself, before markers add ours.
     def fix_url(m: "re.Match") -> str:
+        """Keep an allowed URL, cut one with an invented fragment back to its
+        page, or replace it with "[link removed]"; trailing punctuation kept."""
         raw = m.group(0)
         url = raw.rstrip(_TRAILING)
         tail = raw[len(url):]
@@ -78,6 +84,8 @@ def render_many(texts: List[str], refs: Dict[str, str], allowed_urls: List[str],
 
     # 2. Expand citation markers.
     def expand(m: "re.Match") -> str:
+        """Replace one [S#, ...] marker with links in `style`; unknown refs are
+        recorded and dropped, and a marker with none known becomes ""."""
         parts = []
         for ref in re.split(r"\s*,\s*", m.group(2)):
             url = refs.get(ref)
@@ -104,4 +112,5 @@ def render_many(texts: List[str], refs: Dict[str, str], allowed_urls: List[str],
 
 def render(text: str, refs: Dict[str, str], allowed_urls: List[str],
            style: str = "markdown") -> Rendered:
+    """render_many() for a single text; read the result's `.text`."""
     return render_many([text], refs, allowed_urls, style)

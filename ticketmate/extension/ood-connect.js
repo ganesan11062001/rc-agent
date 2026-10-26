@@ -1,7 +1,7 @@
 /* Runs on Open OnDemand pages. Its whole job is to remove the copy-paste step.
  *
  * The RC Copilot interactive app renders a hidden element carrying this
- * session's proxy path and access token (see ood-app/view.html.erb). OOD shows
+ * session's proxy path and access token (see ood-apps/rc-copilot/view.html.erb). OOD shows
  * that card only to the user who owns the job, so reading it here is the same
  * trust boundary OOD already uses for Jupyter and RStudio passwords.
  *
@@ -15,6 +15,8 @@
   const MARKER_ID = "rc-copilot-connection";
   const BANNER_ID = "rc-copilot-autoconfig-banner";
 
+  /* A small fixed toast in the corner of the OOD page, gone after 7 s. Inline
+     styles because this script ships no CSS into OOD pages. */
   function banner(text, ok) {
     let box = document.getElementById(BANNER_ID);
     if (!box) {
@@ -36,6 +38,8 @@
 
   let lastSaved = "";
 
+  /* Read the session card's marker, if there is one, and hand its URL and token
+     to the service worker to save. */
   async function harvest() {
     const marker = document.getElementById(MARKER_ID);
     if (!marker) return;

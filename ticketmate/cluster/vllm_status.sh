@@ -30,14 +30,18 @@ case "${1:-}" in
 esac
 
 QUIET=$(( ENV_ONLY || NODE_URL_ONLY ))
+# Human-readable output, suppressed when only --env / a URL is wanted so the
+# output stays safe to eval.
 say() { [ "$QUIET" = 1 ] && return 0; echo "$@"; }
 die() { echo "$@" >&2; exit 1; }
 
+# vLLM's model listing on a node: cheap, and only answers once serving.
 models_url() { echo "http://$1:$VLLM_PORT/v1/models"; }
 
 # --noproxy matters: these nodes set http_proxy, which will 403 internal traffic.
 probe() { curl -sf --noproxy '*' --max-time 4 "$(models_url "$1")" -o /dev/null; }
 
+# Name of the model vLLM on the node is serving (first entry of /v1/models).
 served_model() {
   curl -sf --noproxy '*' --max-time 4 "$(models_url "$1")" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null

@@ -99,6 +99,8 @@ chmod 600 "logs/rc-copilot-${SLURM_JOB_ID}.err" 2>/dev/null || true
 VLLM_PID=""
 APP_PID=""
 KG_PID=""
+# On exit or signal: stop rc-copilot, vLLM and rc_kg, and remove the startup
+# progress dir.
 cleanup() {
   echo
   echo "shutting down..."

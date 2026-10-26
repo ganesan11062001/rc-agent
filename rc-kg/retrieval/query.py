@@ -12,6 +12,8 @@ from .graphrag import retrieve
 
 
 def main() -> int:
+    """CLI entry point: retrieve for the query (argument or stdin) and print
+    the ranked sources, optionally followed by the context block."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("query", nargs="?", help="omit to read stdin")
     ap.add_argument("-k", type=int, default=6)

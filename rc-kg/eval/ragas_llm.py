@@ -49,6 +49,8 @@ _MARKERS = re.compile(r"\s*\[S\d+(?:\s*,\s*S\d+)*\]")
 
 
 def _get(url: str, token: str = "", body=None) -> Dict:
+    """GET `url` (POST if `body` is given, as JSON) without any proxy; returns
+    the parsed JSON response."""
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json",
                                           **({"Authorization": "Bearer " + token} if token else {})})
@@ -62,6 +64,8 @@ def _questions(path: Path) -> List[str]:
 
 
 def samples_from_questions(kg_url: str, token: str, k: int, limit: int) -> List[Dict]:
+    """One RAGAS sample per eval question (first `limit`, 0 = all), with the
+    contexts rc-kg's /retrieve returns for it."""
     out = []
     for q in _questions(HERE / "questions.yaml")[: limit or None]:
         r = _get(kg_url.rstrip("/") + "/retrieve", token, {"query": q, "k": k})
@@ -72,6 +76,10 @@ def samples_from_questions(kg_url: str, token: str, k: int, limit: int) -> List[
 
 
 def samples_from_runs(run_dir: Path, only: str, limit: int) -> List[Dict]:
+    """One RAGAS sample per grounded TicketMate run log under `run_dir`: the
+    ticket text, the sources cut out of the prompt, and the draft with its
+    [S#] markers removed. `only` filters by ticket-number prefix of the run's
+    directory; runs without sources or a parseable draft are skipped."""
     out = []
     for path in sorted(run_dir.rglob("*.json")):
         if only and not path.parent.name.startswith(only.upper()):
@@ -107,6 +115,10 @@ def samples_from_runs(run_dir: Path, only: str, limit: int) -> List[Dict]:
 
 
 async def score(samples: List[Dict], judge_url: str, judge_model: str, concurrency: int) -> List[Dict]:
+    """Score every sample with the RAGAS metrics that apply to it, calling the
+    judge LLM at most `concurrency` at a time. A failed metric call becomes
+    NaN plus an entry in the row's "errors". Adds the judge host to
+    NO_PROXY in this process's environment."""
     from openai import AsyncOpenAI
     from ragas.llms import llm_factory
     from ragas.metrics.collections import (ContextRelevance, ContextUtilization, Faithfulness,
@@ -122,6 +134,7 @@ async def score(samples: List[Dict], judge_url: str, judge_model: str, concurren
     sem = asyncio.Semaphore(concurrency)
 
     async def one(s: Dict) -> Dict:
+        """All applicable metric scores for one sample."""
         res = {"id": s["id"]}
         for name, metric in metrics.items():
             if name != "context_relevance" and "response" not in s:
@@ -144,6 +157,8 @@ async def score(samples: List[Dict], judge_url: str, judge_model: str, concurren
 
 
 def main() -> int:
+    """CLI entry point: build samples, score them (unless --dry-run), and print
+    per-metric means with bootstrap intervals."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--questions", action="store_true")

@@ -73,6 +73,8 @@ _BOUNDARY = re.compile(r"(?:[.!?](?=\s)|\n|\[S\d+(?:\s*,\s*S\d+)*\])")
 
 @dataclass
 class Verdict:
+    """The support check's judgement of one cited ref for one claim."""
+
     ref: str
     claim: str
     verdict: str                      # "ok" | "better_source" | "weak"
@@ -109,6 +111,8 @@ def _tokens(text: str) -> set:
 
 
 def _sections(urls: List[str]) -> Dict[str, Dict]:
+    """url_with_anchor -> {url, heading, text, vec} for the Sections at `urls`
+    (reads Neo4j)."""
     s = get_settings()
     with driver().session(database=s.neo4j_database) as sess:
         rows = sess.run(
@@ -139,6 +143,7 @@ def check(texts: List[str], refs: Dict[str, str]) -> List[Verdict]:
         ctok = _tokens(claim)
 
         def score(ref: str) -> Tuple[float, float]:
+            """(cosine + weighted term overlap, cosine alone) of this claim vs `ref`."""
             sec = cand[ref]
             cos = float(cvec @ sec["vec"])
             lex = len(ctok & sec["tokens"]) / max(1, len(ctok))

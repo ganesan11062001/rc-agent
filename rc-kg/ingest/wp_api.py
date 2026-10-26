@@ -30,6 +30,8 @@ FIELDS = "id,title,link,content,parent,date,modified,categories,slug,status"
 
 @dataclass
 class WPItem:
+    """One WordPress item (page, post or event) as the REST API returns it."""
+
     wp_id: int
     content_type: str
     title: str
@@ -43,6 +45,7 @@ class WPItem:
 
     @classmethod
     def from_api(cls, raw: Dict, content_type: str) -> "WPItem":
+        """Build from one REST API JSON object (requested with FIELDS)."""
         return cls(
             wp_id=int(raw["id"]),
             content_type=content_type,

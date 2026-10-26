@@ -96,6 +96,10 @@ _LUCENE_SPECIAL = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
 
 @dataclass
 class Source:
+    """One numbered source in a retrieval result: a section, the URL to cite,
+    its page metadata, fused score and per-retriever ranks, and the
+    neighbouring text, topics and links the graph expansion added."""
+
     ref: str                       # "S1"
     section_id: str
     page_title: str
@@ -120,6 +124,10 @@ class Source:
 
 @dataclass
 class RetrievalResult:
+    """What retrieve() returns and POST /retrieve serialises: the sources, the
+    prompt context built from them, the URLs an answer may contain, and
+    whether the best match was too weak to trust."""
+
     query: str
     query_topics: List[str]
     sources: List[Source]
@@ -133,6 +141,9 @@ class RetrievalResult:
 
 
 def _fulltext_query(text: str) -> str:
+    """Turn free text into a Lucene OR-query of its distinctive terms
+    (stopwords, short and numeric tokens dropped, special characters
+    escaped, capped at _MAX_FULLTEXT_TERMS); "" if nothing is left."""
     seen, terms = set(), []
     for tok in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*[A-Za-z0-9]|[A-Za-z0-9]", text):
         low = tok.lower()
@@ -209,6 +220,8 @@ RETURN sid,
 
 
 def _is_stale_status_post(row: Dict, today: date) -> bool:
+    """True for a status/outage post (by category or topic) published more
+    than _STALE_AFTER_DAYS before `today`. `row` is an EXPAND result row."""
     if row["content_type"] != "post" or not (
             set(row["categories"] or []) & _STATUS_CATEGORIES or _OUTAGE_TOPIC in (row["topics"] or [])):
         return False
@@ -226,6 +239,14 @@ def _clip(text: Optional[str], n: int) -> str:
 
 def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
              candidates: int = 30, today: Optional[date] = None) -> RetrievalResult:
+    """Retrieve the top `k` sources for `query` (see the module docstring).
+
+    `include_events` None uses INCLUDE_EVENTS_IN_RETRIEVAL. `candidates` is
+    how many hits each retriever contributes before fusion. `today` is for
+    tests: it fixes the date stale status posts are measured from. Raises
+    ValueError on an empty query and RuntimeError if the graph has no
+    embeddings or was embedded with a different model.
+    """
     s = get_settings()
     events = s.include_events_in_retrieval if include_events is None else include_events
     query = query.strip()
@@ -237,6 +258,7 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
     counts: Dict[str, int] = {}
 
     def lap(name: str, since: float) -> float:
+        """Record ms since `since` as timing `name`; returns now for the next lap."""
         now = time.perf_counter()
         timings[name] = round((now - since) * 1000, 1)
         return now
@@ -250,6 +272,7 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
     vector_scores: Dict[str, float] = {}
 
     def add(sid: str, retriever: str, rank: int, weight: float = 1.0) -> None:
+        """Add one retriever's weighted RRF contribution for `sid` at `rank`."""
         fused[sid] = fused.get(sid, 0.0) + weight / (_RRF_K + rank)
         signals.setdefault(sid, {})[retriever] = rank
 

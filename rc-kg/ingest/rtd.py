@@ -53,6 +53,9 @@ _VERSIONED = re.compile(r"^/en/[^/]+(?:/(.*))?$")
 
 @dataclass
 class DocPage:
+    """One rc-docs page: its Sphinx docname, canonical URL and, once fetched,
+    title, cleaned HTML and last git commit date."""
+
     docname: str
     url: str                 # canonical: https://rc-docs.../en/latest/<docname>.html
     title: str = ""
@@ -62,6 +65,8 @@ class DocPage:
 
 @dataclass
 class DocsReport:
+    """Counts and problem lists from the docs ingest, for the ingest report."""
+
     base: str = ""
     pages: int = 0
     pages_without_sections: List[str] = field(default_factory=list)
@@ -75,6 +80,7 @@ class DocsReport:
 
 
 def docs_host() -> str:
+    """Host of DOCS_BASE (rc-docs.northeastern.edu by default)."""
     return host_of(get_settings().docs_base)
 
 
@@ -174,6 +180,7 @@ def _last_modified(pages: List[DocPage]) -> int:
 
 
 def section_id(docname: str, order: int) -> str:
+    """Stable Section id for the `order`-th section of a docs page."""
     return "%s-%s-%03d" % (CONTENT_TYPE, docname, order)
 
 

@@ -37,6 +37,7 @@ EXT_GLOB="$VENV/lib/python${PY_VERSION}/site-packages/vllm/_C_stable_libtorch*.s
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 
+# Output helpers: a plain line, and OK / FAIL / info lines for the report.
 say()  { printf '%s\n' "$*"; }
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
@@ -58,6 +59,9 @@ else
 fi
 
 # ── 1. report ────────────────────────────────────────────────────────────────
+# Check the installed venv: vllm and torch versions, which CUDA runtime the
+# compiled extension links (must be 12 for driver 570.x), and whether vllm
+# imports. Returns non-zero on anything that would fail at serve time.
 report() {
   say ""
   say "== installed =="

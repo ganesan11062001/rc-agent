@@ -46,6 +46,8 @@ def _key(text: str) -> str:
 
 @dataclass
 class Anchor:
+    """The URL a section is cited by and how its anchor was obtained."""
+
     url_with_anchor: str
     kind: str               # ANCHOR_ID | ANCHOR_TEXT_FRAGMENT | ANCHOR_NONE
 
@@ -142,6 +144,7 @@ def inline_heading_ids(content_html: str) -> Dict[str, str]:
 
 
 def summarize(anchors: List[Anchor]) -> Dict[str, int]:
+    """Count anchors by kind, for the ingest report."""
     counts = {ANCHOR_ID: 0, ANCHOR_TEXT_FRAGMENT: 0, ANCHOR_NONE: 0}
     for a in anchors:
         counts[a.kind] = counts.get(a.kind, 0) + 1

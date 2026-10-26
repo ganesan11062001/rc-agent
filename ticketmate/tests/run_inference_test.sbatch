@@ -173,6 +173,7 @@ MODEL="$MODEL" PORT="$PORT" VLLM_HOST=127.0.0.1 TP="$TP" \
   "$TM_ROOT/cluster/serve_glm.sh" > "$LOG" 2>&1 &
 VLLM_PID=$!
 
+# Stop vLLM however the job ends.
 cleanup() {
   [ -n "${VLLM_PID:-}" ] && kill "$VLLM_PID" 2>/dev/null
   wait 2>/dev/null

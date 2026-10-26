@@ -122,4 +122,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """The process-wide Settings, read from the environment (and .env) once and cached."""
     return Settings()

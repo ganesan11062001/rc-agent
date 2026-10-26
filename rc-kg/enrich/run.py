@@ -77,6 +77,12 @@ def _run_batched(sess, stmt: str, rows: List[Dict]) -> None:
 
 
 def enrich(reembed: bool = False) -> Dict[str, int]:
+    """Rewrite Topic nodes and MENTIONS edges from topics.yaml, then embed
+    every section whose text or model changed (all of them with `reembed`).
+
+    Writes to Neo4j. Returns counts: topics, mentions, sections embedded,
+    total sections, and retrievable sections that matched no topic.
+    """
     s = get_settings()
     schema.apply()
     topics = load_topics()
@@ -139,6 +145,7 @@ def enrich(reembed: bool = False) -> Dict[str, int]:
 
 
 def main() -> int:
+    """CLI entry point: parse flags, run enrich() and print its counts."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--reembed", action="store_true", help="ignore embedded_key")
     ap.add_argument("-v", "--verbose", action="store_true")

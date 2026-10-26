@@ -1,3 +1,10 @@
+/* Toolbar popup: shows which RC Copilot session the extension is configured
+ * for, tests it (via the service worker's PING / SIGN_IN), lets you paste a URL
+ * and token by hand when auto-configuration from OOD did not happen, and picks
+ * which ServiceNow field drafts are written into. Config lives in
+ * chrome.storage.local under oodConfig, shared with background.js and the
+ * panel in content.js.
+ */
 (function () {
   "use strict";
 
@@ -5,6 +12,7 @@
   const el = (id) => document.getElementById(id);
   const status = el("status");
 
+  /* Show a toast message (ok / error / info). */
   function say(kind, message) {
     status.className = "toast " + kind;
     status.textContent = message;
@@ -28,12 +36,15 @@
     return m ? m[1] : "—";
   }
 
+  /* The connection card at the top: state drives its colour. */
   function setConn(state, title, sub) {
     el("conn").dataset.state = state;
     el("conn-title").textContent = title;
     el("conn-sub").textContent = sub || "";
   }
 
+  /* Say who will see the draft for the chosen target field; red when the
+     researcher can. */
   function renderTargetWarning() {
     const warn = el("target-warning");
     const v = el("target-field").value;
@@ -49,6 +60,7 @@
     }
   }
 
+  /* Redraw from stored config: connection card, facts, manual form, target. */
   async function render() {
     const stored = await chrome.storage.local.get(CFG_KEY);
     const cfg = stored[CFG_KEY] || {};
@@ -85,6 +97,8 @@
     await chrome.storage.local.set({ [CFG_KEY]: cfg });
   });
 
+  /* Manual config. Checks the same host rule as background.js saveConfig()
+     (Northeastern https only, which the manifest's host permissions cover). */
   el("save").addEventListener("click", async () => {
     const url = normalise(el("ood-url").value);
     const token = el("access-token").value.trim();
@@ -110,6 +124,8 @@
     render();
   });
 
+  /* Test connection: health first (reporting startup progress if the session
+     is still loading), then a real sign-in so a stale token shows up here. */
   el("test").addEventListener("click", async () => {
     const btn = el("test");
     btn.classList.add("busy");

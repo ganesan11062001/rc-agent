@@ -61,6 +61,10 @@ def _ticket_query(run: Dict) -> Optional[str]:
 
 
 def collect(out: str, k: int, runs_dir: Optional[str]) -> None:
+    """Score the graph currently served (variant from RC_KG_VARIANT) on the
+    questions, the ticket cases and, if `runs_dir` is given, each distinct
+    recorded ticket query; write the per-item results (no ticket text) as
+    JSON to `out`."""
     variant = os.environ.get("RC_KG_VARIANT", "full")
     qs = yaml.safe_load((HERE / "questions.yaml").read_text(encoding="utf-8"))["questions"]
     questions = []
@@ -104,6 +108,7 @@ def collect(out: str, k: int, runs_dir: Optional[str]) -> None:
 
 
 def _scores(rows: List[Dict], k: int) -> Dict[str, float]:
+    """Hit@1/3/k, MRR and low_confidence rate over collected question rows."""
     n = len(rows) or 1
     return {"n": len(rows),
             "hit@1": sum(1 for r in rows if r["rank"] == 1) / n,
@@ -114,12 +119,14 @@ def _scores(rows: List[Dict], k: int) -> Dict[str, float]:
 
 
 def compare(paths: List[str]) -> None:
+    """Print the collect() files side by side, one column per variant."""
     data = [json.load(open(p)) for p in paths]
     k = data[0]["k"]
     names = [d["variant"] for d in data]
     w = max(12, *(len(n) for n in names))
 
     def row(label, vals, fmt="%.3f"):
+        """Print one labelled row with a value per variant ("-" for None)."""
         print("  %-34s" % label + "".join(("%" + str(w) + "s") % (fmt % v if v is not None else "-") for v in vals))
 
     print("\n1. Same 45 questions for both graphs (page-level hits, k=%d)" % k)
@@ -148,6 +155,7 @@ def compare(paths: List[str]) -> None:
 
 
 def main() -> int:
+    """CLI entry point: the `collect` and `compare` subcommands."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("collect")

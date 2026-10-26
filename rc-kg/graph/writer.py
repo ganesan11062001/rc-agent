@@ -1,8 +1,8 @@
 """Write pages, sections and edges into Neo4j.
 
 Everything is MERGE-on-key so a re-ingest updates in place rather than
-duplicating. Writes are batched with UNWIND: 104 pages and ~380 sections is
-small, but one round trip per node is still 500 round trips for no reason.
+duplicating. Writes are batched with UNWIND: ~170 pages and ~600 sections is
+small, but one round trip per node is still ~800 round trips for no reason.
 """
 
 import logging
@@ -23,6 +23,7 @@ def _chunks(rows: List[Dict], size: int = _BATCH) -> Iterable[List[Dict]]:
 
 
 def _run(stmt: str, rows: List[Dict]) -> int:
+    """Run an UNWIND $rows statement over `rows` in batches; returns the row count."""
     if not rows:
         return 0
     s = get_settings()
@@ -115,6 +116,7 @@ MERGE (s)-[:LINKS_OUT]->(e)
 
 
 def upsert_pages(rows: List[Dict]) -> int:
+    """MERGE Page nodes by url and set their metadata; raises if any row has no url."""
     missing = [r for r in rows if not r.get("url")]
     if missing:
         # Requirement 1, enforced here because Community Edition has no
@@ -126,6 +128,8 @@ def upsert_pages(rows: List[Dict]) -> int:
 
 
 def upsert_sections(rows: List[Dict]) -> int:
+    """MERGE Section nodes by section_id and link them to their Page; raises
+    if any row has no url_with_anchor."""
     missing = [r for r in rows if not r.get("url_with_anchor")]
     if missing:
         raise ValueError(
@@ -137,30 +141,38 @@ def upsert_sections(rows: List[Dict]) -> int:
 
 
 def link_next(rows: List[Dict]) -> int:
+    """Section -[:NEXT]-> Section, in page order (rows: from_id, to_id)."""
     return _run(LINK_NEXT, rows)
 
 
 def link_child_of(rows: List[Dict]) -> int:
+    """Page -[:CHILD_OF]-> parent Page (rows: child_url, parent_url)."""
     return _run(LINK_CHILD_OF, rows)
 
 
 def upsert_categories(rows: List[Dict]) -> int:
+    """MERGE Category nodes by WordPress id (rows: wp_id, name, taxonomy)."""
     return _run(UPSERT_CATEGORIES, rows)
 
 
 def link_in_category(rows: List[Dict]) -> int:
+    """Page -[:IN_CATEGORY]-> Category (rows: page_url, category_id)."""
     return _run(LINK_IN_CATEGORY, rows)
 
 
 def link_to_pages(rows: List[Dict]) -> int:
+    """Section -[:LINKS_TO]-> internal Page, keeping the href as written and
+    whether it went through a redirect."""
     return _run(LINK_TO_PAGE, rows)
 
 
 def upsert_external(rows: List[Dict]) -> int:
+    """MERGE ExternalLink nodes by url (rows: url, domain)."""
     return _run(UPSERT_EXTERNAL, rows)
 
 
 def link_out(rows: List[Dict]) -> int:
+    """Section -[:LINKS_OUT]-> ExternalLink (rows: section_id, url)."""
     return _run(LINK_OUT, rows)
 
 

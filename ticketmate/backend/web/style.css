@@ -382,8 +382,7 @@ button:focus-visible {
 
 body.busy { cursor: progress; }
 
-/* Narrow widths: phones, and the browser-extension side panel, which frames
-   this page at roughly 350-500px. */
+/* Narrow widths: phones and narrow windows. */
 @media (max-width: 560px) {
   .wrap { padding: 0 12px; }
   main { padding: 14px 12px 40px; }

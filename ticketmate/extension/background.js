@@ -21,6 +21,7 @@ function normaliseBase(url) {
   return String(url || "").trim().replace(/\/+$/, "");
 }
 
+/* Saved config with defaults filled in. */
 async function getConfig() {
   const stored = await chrome.storage.local.get(CFG_KEY);
   const cfg = stored[CFG_KEY] || {};
@@ -31,6 +32,7 @@ async function getConfig() {
   };
 }
 
+/* The current session token, or null if there is none or it has expired. */
 async function getSession() {
   const stored = await chrome.storage.session.get(SESSION_KEY);
   const s = stored[SESSION_KEY];
@@ -39,13 +41,14 @@ async function getSession() {
   return s;
 }
 
+/* Store a session ({token, expiresAt}), or clear it with null. */
 async function setSession(value) {
   if (value) await chrome.storage.session.set({ [SESSION_KEY]: value });
   else await chrome.storage.session.remove(SESSION_KEY);
 }
 
 /* Written by the OOD content script when it finds a live RC Copilot session.
-   Only loopback-equivalent hosts we hold permission for are accepted, so a
+   Only Northeastern hosts (which we hold permission for) are accepted, so a
    page on some other site can't point us at an endpoint of its choosing. */
 async function saveConfig(baseUrl, accessToken) {
   const url = normaliseBase(baseUrl);
@@ -74,12 +77,16 @@ async function saveConfig(baseUrl, accessToken) {
 
 /* ---------- error wording ---------- */
 
+/* Turn a non-2xx answer into a message that says what to do. Most of these
+   statuses come from OOD's proxy, not the backend, so they usually mean the
+   job ended, is still starting, or the OOD login expired. */
 function describeHttpFailure(status, bodyText) {
   if (status === 404) {
     return (
-      "OOD returned 404. The Slurm job has almost certainly ended, or the " +
-      "node/port in your URL is stale — resubmit serve_stack.sbatch and paste " +
-      "the new URL and token."
+      "OOD returned 404: the session has most likely ended, or the extension " +
+      "still has an old session's address. Launch a new RC Copilot session and " +
+      "open My Interactive Sessions. (With serve_stack.sbatch: paste the new " +
+      "URL and token into the popup.)"
     );
   }
   if (status === 502 || status === 503 || status === 504) {
@@ -107,6 +114,8 @@ function describeHttpFailure(status, bodyText) {
 
 /* ---------- raw request ---------- */
 
+/* One fetch to the backend, always resolving to {ok, status, data | error}
+   and never throwing, so callers only branch on ok. */
 async function request(path, options) {
   const cfg = await getConfig();
   if (!cfg.baseUrl) {
@@ -205,10 +214,11 @@ async function request(path, options) {
 
 /* ---------- sign-in ---------- */
 
+/* Exchange the saved access token for a session token (POST /api/login). */
 async function signIn() {
   const cfg = await getConfig();
   if (!cfg.accessToken) {
-    return { ok: false, error: "No access token saved. Get it with: cat ~/.rc_copilot/token" };
+    return { ok: false, error: "No access token saved. With your RC Copilot session running, open My Interactive Sessions in OOD. (With serve_stack.sbatch: paste the output of cat ~/.rc_copilot/token into the popup.)" };
   }
 
   const result = await request("/api/login", {
@@ -221,7 +231,7 @@ async function signIn() {
     if (result.status === 401) {
       return {
         ok: false,
-        error: "The backend rejected that access token. It changes every time the job restarts — re-read ~/.rc_copilot/token."
+        error: "The backend rejected the access token; it changes with every session. Open My Interactive Sessions in OOD again so the extension picks up the new one. (With serve_stack.sbatch: re-read ~/.rc_copilot/token.)"
       };
     }
     return result;
@@ -256,6 +266,8 @@ async function withSession(fn) {
 
 /* ---------- the operations ---------- */
 
+/* GET /api/health. ok only when the model is serving; while a fresh session
+   is still loading it returns starting:true with the startup progress. */
 async function ping() {
   const result = await request("/api/health");
   if (!result.ok) return result;
@@ -279,6 +291,7 @@ async function ping() {
   return { ok: true, data: data, startup: startup };
 }
 
+/* POST /api/draft with the ticket as read from the page. */
 async function draft(ticketText, ticketNumber, extraInstructions) {
   if (!ticketText || !ticketText.trim()) {
     return { ok: false, error: "No ticket text to send." };

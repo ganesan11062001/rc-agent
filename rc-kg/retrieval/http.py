@@ -17,6 +17,8 @@ _DIRECT = {"http": None, "https": None}
 
 
 def _is_internal(host: str) -> bool:
+    """True for localhost, bare node names, and hosts resolving to loopback,
+    private or link-local addresses (does a DNS lookup)."""
     if host in ("localhost",) or "." not in host:
         return True                                   # bare node names: d0110
     try:
@@ -27,6 +29,7 @@ def _is_internal(host: str) -> bool:
 
 
 def post(url: str, **kwargs) -> requests.Response:
+    """requests.post, bypassing the proxy when `url`'s host is internal."""
     if _is_internal(urlparse(url).hostname or ""):
         kwargs["proxies"] = _DIRECT
     return requests.post(url, **kwargs)

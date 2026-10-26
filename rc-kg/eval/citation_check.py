@@ -37,6 +37,10 @@ def _verdict(claim: str, ref: str, refs) -> str:
 
 
 def hand_labelled() -> dict:
+    """Score citation_cases.yaml: each claim cited to its supported section
+    (a flag is a false flag) and to each unsupported page's sections (a flag
+    is a catch). Cases whose supported section was not retrieved are listed,
+    not scored."""
     fp, pos, caught, neg, missing = 0, 0, 0, 0, []
     details = []
     for c in yaml.safe_load(CASES.read_text(encoding="utf-8"))["cases"]:
@@ -68,6 +72,9 @@ def hand_labelled() -> dict:
 
 
 def held_out(seed: int = 7) -> dict:
+    """For each eval question's sources, take one reworded sentence, cite it
+    to its own section and to a random other-page source; count false flags
+    and catches. `seed` makes the sentence and rival choice repeatable."""
     qs = [q["question"] for q in yaml.safe_load(
         (CASES.parent / "questions.yaml").read_text(encoding="utf-8"))["questions"]]
     rng = random.Random(seed)
@@ -92,6 +99,8 @@ def held_out(seed: int = 7) -> dict:
 
 
 def main() -> int:
+    """CLI entry point: print both sets' rates and the hand-labelled details;
+    `--json` also prints the full result."""
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("neo4j").setLevel(logging.ERROR)
     out = {"hand_labelled": hand_labelled(), "held_out": held_out()}

@@ -19,6 +19,10 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def main() -> int:
+    """List the served models, then ask one for "OK" and print the reply.
+
+    Returns the exit status: 1 if the server cannot be reached.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8000/v1")
     p.add_argument("--model", default="glm-4.7-flash")

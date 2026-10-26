@@ -58,6 +58,7 @@ kg_log "variant: $VARIANT ($SITES) -> $SNAP"
 kg_sweep_stale
 WORK="$(kg_new_dir build)" || exit 1
 kg_watchdog "$WORK" & WD_PID=$!
+# On any exit: stop the watchdog and this build's Neo4j, then drop its work dir.
 cleanup() { kill "$WD_PID" 2>/dev/null; kg_instance_stop; rm -rf "$WORK"; }
 trap cleanup EXIT
 trap 'exit 143' INT TERM

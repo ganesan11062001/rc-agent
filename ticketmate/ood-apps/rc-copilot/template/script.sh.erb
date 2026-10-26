@@ -86,6 +86,8 @@ source "$TM_ROOT/cluster/env.sh"
 VLLM_PID=""
 APP_PID=""
 KG_PID=""
+# On exit or signal (OOD ends the session by signalling this script): stop
+# rc-copilot, vLLM and rc_kg so nothing outlives the session.
 cleanup() {
   echo "shutting down..."
   [ -n "${APP_PID:-}" ]  && kill "$APP_PID"  2>/dev/null

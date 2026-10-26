@@ -68,6 +68,7 @@ class ParsedSection:
 
 
 def heading_text(node: Tag) -> str:
+    """A heading's visible text with whitespace collapsed."""
     return _WS.sub(" ", node.get_text(" ", strip=True)).strip()
 
 
@@ -173,6 +174,7 @@ def _clean(text: str) -> str:
 
 
 def _hrefs(nodes: List[object]) -> List[str]:
+    """Every non-empty href of the <a> tags in or among `nodes`, in order."""
     out: List[str] = []
     for n in nodes:
         if not isinstance(n, Tag):

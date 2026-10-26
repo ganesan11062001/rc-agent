@@ -39,15 +39,18 @@ fails = []
 
 
 def ok(label, detail=""):
+    """Print a PASS line."""
     print("  \033[32mPASS\033[0m  %-44s %s" % (label, detail))
 
 
 def bad(label, detail=""):
+    """Print a FAIL line and remember the failure for the exit status."""
     print("  \033[31mFAIL\033[0m  %-44s %s" % (label, detail))
     fails.append(label)
 
 
 def read(name):
+    """The text of a file in the extension directory."""
     with open(os.path.join(EXT, name), encoding="utf-8") as fh:
         return fh.read()
 

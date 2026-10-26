@@ -75,6 +75,7 @@ fails = []
 
 
 def check(c, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if c else "  FAIL  ") + what)
     if not c:
         fails.append(what)
@@ -93,12 +94,14 @@ with sync_playwright() as p:
     panel = "aside#rc-copilot-panel"
 
     def load_panel():
+        """Inject the extension's content script and CSS and wait for the panel."""
         pg.add_style_tag(path=os.path.join(EXT, "content.css"))
         pg.add_script_tag(path=os.path.join(EXT, "content.js"))
         pg.wait_for_selector(panel + " .rc-go", timeout=10000)
         pg.wait_for_timeout(700)
 
     def width():
+        """The panel's rendered width in pixels."""
         return pg.evaluate("s => document.querySelector(s).getBoundingClientRect().width", panel)
 
     load_panel()

@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright
 APP, RUNS, SHOTS = sys.argv[1], sys.argv[2], sys.argv[3]
 fails = []
 def check(c, what):
+    """Print ok/FAIL for one condition and remember failures."""
     print(("  ok    " if c else "  FAIL  ") + what)
     if not c: fails.append(what)
 with sync_playwright() as p:

@@ -26,7 +26,8 @@ _open = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
 
 
 def _questions(path: Path):
-    # Avoid a PyYAML dependency: the file is a flat list of "- question: ..."
+    """The question strings from questions.yaml, read line by line to avoid a
+    PyYAML dependency: the file is a flat list of "- question: ..."."""
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -36,6 +37,7 @@ def _questions(path: Path):
 
 
 def _post(url, body, token=None, timeout=300):
+    """POST `body` as JSON without any proxy; returns the parsed JSON reply."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
         "Content-Type": "application/json",
         **({"Authorization": "Bearer " + token} if token else {})})
@@ -44,6 +46,9 @@ def _post(url, body, token=None, timeout=300):
 
 
 def main() -> int:
+    """Check TicketMate is ready, log in, and request a draft per question;
+    prints per-draft and total counts. Exits 1 if not ready, 2 if any draft
+    request failed."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--url", required=True, help="rc-copilot base URL, e.g. http://d1234:45678")
     ap.add_argument("--token-file", default=os.path.expanduser("~/.rc_copilot/token"))

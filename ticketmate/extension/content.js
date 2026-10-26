@@ -1,5 +1,6 @@
 /* Runs on ServiceNow pages. Reads the open ticket, asks the backend for a
- * draft, writes it into the work notes.
+ * draft, writes it into the work notes (or additional comments, or both:
+ * the target chosen in the panel or the popup).
  *
  * Handles all three ServiceNow UIs:
  *
@@ -52,6 +53,7 @@
     return out;
   }
 
+  /* querySelectorAll across every root searchRoots() reaches. */
   function deepQueryAll(selector) {
     const out = [];
     for (const root of searchRoots(document, [], 0)) {
@@ -62,6 +64,7 @@
     return out;
   }
 
+  /* Every visible, enabled input, textarea and contenteditable on the page. */
   function allFields() {
     return deepQueryAll("input, textarea, [contenteditable='true']").filter(function (node) {
       if (node.type === "hidden" || node.disabled) return false;
@@ -96,6 +99,7 @@
     comments: /additional\s*comments|(^|[\s|._-])comments([\s|._-]|$)/
   };
 
+  /* The field for a PATTERNS key (ticket_number, work_notes, ...), or null. */
   function findField(key) {
     const wanted = PATTERNS[key];
     if (!wanted) return null;
@@ -112,6 +116,7 @@
     return candidates.find((n) => !n.readOnly) || candidates[0] || null;
   }
 
+  /* Trimmed text of a field, whichever kind it is; "" for none. */
   function readValue(node) {
     if (!node) return "";
     if (node.isContentEditable) return (node.innerText || "").trim();
@@ -204,6 +209,8 @@
   let bootTimer = null;
   let bootSince = 0;
 
+  /* Everything put into innerHTML from the ticket or the backend goes
+     through this. */
   function escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = String(text == null ? "" : text);
@@ -223,6 +230,7 @@
   const SIZES = { third: "33.333vw", half: "50vw", wide: "66.667vw" };
   const MIN_WIDTH = 340;
 
+  /* Panel width: {px} for a dragged width, {size} for a preset. */
   function applyWidth(panel, w) {
     panel.style.width = w && w.px ? Math.round(w.px) + "px" : SIZES[(w && w.size) || "half"];
     for (const b of panel.querySelectorAll(".rc-size")) {
@@ -232,6 +240,8 @@
   function saveWidth(w) {
     try { chrome.storage.local.set({ [WIDTH_KEY]: w }); } catch (e) { /* extension reloaded */ }
   }
+  /* Preset buttons, drag-to-resize on the left edge, and double-click to reset;
+     the chosen width is restored from storage. */
   function wireWidth(panel) {
     applyWidth(panel, { size: "half" });
     try {
@@ -279,12 +289,15 @@
     comments: ["The researcher sees additional comments. The draft lands unsaved, but one wrong Update sends it.", "rc-danger"],
     both: ["The reply goes to additional comments, which the researcher sees; the analysis goes to work notes.", "rc-danger"]
   };
+  /* Who sees the draft for the chosen target, under the selector. */
   function showTargetNote(panel, value) {
     const note = panel.querySelector(".rc-target-note");
     const [text, cls] = TARGET_NOTES[value] || TARGET_NOTES.work_notes;
     note.textContent = text;
     note.className = "rc-target-note" + (cls ? " " + cls : "");
   }
+  /* Quick-instruction chips append their text to the instructions box; the
+     target selector loads from and saves to oodConfig.targetField. */
   function wireCompose(panel) {
     const notes = panel.querySelector(".rc-notes");
     for (const chip of panel.querySelectorAll(".rc-chip")) {
@@ -318,6 +331,7 @@
   function isOpen() {
     try { return sessionStorage.getItem(OPEN_KEY) === "1"; } catch (e) { return false; }
   }
+  /* Open or close the panel (remembered for this tab) and swap the button. */
   function setOpen(open) {
     try { sessionStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch (e) { /* private mode */ }
     const panel = document.getElementById(PANEL_ID);
@@ -329,6 +343,8 @@
 
   /* ---------- structure, built once ---------- */
 
+  /* Add the "Draft reply" button and the panel to the page, once (open if it
+     was open before in this tab). */
   function build() {
     if (document.getElementById(PANEL_ID)) return;
 
@@ -429,6 +445,7 @@
 
   /* ---------- status strip ---------- */
 
+  /* The status strip: state drives its colour, action is the button label. */
   function setStatus(state, title, sub, action) {
     const el = $(".rc-status");
     if (!el) return;
@@ -453,6 +470,7 @@
     return s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s";
   }
 
+  /* One progress row (model or knowledge graph) of the startup box. */
   function bootRow(name, p) {
     const state = p.failed ? "failed" : p.stage === "ready" ? "done" : "running";
     const pct = Math.max(0, Math.min(100, Number(p.pct) || 0));
@@ -469,6 +487,7 @@
     );
   }
 
+  /* The knowledge graph's startup checklist, one item per step. */
   function bootSteps(steps) {
     if (!steps || !steps.length) return "";
     return (
@@ -497,6 +516,7 @@
     return true;
   }
 
+  /* Run fn again shortly, until BOOT_GIVE_UP_MS after polling began. */
   function pollStartup(fn) {
     clearTimeout(bootTimer);
     if (!bootSince) bootSince = Date.now();
@@ -516,6 +536,9 @@
     }
   }
 
+  /* Check the session: health, then sign-in. While a fresh session is still
+     starting (or its backend not answering yet) it shows progress and polls
+     itself. Returns true once signed in. */
   async function testConnection() {
     clearTimeout(bootTimer);
     if ($(".rc-status").dataset.state !== "starting") {
@@ -580,6 +603,8 @@
 
   /* ---------- ticket section ---------- */
 
+  /* Read the ticket off the page into the text sent to the backend, noting
+     which parts were found; null if there is neither description. */
   function gatherTicket() {
     const number = readValue(findField("ticket_number"));
     const short = readValue(findField("short_description"));
@@ -600,6 +625,7 @@
     };
   }
 
+  /* The "This ticket" section: what was read, or why nothing was. */
   function renderTicket() {
     const box = $(".rc-ticket");
     if (!box) return;
@@ -637,6 +663,7 @@
 
   function resultSection() { return $(".rc-sec-result"); }
 
+  /* Replace the result section (and footer buttons) and scroll it into view. */
   function showResultHtml(html, footHtml) {
     const sec = resultSection();
     const foot = $(".rc-foot");
@@ -647,6 +674,8 @@
     sec.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
+  /* Send the ticket and instructions for a draft, with a placeholder while the
+     model works. */
   async function draft() {
     if (!lastTicket) renderTicket();
     if (!lastTicket) return;
@@ -728,10 +757,12 @@
     return out.join("\n");
   }
 
+  /* Write the draft into the chosen ServiceNow field(s) -- unsaved, the
+     engineer still clicks Update -- and show it with its confidence, caveats
+     and the collapsible detail sections. */
   async function renderResult(data) {
     const cfg = await chrome.runtime.sendMessage({ type: "GET_CONFIG" }).catch(() => null);
     const targetKey = (cfg && cfg.data && cfg.data.targetField) || "work_notes";
-    const targetName = targetKey.replace("_", " ");
 
     /* "both" splits the response: the analysis goes to work notes for the RC
        engineer, the reply goes to additional comments for the researcher.
@@ -761,7 +792,7 @@
        section whose title says what is inside, and stays open once opened. */
     let html = "";
 
-    const pretty = (k) => escapeHtml(k.replace("_", " "));
+    const pretty = (k) => escapeHtml(k.replace(/_/g, " "));
     if (wrote) {
       html += '<p class="rc-msg rc-ok"><span>Written into <b>' +
               done.map(pretty).join("</b> and <b>") +
@@ -943,6 +974,7 @@
            (openSections()[key] ? " open" : "") + '><summary class="rc-more-title">' + escapeHtml(title) +
            '</summary><div class="rc-more-body">' + body + "</div></details>";
   }
+  /* Record open/closed for every section of the result just rendered. */
   function rememberSections() {
     const panel = document.getElementById(PANEL_ID);
     for (const d of panel ? panel.querySelectorAll("details.rc-more") : []) {
@@ -954,6 +986,8 @@
     }
   }
 
+  /* The "Rate this draft" form: one chip row per feedback key, a comment, and
+     a button to capture the reply as edited in ServiceNow. */
   function feedbackHtml() {
     const row = (key, label, chips) =>
       '<div class="rc-fb-row" data-key="' + key + '"><span class="rc-fb-label">' + label + "</span>" +
@@ -972,6 +1006,8 @@
       '<p class="rc-fb-status"></p></div>';
   }
 
+  /* Chip selection (one per row, click again to clear) and Send: one FEEDBACK
+     message per chosen item, plus one for the comment and captured reply. */
   function wireFeedback(requestId, targetKey) {
     const box = $(".rc-fb");
     if (!box) return;
@@ -1034,6 +1070,7 @@
 
   /* ---------- lifecycle ---------- */
 
+  /* Re-read the ticket, and test the connection if that was never done. */
   function refresh() {
     renderTicket();
     if ($(".rc-status") && $(".rc-status").dataset.state === "idle") testConnection();
@@ -1058,6 +1095,8 @@
      top frame still shows the button, and the panel explains why nothing was
      found. Failing visibly matters more than failing tidily: a missing button
      with no error is impossible to diagnose. */
+  /* true if this frame has the ticket fields; it then tells the top frame the
+     UI is owned so the fallback below does not build a second button. */
   function claimUi() {
     let top = null;
     try { top = window.top; } catch (e) { /* cross-origin */ }
@@ -1069,6 +1108,7 @@
     return false;
   }
 
+  /* Build the UI in this frame if it is the one that should own it. */
   function mount() {
     if (topFrameOwns()) return;
     if (document.getElementById(PANEL_ID)) {
@@ -1093,6 +1133,7 @@
     }, 2500);
   }
 
+  /* The form changed (ServiceNow navigates without page loads). */
   function onPageChanged() {
     mount();
     if (isOpen()) renderTicket();

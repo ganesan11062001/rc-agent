@@ -65,6 +65,9 @@ def strip_citations(draft: Dict[str, Any]) -> Dict[str, Any]:
 
 @dataclass
 class KGContext:
+    """What retrieval produced for one ticket: the sources block for the prompt,
+    the sources and URLs citations may use, and a trace of the retrieval.
+    """
     status: str                      # "ok" | "unavailable" | "disabled"
     context: str = ""
     low_confidence: bool = False
@@ -79,6 +82,11 @@ class KGContext:
 
 def _call(path: str, body: Optional[Dict] = None, timeout: float = 10.0,
           request_id: str = "") -> Dict:
+    """Blocking JSON request to rc_kg at `path`: POST `body` if given, else GET.
+
+    Sends X-Request-ID and the rc_kg bearer token when set; bypasses the proxy.
+    Raises on network or HTTP errors.
+    """
     s = get_settings()
     req = urllib.request.Request(
         s.rc_kg_url.rstrip("/") + path,
@@ -100,6 +108,7 @@ async def _acall(path: str, body: Optional[Dict] = None,
 
 
 def _why(exc: Exception) -> str:
+    """A short reason for a failed rc_kg call, with rc_kg's own detail when it sent one."""
     if isinstance(exc, urllib.error.HTTPError):
         try:
             return "HTTP %d: %s" % (exc.code, json.loads(exc.read()).get("detail"))
@@ -123,6 +132,7 @@ async def similarity(query: str, texts: List[str], request_id: str = "") -> Opti
 
 
 def _version_problem(h: Dict[str, Any]) -> Optional[str]:
+    """Why rc_kg's /health answer `h` is the wrong API major version, or None if it is fine."""
     got = str(h.get("api_version") or "")
     if got.split(".")[0] != EXPECTED_API_MAJOR:
         return ("rc_kg API version %s, but this TicketMate needs %s.x"
@@ -151,6 +161,10 @@ def _source_summary(src: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def retrieve(ticket_text: str, request_id: str = "") -> KGContext:
+    """Ask rc_kg for the sources most relevant to `ticket_text`, as a traced run.
+
+    Never raises: when rc_kg is off, down or incompatible the KGContext says so.
+    """
     s = get_settings()
     with tracing.run("rc_kg.retrieve", "retriever", inputs={"query": ticket_text},
                      metadata={"k": s.rc_kg_k, "rc_kg_url": s.rc_kg_url}) as rrun:
@@ -166,6 +180,9 @@ _STAGES = [("embed", "rc_kg.embed_query", "embedding"), ("vector", "rc_kg.vector
 
 
 def _record_retrieval(rrun, kg: "KGContext") -> None:
+    """Fill in the retrieval run `rrun` from `kg`, plus derived child runs for
+    rc_kg's own stage timings when it reports them.
+    """
     if kg.status != "ok":
         rrun.end({"status": kg.status}, error=None if kg.status == "disabled" else kg.detail)
         return
@@ -191,12 +208,14 @@ def _record_retrieval(rrun, kg: "KGContext") -> None:
 
 
 async def _retrieve(ticket_text: str, request_id: str = "") -> KGContext:
+    """Check rc_kg's API version, then POST /retrieve for the ticket text."""
     s = get_settings()
     if not s.rc_kg_url:
         return KGContext(status="disabled", trace={"status": "disabled"})
     t0 = time.perf_counter()
 
     def failed(detail: str) -> KGContext:
+        """An 'unavailable' KGContext carrying `detail` and how long we waited."""
         return KGContext(status="unavailable", detail=detail, trace={
             "status": "unavailable", "detail": detail, "rc_kg_url": s.rc_kg_url,
             "latency_ms": int((time.perf_counter() - t0) * 1000), "rc_kg": dict(_version)})
@@ -252,6 +271,7 @@ async def health() -> Tuple[str, Optional[str]]:
 
 
 def _title(src: Dict[str, Any]) -> str:
+    """The reference title for a source: page title, plus the heading when it adds anything."""
     # Some headings end in ":" ("Solution:"), and the title is followed by one.
     heading = src["heading"].rstrip(": ")
     if heading in ("Overview", src["page_title"]):
@@ -280,6 +300,10 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str 
 
 async def _apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = ""
                            ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, Any]]:
+    """Send every draft field to rc_kg's /cite in one call and rebuild the draft
+    from its answer: numbered markers, References block, Sources step, and
+    caveats for unsupported citations and removed URLs.
+    """
     t0 = time.perf_counter()
     steps = list(draft["suggested_steps"])
     caveats = list(draft["caveats"])

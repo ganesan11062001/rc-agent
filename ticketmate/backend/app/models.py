@@ -94,6 +94,7 @@ class DraftResponse(LLMDraft):
     def from_llm_draft(
         cls, draft: LLMDraft, model: str, latency_ms: int
     ) -> "DraftResponse":
+        """Wrap the model's draft as a response, deriving confidence_label server-side."""
         return cls(
             **draft.model_dump(),
             confidence_label=confidence_label(draft.confidence),
@@ -118,21 +119,25 @@ class FeedbackRequest(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
+    """What /api/feedback returns: the stored feedback's id and its draft's request_id."""
     feedback_id: str
     request_id: str
 
 
 class LoginRequest(BaseModel):
+    """What the frontend POSTs to /api/login: the access token printed at startup."""
     access_token: str = Field(..., min_length=1, max_length=512)
 
 
 class LoginResponse(BaseModel):
+    """What /api/login returns: a session token for the Authorization header."""
     session_token: str
     expires_at: int  # unix seconds, enforced server-side
     session_hours: float
 
 
 class HealthResponse(BaseModel):
+    """What /api/health returns: model server, knowledge graph and startup status."""
     status: str  # "ok" | "unreachable"
     auth_required: bool = True
     vllm_base_url: str

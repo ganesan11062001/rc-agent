@@ -1,5 +1,8 @@
 ---
 <%-
+  # Turns the form choices (form.yml) into the sbatch options for an RC Copilot
+  # session: GPU layout per model, memory, CPUs and a capped wall time.
+  #
   hours  = bc_num_hours.to_i
   part   = partition.to_s
   layout = gpu_layout.to_s

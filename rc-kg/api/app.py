@@ -8,6 +8,8 @@ RC context.
                    any invented URL removed. Stateless: send back the
                    `sources`/`allowed_urls` /retrieve gave you. Accepts one
                    `text` or several `texts` sharing one citation numbering.
+  POST /similarity query vs texts -> cosine scores from the local embedding
+                   model (for clients' answer-relevance checks).
   POST /answer     retrieve + LLM + cite in one call, if LLM_BASE_URL is set.
   GET  /health     never needs the token; "loading" until the graph and the
                    embedding model are both ready.
@@ -84,6 +86,8 @@ def _progress(step: str, status: str, detail: str = "") -> None:
 
 
 def _graph_ready() -> bool:
+    """True once Neo4j answers and has at least one embedded Section; any
+    connection or query error counts as not ready yet."""
     try:
         d = driver()
         d.verify_connectivity()
@@ -136,6 +140,7 @@ def _warm() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI lifespan: start warm-up in a background thread and serve at once."""
     # In a thread: the port opens immediately and /health reports "loading",
     # rather than the client seeing connection refused for ~20 s.
     _progress("api_start", "done", "API listening")
@@ -152,6 +157,8 @@ app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
 
 def require_token(authorization: Optional[str] = Header(None)) -> None:
+    """Dependency: reject with 401 unless the bearer token matches
+    RC_KG_API_TOKEN. No token configured means no check (local dev)."""
     token = get_settings().rc_kg_api_token
     if not token:
         return
@@ -161,12 +168,15 @@ def require_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 def require_ready() -> None:
+    """Dependency: 503 until warm-up has finished (or with its error if it failed)."""
     if not _ready.is_set():
         raise HTTPException(503, "rc-kg is still loading" if not _warm_error
                             else "rc-kg failed to start: %s" % _warm_error[0])
 
 
 class RetrieveRequest(BaseModel):
+    """Body of POST /retrieve. `include_events` None leaves the event-post
+    decision to retrieval."""
     query: str = Field(..., max_length=50_000, description="Ticket text or a question")
     k: int = Field(6, ge=1, le=20)
     include_events: Optional[bool] = None
@@ -176,6 +186,8 @@ _STYLE = "^(markdown|plain|numbered)$"
 
 
 class CiteRequest(BaseModel):
+    """Body of POST /cite: exactly one of `text`/`texts`, plus the `refs` and
+    `allowed_urls` an earlier /retrieve returned."""
     text: Optional[str] = None
     texts: Optional[List[str]] = None
     refs: Dict[str, str] = Field(..., description='{"S1": url_with_anchor, ...}')
@@ -187,11 +199,13 @@ class CiteRequest(BaseModel):
 
 
 class SimilarityRequest(BaseModel):
+    """Body of POST /similarity: one query and up to 20 texts to score against it."""
     query: str = Field(..., min_length=1, max_length=50_000)
     texts: List[str] = Field(..., min_length=1, max_length=20)
 
 
 class AnswerRequest(RetrieveRequest):
+    """Body of POST /answer: a /retrieve body plus the citation style."""
     style: str = Field("markdown", pattern=_STYLE)
 
 
@@ -209,6 +223,8 @@ Northeastern's partitions, paths and limits are only what the sources say.
 
 
 def _snapshot() -> Optional[Dict]:
+    """Build info from the snapshot manifest (RC_KG_MANIFEST) -- build time,
+    commit, eval, variant, sites -- or None if unset or unreadable."""
     path = get_settings().rc_kg_manifest
     if not path:
         return None
@@ -225,6 +241,9 @@ def _snapshot() -> Optional[Dict]:
 
 @app.get("/health")
 def health() -> Dict:
+    """GET /health: "loading"/"failed" until warm-up is done, then "ok" with
+    section counts, the embedding model, snapshot info and whether an LLM is
+    configured. Needs no token."""
     s = get_settings()
     if not _ready.is_set():
         return {"status": "failed" if _warm_error else "loading",
@@ -244,6 +263,9 @@ def health() -> Dict:
 @app.post("/retrieve", dependencies=[Depends(require_token), Depends(require_ready)])
 def retrieve_endpoint(req: RetrieveRequest,
                       x_request_id: Optional[str] = Header(None)) -> Dict:
+    """POST /retrieve: the RetrievalResult as JSON (sources, context,
+    allowed_urls, trace...), with request id, API version and snapshot added
+    to the trace. 400 if retrieval rejects the query."""
     try:
         res = retrieve(req.query, k=req.k, include_events=req.include_events)
     except ValueError as exc:
@@ -258,6 +280,10 @@ def retrieve_endpoint(req: RetrieveRequest,
 
 @app.post("/cite", dependencies=[Depends(require_token)])
 def cite_endpoint(req: CiteRequest, x_request_id: Optional[str] = Header(None)) -> Dict:
+    """POST /cite: the text(s) with [S#] markers turned into links and
+    disallowed URLs removed, plus cited/removed/unknown lists, optional
+    per-citation support verdicts, and a trace. Returns `text` when one text
+    was sent, `texts` when several were."""
     t0 = time.perf_counter()
     if (req.text is None) == (req.texts is None):
         raise HTTPException(422, "send exactly one of `text` or `texts`")
@@ -298,6 +324,8 @@ def similarity_endpoint(req: SimilarityRequest, x_request_id: Optional[str] = He
 
 
 def _chat(messages: List[Dict]) -> str:
+    """One OpenAI-compatible chat completion against LLM_BASE_URL; returns the
+    reply text. 503 if no LLM is configured."""
     s = get_settings()
     if not s.llm_base_url:
         raise HTTPException(503, "LLM_BASE_URL is not set; use /retrieve and your own model")
@@ -314,6 +342,9 @@ def _chat(messages: List[Dict]) -> str:
 
 @app.post("/answer", dependencies=[Depends(require_token), Depends(require_ready)])
 def answer_endpoint(req: AnswerRequest) -> Dict:
+    """POST /answer: retrieve, ask the configured LLM to answer from the
+    sources, and cite. Returns the linked answer, citation bookkeeping,
+    low_confidence and a short list of the sources."""
     res = retrieve(req.query, k=req.k, include_events=req.include_events)
     if not res.sources:
         return {"answer": "No RC website content matched this question.", "sources": []}

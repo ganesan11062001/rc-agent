@@ -39,6 +39,8 @@ _URL = re.compile(r"https?://\S+")
 
 
 def _texts(raw: str) -> Optional[List[str]]:
+    """The cited fields of a raw model reply (draft, summary, steps, caveats),
+    from the outermost {...} in it; None if that is not valid JSON."""
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1
         d = json.loads(raw[start:end])
@@ -49,6 +51,9 @@ def _texts(raw: str) -> Optional[List[str]]:
 
 
 def review(run_dir: Path, out_csv: Path, only: str = "") -> Dict:
+    """Run the support check over every run log under `run_dir` (directories
+    starting with `only`, if given), write one CSV row per citation to
+    `out_csv` (mode 600), and return the aggregate counts and rates."""
     stats: Counter = Counter()
     verdicts: Counter = Counter()
     rows = []
@@ -110,6 +115,7 @@ def review(run_dir: Path, out_csv: Path, only: str = "") -> Dict:
 
 
 def main() -> int:
+    """CLI entry point: review the run directory and print the summary as JSON."""
     default = Path("/scratch") / os.environ.get("USER", "unknown") / "rc_copilot_runs"
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("run_dir", nargs="?", default=str(default))

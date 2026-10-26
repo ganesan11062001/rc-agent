@@ -13,8 +13,10 @@ TM_ROOT="$(cd "$HERE/../.." && pwd)"
 RC_KG_ROOT="${RC_KG_ROOT:-$(cd "$TM_ROOT/../rc-kg" && pwd)}"
 PY=python3
 WORK="$(mktemp -d)"; PIDS=()
+# Stop every process this test started and remove its work dir.
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
+# A loopback port that is free right now.
 free() { $PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 
 export RC_KG_API_TOKEN="slow-$$" RC_KG_PROGRESS_DIR="$WORK/kg_progress" VLLM_LOG_FILE="$WORK/vllm.log"

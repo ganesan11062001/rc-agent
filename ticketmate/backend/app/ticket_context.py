@@ -84,6 +84,9 @@ QUERY_MAX_CHARS = 1500
 
 @dataclass
 class Entry:
+    """One activity-stream entry: its ServiceNow kind, time, author, body and the
+    author's role once identified.
+    """
     kind: str                       # as ServiceNow labels it
     when: Optional[datetime]
     author: str
@@ -91,6 +94,7 @@ class Entry:
     role: str = ""                  # "RC staff" | "researcher" | "" (unknown)
 
     def render(self) -> str:
+        """The entry as the model reads it: "[date] author, role (label):" then the body."""
         when = self.when.strftime("%Y-%m-%d %H:%M") if self.when else "?"
         k = self.kind.lower()
         if k.startswith("additional comments"):
@@ -114,6 +118,9 @@ class Prepared:
 
 
 def _strip_addresses(lines: List[str], stats: Dict[str, int]) -> List[str]:
+    """Drop To:/Cc:/From: lines and bare address lists, counting the addresses
+    removed in `stats`.
+    """
     out = []
     for line in lines:
         m = _ADDRESS_HEADER.match(line)
@@ -152,6 +159,9 @@ def _clean_text(text: str, stats: Dict[str, int]) -> str:
 
 
 def _field_changes(body: str) -> str:
+    """A "Field changes" body (field name / "new was old" line pairs) as one line,
+    "Field: old -> new; ...", capped at 300 characters.
+    """
     lines = [l.strip() for l in body.splitlines() if l.strip()]
     pairs, i = [], 0
     while i < len(lines):
@@ -164,6 +174,7 @@ def _field_changes(body: str) -> str:
 
 
 def _subject(body: str) -> str:
+    """The Subject of an "Email received" entry, or '' if it has none."""
     lines = [l.strip() for l in body.splitlines()]
     for i, l in enumerate(lines):
         if l.lower() == "subject:" and i + 1 < len(lines):

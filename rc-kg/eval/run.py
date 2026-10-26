@@ -47,9 +47,9 @@ def evaluate(k: int = 5, sites=None) -> Dict:
         rank = next((i for i, p in enumerate(pages, 1) if p in expected), None)
         rows.append({"question": q["question"], "rank": rank, "top": pages[:3],
                      "low_confidence": res.low_confidence})
-    n = len(rows)
+    n = len(rows) or 1          # --sites can leave no questions; report zeros, don't divide by 0
     return {
-        "questions": n,
+        "questions": len(rows),
         "hit@1": sum(1 for r in rows if r["rank"] == 1) / n,
         "hit@%d" % k: sum(1 for r in rows if r["rank"]) / n,
         "mrr": sum(1.0 / r["rank"] for r in rows if r["rank"]) / n,
@@ -59,6 +59,8 @@ def evaluate(k: int = 5, sites=None) -> Dict:
 
 
 def main() -> int:
+    """CLI entry point: print misses (or every question) and the summary;
+    exit 1 if hit@k is below --min-hit."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--all", action="store_true", help="print every question")

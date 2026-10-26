@@ -23,6 +23,7 @@ NEO4J_HOME="$(echo "$ROOT"/vendor/neo4j-community-*)"
 DATA_DIR="${RC_KG_DATA_DIR:-/tmp/rc_kg_neo4j}"
 CONF="$NEO4J_HOME/conf/neo4j.conf"
 
+# Print an error and stop.
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 [ -d "$NEO4J_HOME" ] || die "Neo4j not found under $ROOT/vendor. Run scripts/install_neo4j.sh"

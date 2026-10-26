@@ -32,14 +32,17 @@ from typing import Callable, Dict, List, Sequence, Tuple
 
 
 def verdicts(retrieved_pages: Sequence[str], expected: set) -> List[int]:
+    """1/0 relevance per retrieved page, in rank order."""
     return [1 if p in expected else 0 for p in retrieved_pages]
 
 
 def hit_at(v: Sequence[int], k: int) -> float:
+    """1.0 if any of the first `k` verdicts is relevant, else 0.0."""
     return 1.0 if any(v[:k]) else 0.0
 
 
 def reciprocal_rank(v: Sequence[int]) -> float:
+    """1 / rank of the first relevant verdict, 0.0 if there is none."""
     for i, x in enumerate(v, 1):
         if x:
             return 1.0 / i
@@ -65,11 +68,13 @@ def context_precision(v: Sequence[int]) -> float:
 
 
 def id_context_precision(retrieved_ids: Sequence[str], reference_ids: Sequence[str]) -> float:
+    """RAGAS IDBasedContextPrecision; NaN when nothing was retrieved."""
     r, ref = {str(x) for x in retrieved_ids}, {str(x) for x in reference_ids}
     return len(r & ref) / len(r) if r else float("nan")
 
 
 def id_context_recall(retrieved_ids: Sequence[str], reference_ids: Sequence[str]) -> float:
+    """RAGAS IDBasedContextRecall; NaN when there are no reference ids."""
     r, ref = {str(x) for x in retrieved_ids}, {str(x) for x in reference_ids}
     return len(r & ref) / len(ref) if ref else float("nan")
 
@@ -90,6 +95,8 @@ def bootstrap_ci(values: Sequence[float], stat: Callable[[Sequence[float]], floa
 
 
 def per_query(retrieved_pages: Sequence[str], expected: Sequence[str], k: int) -> Dict[str, float]:
+    """Every metric for one query, on the top `k` retrieved pages (so mrr
+    here is MRR@k)."""
     exp = set(expected)
     v = verdicts(retrieved_pages[:k], exp)
     return {

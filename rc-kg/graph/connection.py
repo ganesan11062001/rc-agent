@@ -13,6 +13,8 @@ _driver: Optional[Driver] = None
 
 
 def driver() -> Driver:
+    """The shared Neo4j driver, created and connectivity-checked on first call.
+    Raises if NEO4J_PASSWORD is not set."""
     global _driver
     if _driver is None:
         s = get_settings()
@@ -28,6 +30,7 @@ def driver() -> Driver:
 
 
 def close() -> None:
+    """Close the shared driver, if open; the next driver() call reconnects."""
     global _driver
     if _driver is not None:
         _driver.close()

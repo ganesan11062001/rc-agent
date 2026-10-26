@@ -54,7 +54,7 @@ _NOT_USER_SUFFIXES = {
     "sh", "py", "out", "err", "txt", "log", "md", "csv", "tsv", "json", "yaml", "yml",
     "edu", "com", "org", "net", "html", "htm", "pdf", "png", "jpg", "sbatch", "slurm",
     "r", "m", "c", "h", "cpp", "ipynb", "gz", "tar", "zip", "so", "sif", "conf", "cfg",
-    "ini", "env", "e", "g", "x", "lock", "bashrc", "sif", "img", "mat", "nc", "h5", "hdf5",
+    "ini", "env", "e", "g", "x", "lock", "bashrc", "img", "mat", "nc", "h5", "hdf5",
 }
 _NOT_GROUPS = {"the", "your", "my", "our", "their", "this", "that", "research", "user", "users",
                "unix", "linux", "slurm", "access", "a", "an", "same", "new", "following", "group",
@@ -98,12 +98,14 @@ class Lookup:
     ms: int = 0
 
     def to_dict(self) -> Dict[str, object]:
+        """The lookup as a JSON-ready dict (also the shape of models.ClusterLookup)."""
         return {"kind": self.kind, "target": self.target, "command": self.command, "ok": self.ok,
                 "summary": self.summary, "output": self.output, "ms": self.ms}
 
 
 @dataclass
 class Candidates:
+    """The validated lookup targets found in one ticket, by kind, each list capped."""
     users: List[str] = field(default_factory=list)
     jobs: List[str] = field(default_factory=list)
     groups: List[str] = field(default_factory=list)
@@ -117,8 +119,9 @@ def _first(seen: List[str], value: str, pattern: "re.Pattern[str]", limit: int) 
 
 
 def find_candidates(ticket_text: str) -> Candidates:
-    """Usernames, job IDs and group names the ticket mentions, in order of
-    appearance, each already validated against its strict pattern."""
+    """Usernames, job IDs, and group, node and partition names the ticket
+    mentions, in order of appearance, each already validated against its
+    strict pattern."""
     c = Candidates()
     for m in _USER_CANDIDATE.finditer(ticket_text):
         token = m.group(1)
@@ -175,6 +178,7 @@ async def _run(argv: List[str], timeout: float) -> "tuple[Optional[int], str, in
 
 
 async def _user(name: str, timeout: float) -> Lookup:
+    """`id <name>`: whether the account exists and which groups it is in."""
     argv = ["id", name]
     rc, out, ms = await _run(argv, timeout)
     if rc == 0:
@@ -191,6 +195,7 @@ _SACCT_FIELDS = "JobID,JobName%30,User,Account,Partition,State,ExitCode,Elapsed,
 
 
 async def _job(job_id: str, timeout: float) -> Lookup:
+    """`sacct -j <id>`: the job's state, exit code, run time, memory and nodes."""
     argv = ["sacct", "-j", job_id, "--parsable2", "--format=" + _SACCT_FIELDS]
     rc, out, ms = await _run(argv, timeout)
     shown = "sacct -j %s" % job_id
@@ -219,6 +224,7 @@ def _human(value: str) -> str:
 
 
 def _mem_bytes(value: str) -> float:
+    """A sacct memory value ("62489320K") in bytes; 0.0 if it does not parse."""
     m = re.fullmatch(r"([\d.]+)([KMGT]?)", value or "")
     if not m:
         return 0.0
@@ -227,6 +233,9 @@ def _mem_bytes(value: str) -> float:
 
 
 async def _group(name: str, users: List[str], timeout: float) -> Lookup:
+    """`getent group <name>`: member count, and which of the ticket's known users
+    are or are not listed in it.
+    """
     argv = ["getent", "group", name]
     rc, out, ms = await _run(argv, timeout)
     if rc != 0 or not out:
@@ -251,6 +260,7 @@ _NODE_FIELDS = ("NodeName", "State", "Partitions", "Gres", "CPUAlloc", "CPUTot",
 
 
 async def _node(name: str, timeout: float) -> Lookup:
+    """`scontrol show node <name>`: state, partitions and reason, trimmed to _NODE_FIELDS."""
     argv = ["scontrol", "show", "node", name]
     rc, out, ms = await _run(argv, timeout)
     if rc != 0 or "NodeName=" not in out:
@@ -267,6 +277,9 @@ async def _node(name: str, timeout: float) -> Lookup:
 
 
 async def _partition(name: str, timeout: float) -> Lookup:
+    """`sinfo -N -p <name>`: node counts by state, plus the nodes that are down or
+    draining with Slurm's reason.
+    """
     argv = ["sinfo", "-h", "-N", "-p", name, "-o", "%N|%T|%E"]
     rc, out, ms = await _run(argv, timeout)
     shown = "sinfo -N -p %s" % name

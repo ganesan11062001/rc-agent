@@ -16,8 +16,9 @@ Three kinds, each recorded as feedback on the draft's trace:
              model that wrote the draft, so treat its scores as a trend
              signal, not ground truth; people's feedback is the ground truth.
 
-Direction matters: for `hallucination` and `hallucinated_urls` lower is
-better; for everything else higher is better. Each record says which.
+Direction matters: for `hallucination`, `hallucinated_urls`,
+`unsupported_citation_rate` and `reply_words` lower is better; for everything
+else higher is better (see lower_is_better). Each llm_judge record says which.
 """
 
 import asyncio
@@ -60,6 +61,12 @@ def _sentences(text: str) -> int:
 
 def assertions(response: Dict[str, Any], ticket_text: str, kg_status: str, kg_low_confidence: bool,
                cite_trace: Optional[Dict[str, Any]], instructed: bool = False) -> Dict[str, bool]:
+    """Code checks of the system prompt's rules and of the draft's structure.
+
+    Returns {assert_*: passed}. `cite_trace` is apply_citations' trace (None
+    when there was no grounding); `instructed` means the engineer gave
+    instructions, which turns off the must-cite check.
+    """
     reply = response.get("draft_response") or ""
     caveats = response.get("caveats") or []
     allowed_ids = {m.upper() for m in _TICKET_ID.findall(ticket_text)}
@@ -86,6 +93,9 @@ def assertions(response: Dict[str, Any], ticket_text: str, kg_status: str, kg_lo
 
 
 def metrics(response: Dict[str, Any], cite_trace: Optional[Dict[str, Any]]) -> Dict[str, float]:
+    """LLM-free measures of the draft: reply length, conciseness, invented URLs and,
+    when citations were checked, the share of unsupported ones.
+    """
     body = _reply_body(response.get("draft_response") or "")
     words = len(body.split())
     span = CONCISE_LIMIT_WORDS - CONCISE_TARGET_WORDS
@@ -109,6 +119,7 @@ async def answer_relevance(ticket_text: str, reply: str, request_id: str) -> Opt
 
 
 def lower_is_better(key: str) -> bool:
+    """Whether a smaller score is better for this feedback key."""
     return key in ("hallucination", "hallucinated_urls", "unsupported_citation_rate", "reply_words")
 
 
@@ -136,6 +147,7 @@ given the sources? 1 = yes; 0.5 = partly or with a gap; 0 = no or wrong.
 
 
 def _judge_user(ticket: str, context: str, draft: Dict[str, Any]) -> str:
+    """The judge's user message: ticket, sources, reply body and suggested steps."""
     steps = "\n".join("- " + s for s in draft.get("suggested_steps") or [])
     return ("--- TICKET ---\n%s\n\n--- SOURCES ---\n%s\n\n--- DRAFT REPLY ---\n%s\n\n--- SUGGESTED STEPS ---\n%s\n\n"
             "Return the JSON object only." % (ticket.strip(), context.strip() or "(none)",
@@ -143,6 +155,7 @@ def _judge_user(ticket: str, context: str, draft: Dict[str, Any]) -> str:
 
 
 def _clip01(x: Any) -> Optional[float]:
+    """`x` as a float clamped to [0, 1], or None if it is not a number."""
     try:
         return max(0.0, min(1.0, float(x)))
     except (TypeError, ValueError):
@@ -184,16 +197,22 @@ async def judge_and_record(request_id: str, ticket_text: str, kg_context: str, d
         runlog.add_feedback(request_id, {"key": key, "score": score, "source": "llm_judge",
                                          "comment": comment, "lower_is_better": lower_is_better(key),
                                          "metadata": meta})
+    # The judge may answer with a JSON list or nothing usable; the loop above
+    # already skipped it, and the log line must not crash the background task.
+    scores = verdict if isinstance(verdict, dict) else {}
     logger.info("judge ok | id=%s %s", request_id,
-                " ".join("%s=%s" % (k, (verdict.get(k) or {}).get("score")) for k in
+                " ".join("%s=%s" % (k, scores[k].get("score")) for k in
                          ("hallucination", "correctness", "conciseness", "answer_relevance")
-                         if isinstance(verdict.get(k), dict)))
+                         if isinstance(scores.get(k), dict)))
 
 
 _tasks: set = set()
 
 
 def schedule_judge(request_id: str, ticket_text: str, kg_context: str, draft: Dict[str, Any]) -> bool:
+    """Start the LLM judge for this draft as a background task, if online
+    evaluation is on and this draft is sampled. Returns whether it was started.
+    """
     settings = get_settings()
     if not settings.online_eval or random.random() >= settings.online_eval_sample_rate:
         return False

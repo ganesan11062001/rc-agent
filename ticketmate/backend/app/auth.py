@@ -38,6 +38,7 @@ def access_token() -> str:
 
 
 def _key() -> str:
+    """The per-process HMAC signing key for sessions, generated on first use."""
     global _signing_key
     if _signing_key is None:
         _signing_key = secrets.token_urlsafe(32)
@@ -60,6 +61,7 @@ def mint_session() -> Tuple[str, int]:
 
 
 def verify_session(token: str) -> bool:
+    """Whether `token` is a session this process signed and it has not expired."""
     try:
         expiry_str, signature = token.split(".", 1)
         expires_at = int(expiry_str)

@@ -44,12 +44,14 @@ def _now() -> str:
 
 
 class Run:
+    """One step in a trace: a LangSmith-style run with timing, status, inputs and outputs."""
     __slots__ = ("trace", "id", "parent_id", "name", "run_type", "start_time", "end_time",
                  "latency_ms", "status", "error", "inputs", "outputs", "metadata", "tags",
                  "usage", "_t0")
 
     def __init__(self, trace: "Trace", name: str, run_type: str, parent_id: Optional[str],
                  inputs=None, metadata=None, tags=None):
+        """Start a running run under `parent_id` (None for the root)."""
         assert run_type in RUN_TYPES, run_type
         self.trace, self.name, self.run_type, self.parent_id = trace, name, run_type, parent_id
         self.id = uuid.uuid4().hex
@@ -60,6 +62,7 @@ class Run:
         self.metadata, self.tags = dict(metadata or {}), list(tags or [])
 
     def end(self, outputs: Optional[Dict] = None, error: Optional[str] = None) -> None:
+        """Mark the run finished, merging in `outputs`. Only the first call counts."""
         if self.end_time is not None:
             return
         self.outputs.update(outputs or {})
@@ -69,11 +72,14 @@ class Run:
         self.error = error
 
     def to_dict(self) -> Dict[str, Any]:
+        """The run as a JSON-ready dict (everything but the back-reference and timer)."""
         return {k: getattr(self, k) for k in self.__slots__ if k not in ("trace", "_t0")}
 
 
 class Trace:
+    """One draft's run tree and its feedback; the root run becomes the current run."""
     def __init__(self, name: str, inputs: Dict, metadata: Dict, tags: List[str], trace_id: str = ""):
+        """Create the root `chain` run and make it the current run for this context."""
         self.id = trace_id or uuid.uuid4().hex
         self.runs: List[Run] = []
         self.feedback: List[Dict[str, Any]] = []
@@ -87,11 +93,15 @@ class Trace:
 
     def add_feedback(self, key: str, score: Any, comment: str = "", source: str = "auto",
                      run_id: Optional[str] = None) -> None:
+        """Attach a score under `key` to a run (the root by default)."""
         self.feedback.append({"id": uuid.uuid4().hex, "run_id": run_id or self.root.id, "key": key,
                               "score": score, "comment": comment, "source": source,
                               "created_at": _now()})
 
     def finish(self, outputs: Optional[Dict] = None, error: Optional[str] = None) -> None:
+        """End the root run, closing any runs an exception left open, and restore the
+        previous current run.
+        """
         for r in self.runs:                       # a run left open by an exception
             if r is not self.root and r.end_time is None:
                 r.end(error=error or "did not finish")
@@ -102,6 +112,7 @@ class Trace:
             pass                                  # finished from another context
 
     def to_dict(self) -> Dict[str, Any]:
+        """The whole trace as a JSON-ready dict: runs and feedback."""
         return {"trace_id": self.id, "root_run_id": self.root.id,
                 "runs": [r.to_dict() for r in self.runs], "feedback": self.feedback}
 

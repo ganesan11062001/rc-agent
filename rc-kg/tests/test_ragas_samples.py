@@ -39,6 +39,7 @@ Use #SBATCH --mem=3G.
 
 
 def _write(tmp, name, prompt, draft):
+    """Write one fake TicketMate run log at tmp/name/r.json."""
     d = tmp / name
     d.mkdir(parents=True)
     (d / "r.json").write_text(json.dumps({

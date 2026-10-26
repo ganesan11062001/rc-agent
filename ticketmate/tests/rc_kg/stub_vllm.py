@@ -8,6 +8,9 @@ invented URL, which must be removed.
 import json, os, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 class H(BaseHTTPRequestHandler):
+    """OpenAI-compatible handler: /v1/models, /tokenize, the LLM judge, and the
+    fixed drafts described above.
+    """
     def _send(self, obj):
         out = json.dumps(obj).encode()
         self.send_response(200); self.send_header("content-type", "application/json")
@@ -48,7 +51,10 @@ class H(BaseHTTPRequestHandler):
         import re
         src = dict(re.findall(r"^\[(S\d+)\] (.+)$", user, re.M))
         oom = next((r for r, t in src.items() if "Out of Memory" in t), "S1")
-        wrong = next((r for r, t in src.items() if t.startswith("Partitions")), "S5")
+        # Both OOM citations are meant to be correct, so choose them by what the
+        # source is, never by position: a fallback to "S5" passed only while the
+        # fifth source happened to be a page the support check accepted.
+        solution = next((r for r, t in src.items() if "Solution" in t), oom)
         ticket = user.split("--- BEGIN TICKET TEXT ---", 1)[-1].split("--- END TICKET TEXT ---", 1)[0]
         if "pending" in ticket:
             part = next((r for r, t in src.items() if t.startswith("Partitions")), "S1")
@@ -70,11 +76,11 @@ class H(BaseHTTPRequestHandler):
         draft = {
             "problem_summary": "The job exceeded its memory request and was OOM-killed [%s]." % oom,
             "suggested_steps": ["Raise the memory request with --mem and resubmit [%s]" % oom,
-                                "Check the job's peak memory usage with seff [%s]" % wrong],
+                                "Check the job's peak memory usage with seff [%s]" % solution],
             "confidence": 0.85, "caveats": ["Job ID not confirmed."],
             "draft_response": ("Hi,\n\nYour job ran out of memory and was killed [%s]. You can check its "
                                "peak memory use with seff [%s]; see https://rc.northeastern.edu/made-up-oom-guide/ "
-                               "too.\n\nBest regards,\nResearch Computing") % (oom, wrong),
+                               "too.\n\nBest regards,\nResearch Computing") % (oom, oom),
         }
         out = json.dumps(draft)
         self._send({"id": "x", "object": "chat.completion", "model": "stub-model",

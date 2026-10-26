@@ -61,6 +61,7 @@ KG_STEPS = [
 
 
 def _read(path: str, limit: int = 4_000_000) -> str:
+    """The first `limit` bytes of a file as text; '' if it cannot be read."""
     try:
         with open(path, "rb") as fh:
             return fh.read(limit).decode("utf-8", "replace")
@@ -69,6 +70,11 @@ def _read(path: str, limit: int = 4_000_000) -> str:
 
 
 def vllm_progress(log_path: Optional[str], reachable: bool) -> Dict[str, Any]:
+    """vLLM's startup progress from its log: stage, label, bar percentage, detail
+    and whether it failed. `reachable` means the API already answers (ready).
+
+    Updates the module's high-water mark so the bar never moves backwards.
+    """
     global _high_water
     if reachable:
         return {"stage": "ready", "label": "Ready", "pct": 100, "detail": None, "failed": False}
@@ -119,6 +125,9 @@ def vllm_progress(log_path: Optional[str], reachable: bool) -> Dict[str, Any]:
 
 
 def kg_progress(progress_dir: Optional[str], kg_state: str, kg_detail: Optional[str]) -> Dict[str, Any]:
+    """rc_kg's startup progress from its per-step JSON files in `progress_dir`,
+    given what its /health said (`kg_state`, `kg_detail`).
+    """
     if kg_state == "ok":
         return {"stage": "ready", "label": "Ready", "pct": 100, "detail": kg_detail, "failed": False, "steps": []}
     if kg_state == "disabled":
@@ -145,6 +154,9 @@ def kg_progress(progress_dir: Optional[str], kg_state: str, kg_detail: Optional[
 
 
 def startup(vllm_reachable: bool, kg_state: str, kg_detail: Optional[str]) -> Dict[str, Any]:
+    """The `startup` field of /api/health: vLLM and rc_kg progress, overall
+    readiness and seconds since the backend started.
+    """
     v = vllm_progress(os.environ.get("VLLM_LOG_FILE"), vllm_reachable)
     k = kg_progress(os.environ.get("RC_KG_PROGRESS_DIR"), kg_state, kg_detail)
     return {

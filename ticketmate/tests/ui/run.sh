@@ -14,8 +14,10 @@ PW_PYTHON="${PW_PYTHON:-/scratch/$USER/pw_venv/bin/python}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/scratch/$USER/pw_browsers}"
 [ -x "$PW_PYTHON" ] || { echo "no Playwright python at $PW_PYTHON (see header)" >&2; exit 2; }
 SHOTS="${SHOTS:-/tmp}"; WORK="$(mktemp -d)"; chmod 700 "$WORK"; PIDS=()
+# Stop every process this test started and remove its work dir.
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
+# A loopback port that is free right now.
 free() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 KGP=$(free); VP=$(free); AP=$(free); mkdir -m 700 "$WORK/runs"
 export RC_KG_API_TOKEN="ui-$$"

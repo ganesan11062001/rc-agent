@@ -45,6 +45,12 @@ DEFAULT_DIR = Path(os.environ.get("RUN_LOG_DIR") or "/scratch/%s/rc_copilot_runs
 
 
 def load(run_dir: Path, since: str = "", ticket: str = ""):
+    """Every run log under `run_dir`, oldest first, each with `_path` and `_feedback`
+    (the trace's own feedback plus its .feedback.jsonl beside it).
+
+    `since` keeps logs at or after that ISO time; `ticket` is a ticket-folder
+    prefix. Unreadable files are skipped.
+    """
     runs = []
     for p in run_dir.rglob("*.json"):
         if ticket and not p.parent.name.startswith(ticket.upper()):
@@ -69,15 +75,20 @@ def load(run_dir: Path, since: str = "", ticket: str = ""):
 
 
 def tree(r):
+    """The runs of a log's run tree; [] for logs without one."""
     return (((r.get("trace") or {}).get("run_tree")) or {}).get("runs") or []
 
 
 def root_meta(r):
+    """The root run's metadata (project, session, thread, node, ...); {} if none."""
     t = tree(r)
     return (t[0].get("metadata") or {}) if t else {}
 
 
 def print_tree(r, io=False):
+    """Print the run tree indented by depth, with latency, tokens and errors;
+    with `io`, each run's inputs and outputs too (truncated).
+    """
     runs = tree(r)
     if not runs:
         print("(no run tree: trace_version %s)" % r.get("trace_version", 1)); return
@@ -86,6 +97,7 @@ def print_tree(r, io=False):
         kids.setdefault(x.get("parent_id"), []).append(x)
 
     def walk(x, depth):
+        """Print run `x` at `depth`, then its children."""
         u = x.get("usage") or {}
         tok = (" tokens %s+%s=%s" % (u.get("prompt_tokens"), u.get("completion_tokens"), u.get("total_tokens"))
                if u.get("total_tokens") else "")
@@ -105,24 +117,29 @@ def print_tree(r, io=False):
 
 
 def tokens(r):
+    """(prompt, completion, total tokens, model calls) for a log; Nones if untraced."""
     t = (r.get("trace") or {}).get("tokens") or {}
     return t.get("prompt_tokens"), t.get("completion_tokens"), t.get("total_tokens"), t.get("model_calls")
 
 
 def kg(r):
+    """The retrieval status of a log: "ok", "unavailable", ...; "-" if untraced."""
     ret = (r.get("trace") or {}).get("retrieval") or {}
     return ret.get("status") or ("-" if "trace" not in r else "?")
 
 
 def refs(r):
+    """How many references the final draft cited."""
     return len(((r.get("draft") or {}).get("references")) or [])
 
 
 def flagged(r):
+    """How many "Check citation" caveats the final draft carries."""
     return sum(1 for c in ((r.get("draft") or {}).get("caveats") or []) if c.startswith("Check citation"))
 
 
 def cmd_list(runs, _args):
+    """`list`: one line per draft for the newest -n drafts."""
     print("%-25s %-9s %-16s %-26s %-11s %4s %4s %7s %7s %7s %5s %7s  %s" % (
         "at", "id", "ticket", "model", "kg", "src", "refs", "prompt", "compl", "total", "calls", "ms", "error"))
     for r in runs[-_args.n:]:
@@ -135,6 +152,7 @@ def cmd_list(runs, _args):
 
 
 def _find(runs, key):
+    """The newest log whose request id (or file name ending) is `key`; exits if none."""
     hits = [r for r in runs if r.get("request_id") == key or r["_path"].endswith(key)]
     if not hits:
         sys.exit("no run with id %r" % key)
@@ -142,6 +160,7 @@ def _find(runs, key):
 
 
 def cmd_show(runs, args):
+    """`show`: everything recorded about one draft, from versions to feedback."""
     r = _find(runs, args.id)
     tr = r.get("trace") or {}
     print("draft %s  %s  ticket %s  model %s" % (r.get("request_id"), r.get("at"), r.get("ticket_number"), r.get("model")))
@@ -217,17 +236,22 @@ def cmd_show(runs, args):
 
 
 def _pct(xs, q):
+    """The `q` quantile (nearest rank) of the non-None values in `xs`; None if empty."""
     xs = sorted(x for x in xs if x is not None)
     return xs[min(len(xs) - 1, int(q * len(xs)))] if xs else None
 
 
 def _all_runs(runs):
+    """Every (log, run) pair across the logs."""
     for r in runs:
         for x in tree(r):
             yield r, x
 
 
 def cmd_runs(runs, args):
+    """`runs`: individual runs across all drafts, filtered by type, name, status,
+    latency, tag and metadata.
+    """
     want_meta = dict(kv.split("=", 1) for kv in args.meta)
     rows = []
     for r, x in _all_runs(runs):
@@ -249,6 +273,7 @@ def cmd_runs(runs, args):
 
 
 def _group_key(r, by):
+    """The value a log is grouped under for `stats --by`."""
     m = root_meta(r)
     if by == "prompt_version":
         return (m.get("prompt_version") or {}).get("version") or "?"
@@ -260,6 +285,9 @@ def _group_key(r, by):
 
 
 def cmd_stats(runs, _args):
+    """`stats`: per-model token, latency, grounding and citation summary; other
+    --by groupings go to cmd_stats_by.
+    """
     if _args.by != "model":
         return cmd_stats_by(runs, _args)
     by_model = {}
@@ -290,6 +318,9 @@ def cmd_stats(runs, _args):
 
 
 def cmd_stats_by(runs, args):
+    """`stats --by ...`: per-group draft counts, tokens, per-step latency
+    p50/p95 and errors, and mean feedback scores.
+    """
     groups = {}
     for r in runs:
         groups.setdefault(_group_key(r, args.by), []).append(r)
@@ -319,6 +350,7 @@ def cmd_stats_by(runs, args):
 
 
 def cmd_feedback(runs, args):
+    """`feedback`: append a person's score to a draft's .feedback.jsonl (mode 600)."""
     r = _find(runs, args.id)
     path = Path(r["_path"]).with_suffix(".feedback.jsonl")
     import uuid
@@ -334,6 +366,7 @@ def cmd_feedback(runs, args):
 
 
 def cmd_export(runs, args):
+    """`export`: write one CSV row per draft (no ticket text), mode 600."""
     cols = ["at", "request_id", "ticket_number", "model", "kg_status", "sources", "references", "flagged_citations",
             "prompt_tokens", "completion_tokens", "total_tokens", "model_calls", "rc_source_tokens",
             "latency_ms", "retrieve_ms", "llm_ms", "citations_ms", "graph_variant", "graph_built_at",
@@ -357,6 +390,7 @@ def cmd_export(runs, args):
 
 
 def main() -> int:
+    """Parse the command line, load the run logs and run the subcommand."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dir", type=Path, default=DEFAULT_DIR)
     ap.add_argument("--since", default="", help="ISO date/time, e.g. 2026-10-24")

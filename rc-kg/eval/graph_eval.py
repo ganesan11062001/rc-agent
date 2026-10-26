@@ -103,6 +103,8 @@ INTEGRITY = [
 
 
 def integrity() -> List[Dict]:
+    """Run the INTEGRITY checks plus the MENTIONS re-match; one
+    {check, expected, got, ok} row per check."""
     out = []
     dim = get_settings().embedding_dim
     for name, q, want in INTEGRITY:
@@ -123,6 +125,9 @@ def integrity() -> List[Dict]:
 
 # ── 2. live validity ────────────────────────────────────────────────────────
 def live_validity(max_pages: int = 0) -> Dict:
+    """Fetch every retrievable page (or the first `max_pages`) from the live
+    sites and check that section anchors exist there and LINKS_TO hrefs
+    resolve to their target page. Network: about one request per second."""
     from ingest import rtd
     from ingest.http import session
     from ingest.urls import normalize
@@ -198,30 +203,37 @@ def live_validity(max_pages: int = 0) -> Dict:
 
 # ── 3. usefulness ───────────────────────────────────────────────────────────
 def usefulness(k: int = 5, sites=None) -> Dict:
+    """Run the eval questions (only those answerable from `sites`, if given)
+    and report page recall@k with and without linked pages, and MRR/Hit@k
+    with the topic signal on (idf) and off. Temporarily switches
+    graphrag._TOPIC_MODE and restores whatever it was, even on error."""
     qs = yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]
     if sites:
         qs = [q for q in qs if any(u.split("/")[2] in sites for u in q["expected_urls"])]
     page = lambda u: u.split("#", 1)[0].rstrip("/")
     with_links, without, rescued = [], [], []
     modes = {}
-    for mode in ("idf", "off"):
-        graphrag._TOPIC_MODE = mode
-        rr, hits = [], []
-        for q in qs:
-            exp = {page(u) for u in q["expected_urls"]}
-            res = graphrag.retrieve(q["question"], k=k)
-            pages = [page(s.page_url) for s in res.sources]
-            v = m.verdicts(pages, exp)
-            rr.append(m.reciprocal_rank(v)); hits.append(m.hit_at(v, k))
-            if mode == "idf":
-                linked = {page(l["url"]) for s in res.sources for l in s.links}
-                base = len(exp & set(pages)) / len(exp)
-                plus = len(exp & (set(pages) | linked)) / len(exp)
-                without.append(base); with_links.append(plus)
-                if not (exp & set(pages)) and (exp & linked):
-                    rescued.append(q["question"])
-        modes[mode] = {"mrr": m.bootstrap_ci(rr), "hit@%d" % k: m.bootstrap_ci(hits)}
-    graphrag._TOPIC_MODE = "idf"
+    previous_mode = graphrag._TOPIC_MODE
+    try:
+        for mode in ("idf", "off"):
+            graphrag._TOPIC_MODE = mode
+            rr, hits = [], []
+            for q in qs:
+                exp = {page(u) for u in q["expected_urls"]}
+                res = graphrag.retrieve(q["question"], k=k)
+                pages = [page(s.page_url) for s in res.sources]
+                v = m.verdicts(pages, exp)
+                rr.append(m.reciprocal_rank(v)); hits.append(m.hit_at(v, k))
+                if mode == "idf":
+                    linked = {page(l["url"]) for s in res.sources for l in s.links}
+                    base = len(exp & set(pages)) / len(exp)
+                    plus = len(exp & (set(pages) | linked)) / len(exp)
+                    without.append(base); with_links.append(plus)
+                    if not (exp & set(pages)) and (exp & linked):
+                        rescued.append(q["question"])
+            modes[mode] = {"mrr": m.bootstrap_ci(rr), "hit@%d" % k: m.bootstrap_ci(hits)}
+    finally:
+        graphrag._TOPIC_MODE = previous_mode
     fmt = lambda t: {"mean": round(t[0], 3), "ci95": [round(t[1], 3), round(t[2], 3)]}
     return {
         "page_recall@%d_sources_only" % k: fmt(m.bootstrap_ci(without)),
@@ -234,6 +246,9 @@ def usefulness(k: int = 5, sites=None) -> Dict:
 
 # ── 4. topics ───────────────────────────────────────────────────────────────
 def topics_quality() -> Dict:
+    """Topic coverage and specificity over retrievable sections: per-topic
+    section count, share, IDF and dominant alias, plus the topics too broad,
+    never matched, or dominated by one alias."""
     n = _one("MATCH (s:Section {retrievable: true}) RETURN count(s)")
     per = _rows("MATCH (t:Topic) OPTIONAL MATCH (s:Section {retrievable: true})-[:MENTIONS]->(t) "
                 "RETURN t.name AS topic, count(s) AS df ORDER BY df DESC")
@@ -270,6 +285,8 @@ def topics_quality() -> Dict:
 
 # ── 5. topology ─────────────────────────────────────────────────────────────
 def topology() -> Dict:
+    """Connected components of the page graph (LINKS_TO and CHILD_OF),
+    retrievable pages nothing links to, and cross-site edge counts."""
     pages = [r["u"] for r in _rows("MATCH (p:Page) RETURN p.url AS u")]
     edges = _rows("MATCH (a:Page)-[:HAS_SECTION]->(:Section)-[:LINKS_TO]->(b:Page) WHERE a <> b "
                   "RETURN DISTINCT a.url AS a, b.url AS b, a.site AS sa, b.site AS sb "
@@ -277,6 +294,7 @@ def topology() -> Dict:
     parent = {p: p for p in pages}
 
     def find(x):
+        """Union-find root of page `x`, with path halving."""
         while parent[x] != x:
             parent[x] = parent[parent[x]]; x = parent[x]
         return x
@@ -299,6 +317,8 @@ def topology() -> Dict:
 
 
 def main() -> int:
+    """CLI entry point: run and print each part, optionally write JSON; exits 1
+    if any integrity check fails."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--live", action="store_true", help="check links and anchors on the live sites")
     ap.add_argument("--max-pages", type=int, default=0, help="--live: only the first N pages")

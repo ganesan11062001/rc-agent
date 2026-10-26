@@ -20,6 +20,7 @@ class PoliteSession:
     """A requests.Session that never issues two requests closer than `delay`."""
 
     def __init__(self, delay: float, user_agent: str, timeout: float) -> None:
+        """`delay` and `timeout` are seconds; `user_agent` goes on every request."""
         self._delay = delay
         self._timeout = timeout
         self._last = 0.0
@@ -29,6 +30,7 @@ class PoliteSession:
         self.request_count = 0
 
     def _wait(self) -> None:
+        """Sleep until `delay` has passed since the previous request, then count this one."""
         with self._lock:
             gap = time.monotonic() - self._last
             if gap < self._delay:
@@ -37,6 +39,7 @@ class PoliteSession:
             self.request_count += 1
 
     def get(self, url: str, **kwargs) -> requests.Response:
+        """Rate-limited GET with the default timeout; does not raise on HTTP errors."""
         self._wait()
         kwargs.setdefault("timeout", self._timeout)
         logger.debug("GET %s", url)
@@ -72,6 +75,7 @@ _session: Optional[PoliteSession] = None
 
 
 def session() -> PoliteSession:
+    """The process-wide PoliteSession, built from settings on first call."""
     global _session
     if _session is None:
         s = get_settings()

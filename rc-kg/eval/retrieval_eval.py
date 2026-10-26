@@ -43,6 +43,9 @@ def _group(expected: List[str]) -> str:
 
 
 def run(k: int = 5, sites=None) -> Dict:
+    """Retrieve every eval question (only those with an expected page on one
+    of `sites`, if given) and return per-question metric rows plus summaries
+    overall and by where the expected pages live."""
     qs = yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]
     if sites:
         qs = [q for q in qs if any(_host(u) in sites for u in q["expected_urls"])]
@@ -57,6 +60,7 @@ def run(k: int = 5, sites=None) -> Dict:
     names = [n for n in rows[0] if n not in ("question", "group", "retrieved", "expected")] if rows else []
 
     def summarize(rs):
+        """Count and per-metric mean with 95% bootstrap interval for rows `rs`."""
         out = {"n": len(rs)}
         for n in names:
             point, lo, hi = m.bootstrap_ci([r[n] for r in rs])
@@ -70,6 +74,7 @@ def run(k: int = 5, sites=None) -> Dict:
 
 
 def render(rep: Dict) -> str:
+    """The report from run() as a plain-text table, followed by the misses at k."""
     k = rep["k"]
     cols = ["hit@1", "hit@%d" % k, "mrr", "ndcg@%d" % k,
             "context_precision", "id_context_precision", "id_context_recall"]
@@ -77,6 +82,7 @@ def render(rep: Dict) -> str:
     lines = [head, "-" * len(head)]
 
     def line(name, s):
+        """One table row: label, count, and "mean [lo,hi]" per column."""
         cells = ["%.3f [%.2f,%.2f]" % (s[c]["mean"], *s[c]["ci95"]) for c in cols]
         return "%-14s %3d  " % (name, s["n"]) + "  ".join("%-20s" % c for c in cells)
 
@@ -91,6 +97,7 @@ def render(rep: Dict) -> str:
 
 
 def main() -> int:
+    """CLI entry point: run, print the table, optionally write the JSON report."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--sites", default="")
