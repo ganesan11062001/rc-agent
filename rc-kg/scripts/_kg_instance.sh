@@ -25,12 +25,31 @@ kg_free_port() {
   "$RC_KG_PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 }
 
+# Neo4j 5.26 needs Java 17 or newer, and the compute nodes' default `java` is
+# 11. Worse, on 11 both `neo4j-admin database load` and `neo4j start` print
+# "Unsupported Java" and exit 0, so nothing fails until Bolt never opens.
+# So choose a JDK explicitly and hand it to Neo4j as JAVA_HOME: an override,
+# then 21/17 (the supported ones), then whatever `java` is on PATH, then RC's
+# shared OpenJDK (22 on Explorer; Neo4j runs on it, though it only lists
+# 17 and 21 as supported).
+kg_pick_java() {
+  local c v path_java
+  path_java="$(readlink -f "$(command -v java 2>/dev/null)" 2>/dev/null)"
+  for c in "${RC_KG_JAVA_HOME:-}" "${JAVA_HOME:-}" /usr/lib/jvm/java-21-openjdk* /usr/lib/jvm/java-17-openjdk* \
+           "${path_java%/bin/java}" /shared/EL9/explorer/OpenJDK/*/jdk-*; do
+    [ -n "$c" ] && [ -x "$c/bin/java" ] || continue
+    v="$("$c/bin/java" -version 2>&1 | sed -n '1s/.*version "\([0-9]*\).*/\1/p')"
+    if [ -n "$v" ] && [ "$v" -ge 17 ]; then export JAVA_HOME="$c"; return 0; fi
+  done
+  return 1
+}
+
 kg_instance_init() {
   KG_DIR="$1"
   [ -d "$NEO4J_HOME" ] || kg_die "Neo4j not found under $RC_KG_ROOT/vendor (run scripts/install_neo4j.sh)"
   [ -x "$RC_KG_PY" ] || kg_die "no venv at $RC_KG_ROOT/.venv"
-  command -v java >/dev/null || kg_die "no java on PATH; Neo4j 5.26 needs JDK 17 or 21"
-  kg_log "java: $(readlink -f "$(command -v java)") ($(java -version 2>&1 | head -1))"
+  kg_pick_java || kg_die "no Java 17+ found (java on PATH: $(java -version 2>&1 | head -1)); set RC_KG_JAVA_HOME"
+  kg_log "java: $JAVA_HOME ($("$JAVA_HOME/bin/java" -version 2>&1 | head -1))"
 
   # Node-local: Neo4j does not support its store on NFS (/projects, /scratch).
   mkdir -p "$KG_DIR"/{conf,data,logs,run} || kg_die "cannot create $KG_DIR"
@@ -74,6 +93,9 @@ kg_instance_load() {
   "$NEO4J_HOME/bin/neo4j-admin" database load neo4j --from-path="$from" \
     --overwrite-destination=true >"$KG_DIR/logs/load.log" 2>&1 \
     || { cat "$KG_DIR/logs/load.log" >&2; kg_die "loading $from/neo4j.dump failed"; }
+  # Exit 0 is not success: on a too-old Java it refuses and still exits 0.
+  grep -qE "Unsupported Java [0-9][^ ]* detected" "$KG_DIR/logs/load.log" \
+    && { cat "$KG_DIR/logs/load.log" >&2; kg_die "neo4j-admin refused to load ($JAVA_HOME)"; }
   kg_log "snapshot loaded in $((SECONDS - t0))s ($(du -sh "$KG_DIR/data" 2>/dev/null | cut -f1) on disk)"
 }
 
@@ -82,6 +104,7 @@ kg_instance_start() {
     || { tail -n 20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/start.log" >&2 2>/dev/null
          kg_die "neo4j start failed"; }
   kg_log "neo4j start: $(tr '\n' ' ' < "$KG_DIR/logs/start.log" | cut -c1-300)"
+  grep -qE "Unsupported Java [0-9][^ ]* detected" "$KG_DIR/logs/start.log" && kg_die "Neo4j refused to start ($JAVA_HOME)"
   # "started" is not "accepting Bolt"; poll the port the client needs. Warm,
   # that takes ~20 s. In OOD sessions it has twice never opened at all (d1025,
   # d4054) for reasons not yet seen, so the wait is generous, a dead Neo4j is
