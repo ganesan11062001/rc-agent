@@ -30,6 +30,7 @@ kg_instance_init() {
   [ -d "$NEO4J_HOME" ] || kg_die "Neo4j not found under $RC_KG_ROOT/vendor (run scripts/install_neo4j.sh)"
   [ -x "$RC_KG_PY" ] || kg_die "no venv at $RC_KG_ROOT/.venv"
   command -v java >/dev/null || kg_die "no java on PATH; Neo4j 5.26 needs JDK 17 or 21"
+  kg_log "java: $(readlink -f "$(command -v java)") ($(java -version 2>&1 | head -1))"
 
   # Node-local: Neo4j does not support its store on NFS (/projects, /scratch).
   mkdir -p "$KG_DIR"/{conf,data,logs,run} || kg_die "cannot create $KG_DIR"
@@ -69,9 +70,11 @@ kg_instance_load() {
   # Before start: neo4j-admin refuses to load into a running database.
   local from="$1"
   [ -f "$from/neo4j.dump" ] || kg_die "no neo4j.dump in $from"
+  local t0=$SECONDS
   "$NEO4J_HOME/bin/neo4j-admin" database load neo4j --from-path="$from" \
     --overwrite-destination=true >"$KG_DIR/logs/load.log" 2>&1 \
     || { cat "$KG_DIR/logs/load.log" >&2; kg_die "loading $from/neo4j.dump failed"; }
+  kg_log "snapshot loaded in $((SECONDS - t0))s ($(du -sh "$KG_DIR/data" 2>/dev/null | cut -f1) on disk)"
 }
 
 kg_instance_start() {

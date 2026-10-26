@@ -59,6 +59,14 @@ INST="$(kg_new_dir "${SLURM_JOB_ID:-local}")" || exit 1
 API_PID=""
 WD_PID=""
 cleanup() {
+  local rc=$?
+  # A failed start would otherwise take Neo4j's own logs with the directory,
+  # and they are the only record of why. Not on 143: that is a normal stop.
+  if [ "$rc" != 0 ] && [ "$rc" != 143 ] && [ -n "${RC_KG_PROGRESS_DIR:-}" ] && [ -d "$INST/logs" ]; then
+    mkdir -p -m 700 "$RC_KG_PROGRESS_DIR/neo4j-logs" \
+      && cp -r "$INST/logs/." "$INST/conf/neo4j.conf" "$RC_KG_PROGRESS_DIR/neo4j-logs/" 2>/dev/null \
+      && kg_log "kept Neo4j's logs in $RC_KG_PROGRESS_DIR/neo4j-logs"
+  fi
   [ -n "$WD_PID" ] && kill "$WD_PID" 2>/dev/null
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null && wait "$API_PID" 2>/dev/null
   kg_instance_stop

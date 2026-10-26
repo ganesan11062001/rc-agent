@@ -125,7 +125,9 @@ The checklist exists from the script's first second, and a fatal error marks
 the step that was running as failed, with the reason. TicketMate sets the
 directory per session and reports it in its `/api/health`, so the extension can
 show progress while the graph loads. This is a file side channel, not part of
-the HTTP API.
+the HTTP API. If startup fails, Neo4j's own logs and config are copied into
+`<dir>/neo4j-logs/` before the instance directory is removed (never on a normal
+stop); `rc_kg.log` names the Java used and how long the snapshot load took.
 
 **TicketMate starts it automatically**: `ood-apps/rc-copilot/template/script.sh.erb`
 and `cluster/serve_stack.sbatch` launch `serve_kg.sh` before vLLM, with a
