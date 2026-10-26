@@ -79,25 +79,28 @@ kg_instance_load() {
 
 kg_instance_start() {
   "$NEO4J_HOME/bin/neo4j" start >"$KG_DIR/logs/start.log" 2>&1 \
-    || { tail -20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/start.log" 2>/dev/null >&2
+    || { tail -n 20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/start.log" >&2 2>/dev/null
          kg_die "neo4j start failed"; }
+  kg_log "neo4j start: $(tr '\n' ' ' < "$KG_DIR/logs/start.log" | cut -c1-300)"
   # "started" is not "accepting Bolt"; poll the port the client needs. Warm,
-  # that takes ~20 s. The first start on a node reads Neo4j's jars over NFS,
-  # and in a TicketMate session vLLM is loading its weights at the same time:
-  # measured well over 90 s, so the wait is generous and a dead Neo4j is
-  # caught by its pid instead. The probe is bash's own /dev/tcp, not a Python
-  # started from /projects every second.
+  # that takes ~20 s. In OOD sessions it has twice never opened at all (d1025,
+  # d4054) for reasons not yet seen, so the wait is generous, a dead Neo4j is
+  # caught by its pid, and every 30 s the state is logged. The probe is bash's
+  # own /dev/tcp, not a Python started from /projects every second.
   local wait="${RC_KG_NEO4J_WAIT:-300}" t0=$SECONDS pid
   while [ $((SECONDS - t0)) -lt "$wait" ]; do
     (exec 3<>"/dev/tcp/127.0.0.1/$KG_BOLT") 2>/dev/null && return 0
     pid="$(cat "$KG_DIR/run/neo4j.pid" 2>/dev/null)"
+    if [ $(( (SECONDS - t0) % 30 )) = 29 ]; then
+      kg_log "waiting for bolt :$KG_BOLT ($((SECONDS - t0))s): pid ${pid:-none}$( [ -n "$pid" ] && { kill -0 "$pid" 2>/dev/null && echo " alive" || echo " gone"; }), logs: $(ls "$KG_DIR/logs" 2>/dev/null | tr '\n' ' ')listening: $(ss -ltnpH 2>/dev/null | grep -F "pid=${pid:-x}," | awk '{print $4}' | tr '\n' ' ')"
+    fi
     if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-      tail -20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/debug.log" "$KG_DIR/logs/start.log" 2>/dev/null >&2
+      tail -n 20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/debug.log" "$KG_DIR/logs/start.log" >&2 2>/dev/null
       kg_die "Neo4j exited while starting (after $((SECONDS - t0))s)"
     fi
     sleep 1
   done
-  tail -20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/debug.log" "$KG_DIR/logs/start.log" 2>/dev/null >&2
+  tail -n 20 "$KG_DIR/logs/neo4j.log" "$KG_DIR/logs/debug.log" "$KG_DIR/logs/start.log" >&2 2>/dev/null
   kg_die "Neo4j never opened bolt on 127.0.0.1:$KG_BOLT within ${wait}s"
 }
 
