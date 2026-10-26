@@ -247,6 +247,12 @@ docs copy kept, and the prompt context labels docs sources with their last
 update date. Page nodes carry `site`; API sources carry `site` and
 `last_modified` (API 1.1).
 
+**Code blocks** keep their text exactly as written — line breaks,
+indentation, `<br>` — and are fenced with ```` ``` ```` in section text, so a
+command reaches the model as one line. Sphinx wraps every highlighted token in
+its own `<span>`, and joining spans with newlines (as the importer did until
+2026-10-26) turned `srun --partition=short ...` into one token per line.
+
 The docs ingest found 5 broken links inside rc-docs (to pages from an older
 layout such as `hardware/partitions.html` and `using-discovery/srun.html`),
 listed in `ingest_report.json` under `docs.unresolved_links`.

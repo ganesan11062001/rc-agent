@@ -41,6 +41,8 @@ _STRUCTURED = ("ul", "ol", "table", "pre", "h4", "h5", "h6")
 
 _WS = re.compile(r"[ \t ]+")
 _BLANKS = re.compile(r"\n{3,}")
+# Marks a code block in section text (```), as the LLM and markdown read it.
+CODE_FENCE = "```"
 
 
 @dataclass
@@ -107,8 +109,21 @@ def _block_text(node: object) -> str:
     name = node.name or ""
 
     if name == "pre":
-        # Commands have to survive intact and on their own lines.
-        return "\n" + node.get_text("\n", strip=True) + "\n"
+        # Commands have to survive intact: the text as written, with its real
+        # line breaks and indentation, fenced so a reader sees where it starts
+        # and ends. Not get_text("\n"): Sphinx (rc-docs) wraps every token of
+        # highlighted code in its own <span>, so that put `srun`, `--partition`,
+        # `=` and `short` on separate lines. WordPress may break lines with <br>.
+        for br in node.find_all("br"):
+            br.replace_with("\n")
+        lines = [line.rstrip() for line in node.get_text().split("\n")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not lines:
+            return ""
+        return "\n%s\n%s\n%s\n" % (CODE_FENCE, "\n".join(lines), CODE_FENCE)
 
     if name in ("ul", "ol"):
         lines = []
@@ -144,9 +159,17 @@ def _block_text(node: object) -> str:
 
 
 def _clean(text: str) -> str:
-    text = _WS.sub(" ", text)
-    text = "\n".join(line.strip() for line in text.split("\n"))
-    return _BLANKS.sub("\n\n", text).strip()
+    """Collapse whitespace in prose; leave fenced code exactly as it is."""
+    out, in_code = [], False
+    for line in text.split("\n"):
+        if line.strip() == CODE_FENCE:
+            in_code = not in_code
+            out.append(CODE_FENCE)
+        elif in_code:
+            out.append(line.rstrip())
+        else:
+            out.append(_WS.sub(" ", line).strip())
+    return _BLANKS.sub("\n\n", "\n".join(out)).strip()
 
 
 def _hrefs(nodes: List[object]) -> List[str]:

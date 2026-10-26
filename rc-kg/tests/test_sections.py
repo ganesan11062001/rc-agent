@@ -84,6 +84,25 @@ def test_pre_blocks_survive_on_their_own_lines():
     assert "sbatch job.sh" in out[0].text
 
 
+def test_highlighted_code_stays_one_command():
+    # rc-docs (Sphinx/Pygments) wraps every token in a <span>; this used to
+    # come out one token per line ("srun\n--partition\n=\nshort ...").
+    html = ('<h2>H</h2><div class="highlight"><pre><span></span>srun<span class="w"> </span>'
+            '--partition<span class="o">=</span>short<span class="w"> </span>--pty<span class="w"> </span>/bin/bash\n'
+            '</pre></div>')
+    text = split_sections(html)[0].text
+    assert "```\nsrun --partition=short --pty /bin/bash\n```" in text
+
+
+def test_code_keeps_indentation_and_br_line_breaks():
+    html = ('<h2>H</h2><pre>for f in *.txt; do\n    wc -l "$f"\ndone</pre>'
+            '<pre><code>scp a.txt host:/home/u<br>ssh host</code></pre><p>Then   run    it.</p>')
+    text = split_sections(html)[0].text
+    assert "for f in *.txt; do\n    wc -l \"$f\"\ndone" in text      # indentation kept
+    assert "scp a.txt host:/home/u\nssh host" in text                   # <br> is a line break
+    assert "Then run it." in text                                       # prose still tidied
+
+
 def test_hrefs_are_collected_per_section():
     html = ('<h2>A</h2><p><a href="/one/">x</a></p>'
             '<h2>B</h2><p><a href="https://example.com/">y</a></p>')
