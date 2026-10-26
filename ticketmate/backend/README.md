@@ -21,13 +21,17 @@ the model can be confidently wrong — read the **Check before sending** list.
 
 ## What it does
 
-1. Ticket text arrives (short description, description, work notes) from the
-   extension or the web UI's paste box.
-2. The backend retrieves the most relevant RC website and rc-docs sections from
-   rc-kg (when it is running), builds a prompt with them as numbered sources,
-   and calls the vLLM server's OpenAI-compatible `/v1/chat/completions`
-   endpoint.
-3. You get back a structured draft, with `[S1]`-style citations turned into a
+1. Ticket text arrives (short description, description, comments and work
+   notes) from the extension or the web UI's paste box, with any instructions.
+2. The backend cleans it (`app/ticket_context.py`: notification emails, address
+   lists and signatures out; the thread oldest first, labelled RC staff or
+   researcher), runs read-only cluster lookups for what it names
+   (`app/lookups.py`), and retrieves the most relevant RC website and rc-docs
+   sections from rc-kg (when it is running).
+3. It fits the ticket to the model's context window, builds the prompt
+   (`app/prompts.py`) and calls the vLLM server's OpenAI-compatible
+   `/v1/chat/completions` endpoint.
+4. You get back a structured draft, with `[S1]`-style citations turned into a
    References block of exact page links:
 
    | Field | What it is |
@@ -38,7 +42,7 @@ the model can be confidently wrong — read the **Check before sending** list.
    | `caveats` | What to verify before sending (missing job ID, no error text, …) |
    | `draft_response` | Ready-to-paste reply to the researcher |
 
-4. The draft is checked automatically (see the
+5. The draft is checked automatically (see the
    [app README](../README.md#evaluation-of-every-draft)) and recorded to a
    private run log. You edit it and send it yourself.
 
@@ -251,13 +255,8 @@ login node, and never run with `AUTH_DISABLED=true` on a shared one.
 
 Lives in [`../extension`](../extension), not here.
 It reads the open ServiceNow ticket, calls this backend through the Open
-OnDemand proxy, and writes the draft into the ticket's work notes.
-
-There used to be a second, side-panel-only extension in `browser-extension/`
-that framed `http://127.0.0.1:8080` over an SSH tunnel. It was superseded and
-has been deleted — if you still have it loaded in Chrome or unzipped on your
-laptop, remove it. It uses the same icon as the current one, so having both
-installed is genuinely confusing.
+OnDemand proxy, and writes the draft into the ticket's work notes (or the field
+chosen in its panel). Details: [../docs/EXTENSION.md](../docs/EXTENSION.md).
 
 Note the deployment difference: the current extension expects this backend to be
 reachable **through OOD**, which means it runs on a compute node bound to

@@ -7,11 +7,11 @@ page sections it came from.
 Built for the Northeastern Research Computing team, who need to paste a link to
 the page that actually supports the answer they give a researcher.
 
-> **Status:** Phases 1–3 and 5 are built and verified against the live site
-> (2026-10-22): ingestion, topics and embeddings, GraphRAG retrieval with an
-> HTTP API for TicketMate, a retrieval eval (Hit@5 = 1.00, MRR = 0.83 on 30
-> ticket-style questions) and a citation-support check. Not yet seen: drafts
-> from a real model. See [Phase status](#phase-status).
+> **Status (2026-10-26):** in daily use by TicketMate. The published `full`
+> graph — RC website + rc-docs, 170 pages, 597 sections — scores Hit@5 0.978,
+> MRR 0.795 on 45 ticket-style questions and passes all 9 reviewed-ticket
+> cases; real Qwen2.5-7B drafts are grounded in it. Phases 1–3 and 5 are done;
+> see [Phase status](#phase-status).
 
 ---
 
@@ -286,18 +286,19 @@ listed in `ingest_report.json` under `docs.unresolved_links`.
 
 ## What the graph contains
 
-Built 2026-10-22 (commit 5dd63d3): 169 pages → 594 sections.
+Built 2026-10-26 (the published `full` graph): 170 pages → 597 sections
+(2 pages have no prose sections; see *Known gaps*).
 
 | site | content type | pages | sections | retrievable |
 |---|---|---|---|---|
-| rc.northeastern.edu | page | 35 | 221 | 185 |
-| | post | 55 | 112 | 97 |
-| | calendar_event | 24 (19 API + 5 sitemap) | 47 | 0 by default |
+| rc.northeastern.edu | page | 33 | 221 | 168 |
+| | post | 56 | 115 | 84 |
+| | calendar_event | 24 | 47 | 0 by default |
 | rc-docs.northeastern.edu | doc | 55 | 214 | 214 |
 
-Graph: `Page=169  Section=594  Topic=30  Category=13  ExternalLink=169`,
-`HAS_SECTION=594  NEXT=427  LINKS_TO=457  LINKS_OUT=297  MENTIONS=1842
-IN_CATEGORY=77  CHILD_OF=15`. Every section has a 384-dim `bge-small-en-v1.5`
+Graph: `Page=170  Section=597  Topic=30  Category=13  ExternalLink=169`,
+`HAS_SECTION=597  NEXT=429  LINKS_TO=461  LINKS_OUT=298  MENTIONS=1819
+IN_CATEGORY=80  CHILD_OF=15`. Every section has a 384-dim `bge-small-en-v1.5`
 embedding. `LINKS_TO` includes 81 website → docs and 19 docs → website
 edges.
 
@@ -593,18 +594,19 @@ seff and job-array tips).
 
 | Phase | State |
 |---|---|
-| 1 — ingestion via the WP REST API | **done**, verified against the live site |
-| 2 — topics and embeddings | **done**: 30 topics, 1171 MENTIONS, all 380 sections embedded |
-| 3 — GraphRAG retrieval + HTTP API | **done**: `/retrieve`, `/cite` (+ citation-support check), `/answer`; tested end to end through TicketMate against a stub model only |
-| 4 — incremental sync and link health | `modified_after`, `content_hash` and `embedded_key` are in place; no runner |
-| 5 — evaluation | **done**: retrieval Hit@1 0.70, Hit@5 1.00, MRR 0.83 on 30 questions; citation check as above; `citation_review.py` for real drafts |
+| 1 — ingestion (WP REST API + rc-docs) | **done**, verified against both live sites; 170 pages, 597 sections |
+| 2 — topics and embeddings | **done**: 30 topics, 1,819 MENTIONS, every section embedded |
+| 3 — GraphRAG retrieval + HTTP API | **done**: `/retrieve`, `/cite` (+ citation-support check), `/similarity`, `/answer`; serving real TicketMate drafts |
+| 4 — incremental sync and link health | `modified_after`, `content_hash` and `embedded_key` are in place; no runner (a full rebuild takes ~4 min, weekly via `rebuild.sbatch`) |
+| 5 — evaluation | **done**: Hit@1 0.689, Hit@5 0.978, MRR 0.795 on 45 questions; 9/9 reviewed-ticket cases (`eval/ticket_cases.py`); variant comparison (`eval/variants.py`); citation check; `citation_review.py` for real drafts |
 
 ### Known gaps
 
 - `/aicr/aicr-gpu-dashboard/` yields no sections: its body is a plugin
   shortcode with no prose. Correctly reported, not silently skipped.
-- 101 of 360 sections (28%) are under 200 characters, which is small for
-  reliable embedding. Merging them into their parent is proposed, not done.
+- Many sections are short (on the 2026-10-22 website-only build, 101 of 360
+  were under 200 characters), which is small for reliable embedding. Merging
+  them into their parent is proposed, not done.
 - 6 internal links are genuinely broken (5 are PDFs under `/files/2025/08/`).
 - `/aicr/rc-internal` also yields no sections (same dashboard plugin).
 - The eval sets (45 retrieval questions — 30 website, 15 docs — and 10
@@ -616,9 +618,10 @@ seff and job-array tips).
   though vector search ranks the right docs section first: keyword search
   cannot match "add" to "Adding" (3-letter words get no prefix form), and rank
   fusion rewards sections both searches find over one search's clear winner.
-- No draft from a real model (GLM/Qwen) has been checked yet: how well it
-  follows the `[S#]` rules is unknown until `citation_review.py` runs on a
-  real session's logs.
+- Real Qwen2.5-7B drafts do not always cite the sources they were given
+  (INC09000005 cited neither of two relevant srun pages); TicketMate now ends
+  the prompt with a citation checklist and flags uncited grounded drafts.
+  `citation_review.py` has not yet been run over a batch of real drafts.
 - The citation check trades recall for trust: at its current strictness it
   misses about 1 in 6 wrong citations on held-out sentences, and it cannot
   flag a wrong citation when no retrieved page supports the claim (there is
@@ -640,6 +643,6 @@ seff and job-array tips).
 | `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement and support check, CLI |
 | `api/` | FastAPI service for TicketMate |
 | `API_CONTRACT.md` | The v1 HTTP contract clients rely on |
-| `eval/` | Retrieval: `run.py` (build gate), `ticket_cases.py` (regressions from reviewed tickets), `retrieval_eval.py` + `metrics.py` (RAGAS + ranking, CIs), `ragas_llm.py` (LLM-judged). Graph: `graph_eval.py`. Citations: `citation_check.py`, `citation_review.py`, `draft_batch.py`. Contract: `contract_check.py` |
-| `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh`, `eval_env.sh`, `ragas_eval.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
-| `tests/` | 90 unit tests: sectioning, anchors, URLs, duplicates, people and feed pages, topics, citations, claims, query building |
+| `eval/` | Retrieval: `run.py` (build gate), `ticket_cases.py` (regressions from reviewed tickets), `variants.py` (website-only vs full, same tests), `retrieval_eval.py` + `metrics.py` (RAGAS + ranking, CIs), `ragas_llm.py` (LLM-judged). Graph: `graph_eval.py`. Citations: `citation_check.py`, `citation_review.py`, `draft_batch.py`. Contract: `contract_check.py` |
+| `scripts/` | `build_graph.sh`, `rebuild.sbatch` (weekly), `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh`, `eval_env.sh`, `ragas_eval.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
+| `tests/` | 92 unit tests: code blocks, sectioning, anchors, URLs, duplicates, people and feed pages, topics, citations, claims, query building |

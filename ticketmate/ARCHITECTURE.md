@@ -1,408 +1,392 @@
 # RC Copilot — Architecture & Developer Guide
 
-**Status:** working prototype, end to end. A real model has produced a
-schema-valid draft on the cluster; draft quality is the open problem. See
-[Current status](#8-current-status).
+How RC Copilot (TicketMate) works, why it is built this way, and where each
+piece lives. For setting it up, see the [repository README](../README.md#running-it);
+for using it, see [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md).
 
 ---
 
-## 1. The problem
+## 1. The problem and the constraints
 
 RC support staff answer ServiceNow tickets that are, in large part,
 recognisable: out-of-memory kills, quota limits, module and environment
-mistakes, access requests. Drafting each reply from scratch is repetitive work.
+mistakes, access requests. RC Copilot drafts the reply; a person reviews and
+sends it.
 
-Two constraints shape everything that follows.
+Two constraints shape everything:
 
-**No ServiceNow API access.** Org policy does not grant it. Anything that reads
-a ticket has to work from what is already on the RC member's screen.
+- **No ServiceNow API access.** Org policy does not grant it, so anything that
+  reads a ticket works from what is already on the RC member's screen.
+- **Ticket text cannot leave Northeastern.** It contains researcher names and
+  unpublished work, which rules out hosted LLM APIs.
 
-**Ticket text cannot leave Northeastern.** It can contain researcher names,
-project details, and unpublished work. That rules out any hosted LLM API and
-requires the model to run on Northeastern hardware.
-
-Together these force an unusual shape: the *browser* is the integration point,
-and the *model* runs inside the user's own Slurm allocation.
+So the **browser** is the integration point, and the **model runs inside the
+RC member's own Slurm job**, together with everything else that touches the
+ticket.
 
 ---
 
-## 2. How it works, end to end
+## 2. The big picture
 
 ![RC Copilot system architecture](docs/rc-architecture.png)
 
-The same path, with the network boundary drawn explicitly:
-
 ```
-   NORTHEASTERN NETWORK
-   ┌──────────────────────────────────────────────────────────────────────────┐
-   │                                                                          │
-   │  service.northeastern.edu          Chrome                Explorer HPC    │
-   │  ┌───────────────────┐      ┌──────────────────┐    ┌──────────────────┐ │
-   │  │  ServiceNow       │      │  Extension       │    │ Open OnDemand    │ │
-   │  │  ticket form      │      │                  │    │ ood.explorer...  │ │
-   │  │                   │  (1) │  content.js      │    │                  │ │
-   │  │  short_desc  ─────┼─────►│   reads DOM      │    │  SSO + node      │ │
-   │  │  description      │      │        │         │    │  proxy           │ │
-   │  │  work_notes ◄─────┼──────┤        ▼     (2) │    │  /rnode/<n>/<p>  │ │
-   │  │      ▲            │  (6) │  background.js ──┼───►│        │         │ │
-   │  └──────┼────────────┘      │   session + fetch│(3) │        │ (4)     │ │
-   │         │                   └──────────────────┘    └────────┼─────────┘ │
-   │         │                            ▲                       ▼           │
-   │         │                            │              ┌──────────────────┐ │
-   │         └────────────────────────────┘              │  Slurm job       │ │
-   │                       (5) draft JSON                │  ┌────────────┐  │ │
-   │                                                     │  │ rc-copilot │  │ │
-   │                                                     │  │  :PORT     │  │ │
-   │                                                     │  └─────┬──────┘  │ │
-   │                                                     │        │ loopback│ │
-   │                                                     │  ┌─────▼──────┐  │ │
-   │                                                     │  │ vLLM :8000 │  │ │
-   │                                                     │  │ GLM-4.7    │  │ │
-   │                                                     │  └────────────┘  │ │
-   │                                                     └──────────────────┘ │
-   └──────────────────────────────────────────────────────────────────────────┘
+  Chrome (RC member)                 Open OnDemand                 Slurm job on a GPU node
+ ┌──────────────────────────┐      ┌──────────────────┐      ┌──────────────────────────────────┐
+ │ ServiceNow ticket page   │      │ SSO + node proxy │      │ rc-copilot backend  0.0.0.0:PORT │
+ │  ▲ draft into work notes │      │ /rnode/<n>/<p>   │      │   │ loopback, tokens             │
+ │  │ (unsaved)             │      │                  │      │   ├──► vLLM          127.0.0.1   │
+ │ extension                │ HTTPS│                  │      │   ├──► rc-kg API     127.0.0.1   │
+ │  content.js  reads page  ├─────►│                  ├─────►│   │      └─ Neo4j (node-local)   │
+ │  background.js all fetch │      │                  │      │   └──► id / sacct / sinfo ...    │
+ └──────────────────────────┘      └──────────────────┘      │        (read-only lookups)       │
+                                                             └──────────────────────────────────┘
 ```
 
-1. RC member opens a ticket and clicks **Draft reply**. `content.js` reads the
-   number, short description, description and activity stream out of the DOM.
-2. It passes the text to the service worker. The content script never makes the
-   network call itself — see [§6.1](#61-why-the-service-worker-makes-every-request).
-3. `background.js` signs in if needed, then POSTs to the backend through OOD,
-   carrying the user's existing OOD SSO cookie.
-4. OOD authenticates the user and proxies to the compute node and port the job
-   is listening on.
-5. `rc-copilot` builds a prompt, calls vLLM over loopback, validates the JSON it
-   gets back, and returns a structured draft.
-6. `content.js` writes `draft_response` into **work notes** — unsaved. A human
-   reviews, edits, and clicks Update.
-
-**Nothing is ever submitted automatically.** The draft lands in a form field and
-stops there.
+Everything that sees ticket text runs in the job: the backend, the model,
+the knowledge graph and the lookups. Only the backend listens on the network,
+and only behind OOD's SSO plus its own access token.
 
 ---
 
-## 3. Components
+## 3. One draft, step by step
 
-| Directory | Lines | What it is |
-| --- | --- | --- |
-| `backend/app/` | ~990 py | FastAPI service: prompt, vLLM client, auth |
-| `backend/web/` | ~900 | Standalone web UI (paste-a-ticket), no build step |
-| `extension/` | ~870 js | Chrome MV3 extension |
-| `ood-apps/` | ~500 | Two OOD interactive apps |
-| `cluster/` | ~900 | Slurm launchers, install/diagnostic scripts, capture server |
+1. **Read.** The RC member clicks **Draft reply**. `content.js` reads the
+   ticket number, short description, description and the activity stream
+   (comments, work notes, notifications) out of the page.
+2. **Send.** The service worker (`background.js`) signs in if needed and POSTs
+   `/api/draft` through OOD, carrying the member's OOD SSO cookie
+   ([§8.1](#81-why-the-service-worker-makes-every-request)).
+3. **Clean** (`app/ticket_context.py`). The scraped page becomes the context
+   the model reads: notification emails, To/Cc/From address lists, signatures
+   and quoted chains are dropped; field changes are compressed; every comment
+   and work note is kept word for word, oldest first, labelled with date,
+   author, **RC staff or researcher**, and whether the researcher could see it.
+   On 18 real tickets this halves the text and removes ~35 addresses per
+   ticket.
+4. **Look up** (`app/lookups.py`), in parallel with retrieval: read-only
+   commands for what the ticket names — `id <user>`, `sacct -j <job>`,
+   `getent group <name>`, `scontrol show node <node>`, `sinfo -N -p
+   <partition>` — run as the RC member inside the job
+   ([§7.3](#73-cluster-lookups)).
+5. **Retrieve** (`app/kg_client.py` → rc-kg). The search query is the short
+   description, the description and the researcher's latest message (not the
+   whole thread, whose RC-team wording matched staff pages). rc-kg returns six
+   numbered sources `[S1]…` from the RC website and rc-docs
+   ([§6](#6-the-knowledge-graph-rc-kg)).
+6. **Fit.** The cleaned ticket gets what the model's context window (read
+   from vLLM) leaves after the system prompt, sources, lookups and the reply;
+   a long thread keeps its description, first and newest entries.
+7. **Prompt** (`app/prompts.py`). System prompt (role, JSON contract, rules),
+   then the ticket, lookups and sources, the engineer's instructions (which,
+   when given, *are* the task), and a short end-of-prompt checklist.
+8. **Generate** (`app/llm_client.py`). vLLM returns JSON (constrained
+   decoding, with fallbacks — [§5](#5-structured-output)), validated against
+   a Pydantic model.
+9. **Cite** (rc-kg `/cite`). `[S1]` markers become a numbered References block
+   with exact page links. The model never writes a URL; one it writes anyway is
+   checked against what was retrieved and removed if it is not there.
+10. **Evaluate** (`app/evaluators.py`). Code checks of the prompt's rules
+    (sign-off, no placeholder, no invented ticket number, cites when grounded,
+    ...) and metrics (conciseness, relevance); an LLM judge grades in the
+    background.
+11. **Record** (`app/runlog.py`, `app/tracing.py`). One private JSON trace per
+    draft — the run tree, exact prompts, tokens, timings, lookups, retrieval —
+    under `/scratch/$USER/rc_copilot_runs` (mode 700/600).
+12. **Show.** The panel writes the draft into **work notes** (or the field the
+    member chose), unsaved, and shows what to check before sending; steps,
+    lookups, cited pages, checks and feedback are one click away.
 
-### 3.1 Backend (`rc-copilot`)
+**Nothing is ever submitted automatically.** A person reviews, edits and clicks
+Update.
 
-Deliberately knows nothing about ServiceNow. It takes text, returns a draft.
+---
 
-| File | Responsibility |
+## 4. Components
+
+```
+ticketmate/                       the app
+  backend/app/                    FastAPI service (knows nothing about ServiceNow)
+  backend/web/                    paste-a-ticket web UI, no build step
+  extension/                      Chrome MV3 extension (panel on ServiceNow)
+  ood-apps/rc-copilot/            the OOD interactive app (one job: vLLM + backend + rc-kg)
+  ood-apps/capture-test/          same, no model: stores what is sent, to test the data path
+  ood-apps/{publish,install}.sh   release the app for RC members / link it into a sandbox
+  cluster/                        sbatch launchers, vLLM install, diagnostics, traces.py
+  tests/                          inference, contract, startup, lookups, ticket-context, UI tests
+rc-kg/                            the knowledge graph
+  ingest/  enrich/  graph/        build: crawl both sites, topics + embeddings, write Neo4j
+  retrieval/  api/                serve: hybrid GraphRAG retrieval, citations, HTTP API
+  eval/  scripts/                 evaluation; build/serve/instance scripts
+```
+
+### 4.1 Backend (`ticketmate/backend/app/`)
+
+| Module | Responsibility |
 | --- | --- |
-| `main.py` | Routes, error shaping, static file serving |
-| `llm_client.py` | vLLM calls, structured-output fallback, JSON extraction |
-| `prompts.py` | **The file to iterate on.** System prompt, confidence rubric |
-| `models.py` | Pydantic models + the JSON schema sent to the model |
+| `main.py` | Routes and the draft pipeline of §3; error shaping; serves `web/` |
+| `ticket_context.py` | Clean the scraped ticket, build the retrieval query, fit it to the context window |
+| `lookups.py` | Read-only cluster lookups (allowlisted, no shell) |
+| `kg_client.py` | rc-kg calls: retrieve, cite, similarity; API-version check |
+| `prompts.py` | **The file to iterate on.** System prompt, templates, checklist |
+| `llm_client.py` | vLLM calls, structured-output fallback, JSON extraction, token counts, context window |
+| `models.py` | Pydantic request/response models and the JSON schema sent to the model |
+| `evaluators.py` | Per-draft assertions, metrics, background LLM judge |
+| `runlog.py`, `tracing.py` | The private run log and LangSmith-style run trees |
+| `startup.py` | Startup progress (vLLM's log, rc-kg's checklist) for `/api/health` |
 | `auth.py` | Access token, HMAC-signed sessions |
 | `config.py` | Settings from environment / `.env` |
 
-API surface — four endpoints:
-
 | Endpoint | Auth | Purpose |
 | --- | --- | --- |
-| `GET /api/health` | none | Liveness + whether vLLM is reachable |
-| `POST /api/login` | access token | Exchange token for a session |
-| `POST /api/draft` | session | `{ticket_text, ticket_number?, extra_instructions?}` → draft |
-| `GET /api/captures` | session | *(capture-test build only)* what's stored |
+| `GET /api/health` | none | vLLM, knowledge graph and startup progress (always 200; read the body) |
+| `POST /api/login` | access token | Exchange the token for a signed session |
+| `POST /api/draft` | session | `{ticket_text, ticket_number?, extra_instructions?}` → draft, references, lookups, context stats, checks |
+| `POST /api/feedback` | session | A person's rating/comment/correction, stored beside the draft's trace |
 
-`/api/health` is deliberately unauthenticated so the extension can distinguish
-"backend down" from "token wrong" — two failures with very different fixes.
+`/api/health` is unauthenticated so the extension can tell "backend down" from
+"token wrong" — two failures with very different fixes.
 
-### 3.2 Extension
+### 4.2 Extension (`ticketmate/extension/`)
 
 | File | Responsibility |
 | --- | --- |
-| `content.js` | ServiceNow DOM: read the ticket, write the draft |
-| `background.js` | **All** network I/O, session lifecycle, error wording |
-| `ood-connect.js` | Runs on OOD; auto-configures from the session card |
-| `popup.*` | Status display, target-field choice, manual fallback |
+| `content.js` | The panel on ServiceNow: read the ticket, compose, show the result, write the draft |
+| `background.js` | **All** network I/O, the session, error wording |
+| `ood-connect.js` | Runs on OOD; saves the session's address and token from its card |
+| `popup.*` | Connection status, target field, manual configuration |
+| `check.py` | Static checks run before packaging |
 
-### 3.3 Cluster
+The panel is half the page by default (⅓ / ½ / ⅔, or drag its edge;
+remembered). It always shows where the draft went, confidence, *Check before
+sending* and the draft; the rest are collapsible sections. Packaged as
+`dist/rc-copilot-extension.zip`.
 
-Two OOD interactive apps, plus sbatch equivalents:
+### 4.3 The OOD app and the session
 
-- **`ood-app/`** — the real thing: vLLM + rc-copilot in one GPU allocation.
-- **`ood-app-capture/`** — no model. Stores whatever the extension sends and
-  echoes it back. Used to validate the data path independently of the LLM.
+`ood-apps/rc-copilot/template/script.sh.erb` runs in the job, in this order:
+
+1. **rc-kg** (`rc-kg/scripts/serve_kg.sh`): loads the graph snapshot from
+   `/projects` into a private Neo4j on node-local disk, with a per-session
+   bearer token, on loopback. ~1–2 min; writes a startup checklist.
+2. **The backend**, immediately — so the extension can connect and show
+   progress while the model loads.
+3. **vLLM**, on loopback, with the model and context length from the form.
+
+`publish.sh` copies the app into `rc-copilot/releases/<date>-<commit>/` and
+swaps the `current` symlink atomically; members' `~/ondemand/dev/rc-copilot`
+is a symlink to it (`install.sh`). The session scripts run TicketMate and
+rc-kg straight from the checkout, so backend and graph changes need no
+republish; only the OOD templates and the extension zip do.
 
 ---
 
-## 4. Structured output
+## 5. Structured output
 
 The model is asked for JSON, not prose:
 
 ```json
-{
-  "problem_summary": "…",
-  "suggested_steps": ["…"],
-  "confidence": 0.86,
-  "caveats": ["…"],
-  "draft_response": "…"
-}
+{"problem_summary": "…", "suggested_steps": ["…"], "confidence": 0.86,
+ "caveats": ["…"], "draft_response": "…"}
 ```
 
-`confidence_label` (high ≥ 0.8, medium ≥ 0.6, low below) is computed
-**server-side** from `confidence`. The model supplies a number; the thresholds
-are ours.
-
 Three strategies are tried in order, and the first that works is remembered:
-
-1. `response_format: json_schema` — constrained decoding against a strict schema
-2. `response_format: json_object` — for older vLLM builds
-3. Prompt-only, with an explicit "raw JSON, no fences" reminder
-
-Whatever comes back is parsed tolerantly (fenced blocks and preamble prose are
-stripped) and validated against a Pydantic model. Unparseable output produces a
-clear UI error, never a stack trace.
-
-`caveats` is the "check before sending" list. It is shown in the panel and
-deliberately **not** written into the ticket.
+`response_format: json_schema` (constrained decoding), `json_object`, then
+prompt-only with a "raw JSON" reminder. Output is parsed tolerantly and
+validated; `confidence_label` (high ≥ 0.8, medium ≥ 0.6) is computed
+server-side. `caveats` is the *Check before sending* list — shown, never
+written into the ticket.
 
 ---
 
-## 5. Security model
+## 6. The knowledge graph (rc-kg)
 
-This is the part worth scrutinising, because the deployment forces some
-uncomfortable choices.
+Details in [rc-kg/README.md](../rc-kg/README.md); the essentials:
 
-### 5.1 The core problem
+- **Build** (`scripts/build_graph.sh`, weekly via `rebuild.sbatch`): crawl the
+  RC website (WordPress API + sitemap) and rc-docs (Sphinx); split pages into
+  sections at headings, with exact anchor URLs; code blocks kept as written;
+  embed with `bge-small-en-v1.5`; tag topics; publish a Neo4j dump to
+  `rc-kg/data/graph/` **only if** the 45-question eval scores Hit@5 ≥ 0.9.
+  People pages, leadership posts and duplicates stay in the graph but are not
+  retrievable.
+- **Retrieve** (`retrieval/graphrag.py`): vector search and fulltext search
+  fused by reciprocal rank, a small topic boost, at most 3 sources per page;
+  then graph expansion (neighbouring sections, linked pages, rc-docs links,
+  topics). `low_confidence` when the best vector match is under the
+  threshold, so the model is told the sources may be unrelated.
+- **Variants:** `full` (website + rc-docs, default) and `website`. On the same
+  45 questions `full` scores Hit@6 0.98 vs 0.69 — a third of questions are
+  answered only in rc-docs ([evidence](../rc-kg/README.md#graph-variants)).
+- **API** (versioned, [API_CONTRACT.md](../rc-kg/API_CONTRACT.md)):
+  `/health`, `/retrieve`, `/cite`, `/similarity`. A different major version
+  makes the backend draft ungrounded with a caveat rather than misread fields.
 
-`rc-copilot` must bind `0.0.0.0`, because the OOD web node has to reach it
-across the network. **That also means every other user on the cluster can reach
-that port.** Everything below follows from that.
+---
 
-### 5.2 Controls
+## 7. Security and privacy
+
+### 7.1 The core problem
+
+The backend must bind `0.0.0.0`, because the OOD web node has to reach it
+across the network — which means every other cluster user can reach that port
+too. Everything else in the job (vLLM, rc-kg, Neo4j) is on loopback, but
+loopback is shared by everyone on the node, so rc-kg also requires a token.
+
+### 7.2 Controls
 
 | Control | Detail |
 | --- | --- |
-| **Access token required** | `/api/draft` returns 401 without one |
-| **Signed sessions** | Token exchanged for an HMAC-signed session carrying an expiry the server verifies. A forged expiry fails the signature |
-| **Expiry enforced server-side** | Default 3 h, matched to the job length in the OOD app |
-| **Token never on `/projects`** | That path is group-readable. The token lives in `~/.rc_copilot/token` (0600), or in OOD's `connection.yml` |
-| **Never logged** | The startup banner prints the token only when self-generated for local use; under Slurm it prints a notice instead, because job logs land on shared storage |
-| **vLLM on loopback** | Only `rc-copilot` can reach the model |
-| **Signing key in memory** | Restarting the backend invalidates every session |
-| **Extension scoped** | Host permissions cover only `northeastern.edu` / `neu.edu`; `ood-connect.js` refuses to save any other endpoint |
-| **Session storage** | `chrome.storage.session` — memory only, cleared on browser close |
+| **Access token** | `/api/draft` and `/api/feedback` need a session, from `/api/login` with the job's token |
+| **Signed sessions** | HMAC-signed, expiry inside the signature; a forged expiry fails. Lasts the job's hours |
+| **Token never on `/projects`** | `/projects` is group-readable. Under OOD the token is the session password, shown only on the owner's session card |
+| **Never logged** | Tokens are not printed in job logs; ticket text is not logged unless `DEBUG=true` |
+| **Loopback + per-session tokens** | vLLM and rc-kg listen on 127.0.0.1; rc-kg and its Neo4j get random per-session credentials |
+| **Extension scoped** | Host permissions cover only `northeastern.edu` / `neu.edu`; `ood-connect.js` refuses other endpoints |
+| **Session storage** | The extension keeps its session in `chrome.storage.session` (memory only) |
 
-### 5.3 Ticket data at rest
+### 7.3 Cluster lookups
 
-Only the capture-test build persists ticket text. It writes to
-`/scratch/$USER/rc_copilot_captures/<TICKET>/`. Because `/scratch` is mode
-**770** (group-accessible, unlike `$HOME`), the subtree is forced to `0700` and
-files to `0600`. The ticket-derived folder name is sanitised — it originates
-from a web page, so `../../../etc/passwd` becomes `ETCPASSWD`.
+They run as the RC member, on text a researcher wrote, so the rules are
+enforced in code, not trusted to the model, which never chooses a command:
+only `id`, `getent group`, `sacct`, `scontrol show node` and `sinfo`, each with
+a fixed argument list, exec'd without a shell; every argument from the ticket
+must fully match a strict pattern; email addresses are never usernames; a few
+lookups per draft, 5 s each, output capped. Nothing that changes data is
+reachable. `tests/lookups/test_lookups.py` proves that injection text in a
+ticket executes nothing. Off with `CLUSTER_LOOKUPS=false`.
 
-The production backend stores nothing. It logs metadata only — request id,
-input length, confidence, latency — never ticket text, unless `DEBUG=true`,
-which prints a warning at startup.
+### 7.4 Ticket data at rest
 
-### 5.4 Trust boundary for auto-configuration
+The run log (`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json`) holds
+ticket text, prompts and drafts, so the tree is forced to mode 700 and files to
+600 (`/scratch` is group-accessible). Folder names derived from the page are
+sanitised. `/scratch` is purged monthly. Set `RUN_LOG_DIR=` (empty) to turn
+recording off. The capture-test app stores what it receives the same way.
 
-The extension configures itself by reading the OOD session card, which contains
-the endpoint and token in `data-` attributes. **Only the job's owner can see
-that card** — the same trust boundary OOD already uses for Jupyter and RStudio
-passwords.
+### 7.5 Trust boundary for auto-configuration
+
+The extension configures itself from the OOD session card, which carries the
+endpoint and token. Only the job's owner can see that card — the same boundary
+OOD uses for Jupyter and RStudio passwords.
 
 ---
 
-## 6. Design decisions worth explaining
+## 8. Design decisions worth explaining
 
-### 6.1 Why the service worker makes every request
+### 8.1 Why the service worker makes every request
 
-An MV3 **content script runs in the page's origin and is subject to CORS**. A
-fetch from `service.northeastern.edu` to `ood.explorer.northeastern.edu` would
-be blocked regardless of what headers the backend sends. **Service worker
-fetches are covered by `host_permissions` and bypass CORS entirely.**
+An MV3 content script runs in the page's origin and is subject to CORS: a
+fetch from `service.northeastern.edu` to `ood.explorer.northeastern.edu` is
+blocked whatever the backend's headers say. Service-worker fetches are covered
+by `host_permissions` and bypass CORS, so all network I/O goes through
+`background.js`.
 
-This is why CORS headers on the backend are not the answer, and why all network
-I/O funnels through `background.js`.
+### 8.2 HTML is never the backend
 
-### 6.2 The failure mode that matters most
+OOD answers with HTML in two very different cases: its login page (SSO
+expired) and its own error page when nothing listens yet ("Failed to connect
+to d4054:24980" — a new session starts its backend a minute after the card
+says Running). `background.js` tells them apart: the first asks you to sign
+in, the second waits and retries for five minutes.
 
-OOD is behind SSO. When that session expires, OOD answers **HTTP 200 with an
-HTML login page** — not a 401. Code that assumes JSON reports a parse error and
-sends you looking in the wrong place entirely.
+### 8.3 Three ServiceNow UIs, one content script
 
-`background.js` checks the content type and says exactly what happened.
+Classic puts the form in an iframe, Next Experience in shadow DOM, Service
+Portal uses its own ids. Fields are found by a shadow-piercing DOM walk matched
+on id, name, `aria-label`, placeholder and label text. Writes go through the
+native value setter and dispatch `input`/`change`, or ServiceNow does not
+notice them; `description` explicitly never matches `short description`.
 
-### 6.3 Three ServiceNow UIs, one content script
+### 8.4 Why the extension needs no configuration
 
-| UI | Structure | Consequence |
+The node and port change with every job. OOD has no sessions API, so RC
+Copilot is an OOD interactive app whose own session card carries the details
+in markup we control; opening *My Interactive Sessions* configures the
+extension.
+
+### 8.5 Work notes by default
+
+Work notes are internal; additional comments reach the researcher. Defaulting
+to work notes means a mis-click cannot send unreviewed model output. The other
+targets are one choice away in the panel, with a warning.
+
+### 8.6 Why clean the ticket, and why the instructions are the task
+
+A 7B model acts on what it reads last and what its task line says. Raw pages
+were half notification noise, and appended instructions ("just write a
+follow-up") were ignored in favour of the default full answer. So the ticket
+is cleaned and labelled, the engineer's instructions replace the task line,
+and a short checklist (cite sources, use the lookups, write what was asked)
+closes the prompt.
+
+---
+
+## 9. Deployment notes
+
+### 9.1 vLLM and CUDA
+
+Explorer's GPU nodes run driver **570.86.15**; vLLM 0.29.0's default wheel is
+built for CUDA 13 (driver 580+). The failure is a two-stage trap: first
+`libcudart.so.13` is missing; "fix" that and vLLM's kernels die with
+`cudaErrorInsufficientDriver` while torch keeps working. The fix is the
+explicitly tagged `+cu129` wheel (`--torch-backend` alone is not enough);
+`cluster/install_vllm.sh` encodes it. Details in
+[VLLM_SETUP.md](VLLM_SETUP.md).
+
+### 9.2 Models, GPUs and context windows
+
+| OOD form choice | Model | Context |
 | --- | --- | --- |
-| Classic | Form inside `#gsft_main` iframe | Needs `all_frames: true` |
-| Next Experience | Web components, shadow DOM | `querySelector` can't reach fields |
-| Service Portal | AngularJS, `sp_formfield_*` ids | Different id convention again |
+| default: Qwen2.5-7B AWQ, any free GPU | 4-bit, fits a 16 GB T4 | 16,384 |
+| Qwen2.5-14B AWQ | tight on a T4 | 8,192 |
+| Qwen2.5-7B fp16 | A100 40 GB | 32,768 |
+| GLM-4.7-Flash | A100 80 GB / H200 | 32,768 (131,072 on 2 GPUs) |
 
-Rather than three sets of selectors, fields are found by a **shadow-piercing DOM
-walk** and matched on id, name, `aria-label`, placeholder and label text. One
-mechanism covers all three.
+A draft's prompt is typically 4–8k tokens. General-access GPU partitions allow
+one GPU per job (`gpu-interactive`, `gpu-short`: 2 h; `gpu`: 8 h); 2+ needs
+`multigpu` approval. V100s (sm_70) are excluded: torch 2.13+cu129 has no
+kernels for them. bfloat16 needs sm80+, so `serve_glm.sh` falls back to
+float16 on T4s.
 
-Two specifics that are easy to get wrong:
+### 9.3 Neo4j and Java
 
-- **Assigning `.value` is not enough.** ServiceNow's client scripts and its
-  unsaved-changes tracker only react to events. Every write goes through the
-  native value setter, then dispatches `input` and `change`.
-- **`description` must not match `short description`.** The matcher excludes it
-  explicitly; there is a regression test for exactly this case.
-
-### 6.4 Why the extension needs no configuration
-
-The node and port change with every allocation, so nothing static can point at
-them. OOD already solves this: it writes `connection.yml` with host, port and a
-generated password per session.
-
-We checked whether OOD exposes a sessions API to query — it does not.
-`batch_connect/sessions#index` renders HTML only, and `/activejobs/json` returns
-one job by id. Scraping that HTML would break on every OOD upgrade.
-
-So instead, RC Copilot is an **OOD interactive app**, and its own session card
-carries the details in markup we control. Because OOD renders each app's view
-inline on "My Interactive Sessions", **visiting that page configures the
-extension.** Nothing to copy.
-
-### 6.5 Why work notes, not additional comments
-
-Work notes are internal. Additional comments are visible to the person who filed
-the ticket. Defaulting to work notes means a mis-click on Update cannot reach a
-researcher with unreviewed model output. The other option exists, behind a
-warning.
+Neo4j 5.26 needs Java 17+, and the compute nodes' default `java` is 11 — on
+which Neo4j refuses to run *and exits 0*. rc-kg picks a JDK explicitly (21/17
+if installed, else RC's shared OpenJDK 22) and fails fast on a refusal. The
+store lives on node-local `/tmp` (Neo4j does not support NFS); each instance
+is private, owned, and cleaned up even after a crash.
 
 ---
 
-## 7. Deployment
+## 10. Tests
 
-### 7.1 Environment
-
-Explorer's A100 nodes run driver **570.86.15**. vLLM 0.29.0's default PyPI wheel
-is built against **CUDA 13**, which needs a 580-series driver. The failure is a
-two-stage trap:
-
-1. `ImportError: libcudart.so.13`
-2. after putting that library on the path, vLLM's kernels fail at runtime with
-   `cudaErrorInsufficientDriver` — while torch keeps working, because CUDA 12.x
-   has minor-version compatibility. The model loads, then dies on first kernel
-   call.
-
-The fix is the explicitly tagged `+cu129` wheel. Note `--torch-backend=cu129` is
-**not** sufficient: it selects the torch wheel, not vLLM's own extension.
-`install_vllm.sh` encodes this and verifies by checking the extension links
-`libcudart.so.12`.
-
-### 7.2 Sizing
-
-Measured on Explorer at TP=2: weights **28.08 GiB/GPU**, KV cache **41.21
-GiB/GPU** → 817,248 tokens at 6.24× concurrency for 131K context.
-
-At TP=1 the weights are ~56 GiB on one card, leaving ~12.5 GiB on an 80 GB
-A100 — roughly **124,000 KV tokens**, about 3.8× concurrency at 32K context. A
-ticket plus prompt is a few thousand tokens, so **one GPU is sufficient**.
-
-This also matters because every general-access GPU partition caps GRES at
-**one GPU per job**; 2+ requires `multigpu`, which needs approval.
-
-| Partition | Max time | GPUs/job |
+| Test | What it proves | Needs |
 | --- | --- | --- |
-| `gpu-interactive` | 2 h | 1 |
-| `gpu-short` | 2 h | 1 |
-| `gpu` | 8 h | 1 |
-| `multigpu` | 24 h | 8 (approval) |
-
-Both limits are enforced twice: in the browser via OOD's
-`data-max-bc-num-hours`, and clamped server-side in `submit.yml.erb`.
-
-### 7.3 Hardware notes
-
-Explorer has T4 (sm75) and V100 (sm70) alongside A100 (sm80) and H200 (sm90).
-**bfloat16 requires sm80+**, and most model configs request it, so on the older
-cards vLLM aborts at startup. `serve_glm.sh` reads the compute capability and
-falls back to `--dtype float16`. This matters because the older cards are
-usually the idle ones.
-
-A 3B test model (`Qwen2.5-3B-Instruct`, ~6 GB) is the default of
-`serve_stack.sbatch` and the inference test for exactly this reason: it takes any free GPU, starts in about a minute, and is enough to
-exercise the pipeline and iterate on the prompt.
+| `tests/rc_kg/run_contract.sh` | The whole draft path against a real rc-kg and a stub model: grounding, citations, traces, evaluators, fallbacks, version mismatch, rc-kg down | no GPU, ~5 min |
+| `tests/lookups/test_lookups.py` | Only allowlisted argv runs; injection does nothing; timeouts | nothing |
+| `tests/ticket_context/test_ticket_context.py` | Cleaning keeps every message and drops the noise; fitting | nothing |
+| `tests/startup/run_slow_start.sh` | Startup progress through a replayed real vLLM log | no GPU |
+| `tests/ui/run.sh` | Web UI and the extension panel in headless Chromium | Playwright |
+| `tests/run_inference_test.sbatch` | Real inference with the real prompt | a GPU |
+| `rc-kg/scripts/contract_test.sh`, `pytest rc-kg/tests` | rc-kg's API contract and units | no GPU |
+| `rc-kg/eval/{run,ticket_cases,variants}.py` | Retrieval quality, reviewed-ticket regressions, graph variants | a graph |
 
 ---
 
-## 8. Current status
+## 11. Status and open questions
 
-### Proven
+**Working:** real drafts on real tickets with Qwen2.5-7B AWQ, grounded in the
+graph, with lookups, cleaned context and per-draft evaluation. Draft quality
+is being tuned ticket by ticket from reviewed drafts (`rc-kg/eval/ticket_cases.yaml`);
+the in-loop LLM judge is the model grading itself and disagreed with human
+reviewers, so people's labels are the ground truth.
 
-- **The full data path with real ticket data.** A live ticket produced 3,535
-  characters across all three sections, travelled ServiceNow → extension → OOD →
-  Slurm job on a GPU node → disk, and the ticket number was recovered.
-- **Auth under adversarial input.** Tampered signatures and forged far-future
-  expiries are both rejected; expiry is signed, not trusted. Verified with a
-  sub-second session.
-- **The OOD proxy path**, including against a simulated prefix-stripping proxy
-  reproducing `/rnode/<node>/<port>`.
-- **Field matching** against 15 realistic ServiceNow signatures across all three
-  UIs.
-- **Partition/GPU combinations** — every form combination checked against the
-  documented limits, zero violations.
-- **vLLM installs and imports** with the correct CUDA linkage.
+**Open:**
 
-### Not yet proven
-
-- **The model has never produced a draft.** Every backend test used a stub
-  returning canned JSON. Prompt quality — the actual point of the project — is
-  entirely unvalidated.
-- The GLM stack has not completed a run on a GPU node.
-- Draft write-back into a live ticket has not been confirmed end to end.
-
-### Open questions
-
-1. **Policy.** v0 deliberately excluded reading and writing ticket pages; the
-   extension now does both. This has not been reviewed against whatever blocked
-   ServiceNow API access, and it should be before wider use.
-2. **Distribution.** `Load unpacked` requires Developer mode, which managed
-   Chrome profiles often restrict. Reaching the wider team means the Web Store
-   or an enterprise policy push.
-3. **H200 nodes** (141 GB) would hold GLM comfortably on one card with far more
-   KV headroom than an A100. Worth checking which partition they sit in.
-4. **Reasoning models.** GLM-4.7-Flash runs with `--reasoning-parser glm45`. If
-   reasoning content leaks into the answer field, JSON parsing may need to
-   separate them.
-
----
-
-## 9. Running it
-
-```bash
-# 1. Capture test — no model, proves the data path
-#    OOD → My Sandbox Apps → "RC Copilot - Capture Test" → Launch
-#    Then open My Interactive Sessions; the extension self-configures.
-ls /scratch/$USER/rc_copilot_captures/
-
-# 2. The real thing
-#    OOD → My Sandbox Apps → "RC Copilot" → Launch
-#    Defaults: Qwen2.5-7B AWQ on any free GPU (fits a T4). GLM-4.7-Flash
-#    needs an 80 GB GPU.
-
-# 3. Prompt iteration — fastest loop, no extension, no OOD
-cd backend && .venv/bin/uvicorn app.main:app --port 8080
-#    then sign in with the printed token and paste tickets at http://127.0.0.1:8080
-```
-
-Helper scripts: `install_vllm.sh --check`, `check_gpus.sh`, `vllm_status.sh`,
-`ood-apps/rc-copilot/check_modes.sh`, `extension/check.py`.
-
----
-
-## 10. Suggested next step
-
-Run one real inference and push 20–30 real tickets through the local web UI at
-`127.0.0.1:8080`, tuning `prompts.py`. That loop needs no extension and no OOD,
-and it answers the only question that decides whether any of this is worth
-deploying: **are the drafts actually useful?**
-
-Everything built so far is plumbing around that untested core.
+1. **Policy.** Reading and writing ticket pages has not been reviewed against
+   whatever blocked ServiceNow API access; it should be before wider use.
+2. **Distribution.** *Load unpacked* needs Developer mode, which managed Chrome
+   profiles may block; the wider team needs the Web Store or a policy push.
+3. **GLM-4.7-Flash** is configured and cached but not yet compared with Qwen 7B
+   on reviewed tickets.

@@ -1,11 +1,14 @@
 # Model serving — vLLM on Explorer
 
 *Part of [RC Copilot](README.md). This page covers only the model layer: which
-GLM model fits Northeastern's A100 hardware and how vLLM is installed and
-launched. For what the project does, start with the [README](README.md); for how
-the pieces fit together, see [ARCHITECTURE.md](ARCHITECTURE.md).*
+models fit Explorer's GPUs, and how vLLM is installed and launched. For what the
+project does, start with the [README](README.md); for how the pieces fit
+together, see [ARCHITECTURE.md](ARCHITECTURE.md).*
 
-vLLM 0.29.0 serving GLM models on a single A100 node.
+vLLM 0.29.0 (+cu129). The default model is **Qwen2.5-7B-Instruct AWQ**
+(`t4-7b`, 4-bit, 16K context), which fits any usable GPU including a 16 GB T4;
+GLM-4.7-Flash (`flash`) needs an A100 80 GB or H200. The OOD app chooses the
+model and context from its form; this page is for serving by hand.
 
 ## Quick start
 

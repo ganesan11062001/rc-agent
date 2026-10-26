@@ -1,11 +1,24 @@
+# Tests
+
+| Test | What it proves | Run | Needs |
+| --- | --- | --- | --- |
+| `rc_kg/run_contract.sh` | The whole draft path against a real rc-kg and a stub model: grounding, citations, traces, evaluators, fallbacks, version mismatch, rc-kg down | `tests/rc_kg/run_contract.sh` | no GPU, ~5 min |
+| `lookups/test_lookups.py` | Only allowlisted, read-only commands run; injection text in a ticket runs nothing; timeouts | `backend/.venv/bin/python tests/lookups/test_lookups.py` | nothing |
+| `ticket_context/test_ticket_context.py` | Cleaning keeps every message and drops the noise; fitting to a budget | `backend/.venv/bin/python tests/ticket_context/test_ticket_context.py` | nothing |
+| `startup/` | The vLLM-log progress parser on a real log; a GPU-free slow start | `tests/startup/run_slow_start.sh` | no GPU |
+| `ui/` | The web page and the extension panel in headless Chromium | `tests/ui/run.sh` | Playwright (see its header) |
+| `run_inference_test.sbatch` | Real inference with the real prompt (below) | `sbatch ... run_inference_test.sbatch` | a GPU |
+
+Paths are relative to `ticketmate/`. The knowledge graph has its own tests in
+`../rc-kg/tests` and `../rc-kg/eval`.
+
+---
+
 # Inference test
 
 Answers one question: **can this cluster run inference, and does the RC Copilot
-prompt produce a usable draft?**
-
-Everything else in this repo has been validated against a stub that returned
-canned JSON. This is the first thing that puts a real model behind the real
-prompt.
+prompt produce a usable draft?** It puts a real model behind the real prompt,
+without OOD, the extension or rc-kg.
 
 Self-contained. It reads `backend/app/prompts.py` and `backend/app/models.py`
 and writes only into `tests/logs/`. Nothing outside `tests/` is modified.

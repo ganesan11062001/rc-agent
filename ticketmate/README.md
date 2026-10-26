@@ -1,293 +1,165 @@
-# RC Copilot
+# RC Copilot (TicketMate)
 
-**Draft replies to ServiceNow tickets using a private LLM running inside your
-own HPC allocation.** Built for the Research Computing team at Northeastern.
+**Draft replies to ServiceNow tickets with a private LLM running inside your
+own HPC job.** Built for the Research Computing team at Northeastern.
 
-One click on a ticket reads it, sends it to a model running in your Slurm job,
-and writes a draft into the work notes for you to review. No ticket data leaves
-the university, and no ServiceNow API access is needed.
+One click on a ticket reads it, sends it to a model in your Slurm job, and
+writes a draft into the work notes for you to review. The draft is grounded in
+the RC website and rc-docs, checked against live cluster facts (accounts,
+jobs, nodes), and comes with what to verify before sending. No ticket data
+leaves the university, and no ServiceNow API access is needed. **Nothing is
+ever submitted automatically** — you review, edit and click Update.
 
-> **Status:** working prototype, end to end. A real model has produced a
-> schema-valid draft on the cluster. Draft *quality* is now the open problem —
-> see [Status](#status).
-
----
-
-## The problem
-
-RC staff answer a lot of tickets that rhyme: out-of-memory kills, quota limits,
-module and environment mistakes, access requests. Writing each reply from
-scratch is repetitive.
-
-Two constraints shaped the whole design:
-
-- **No ServiceNow API access.** Org policy doesn't grant it, so anything that
-  reads a ticket has to work from what's already on screen.
-- **Ticket text can't leave Northeastern.** It contains researcher names and
-  unpublished work, which rules out any hosted LLM API.
-
-Together they force an unusual shape: the **browser** is the integration point,
-and the **model runs in the user's own Slurm allocation**.
-
----
-
-## How it works
+- **New here?** Follow [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md): install
+  once, then launch, draft, review.
+- **How it works inside:** [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Setting up a checkout or developing:** the
+  [repository README](../README.md#running-it).
 
 ![RC Copilot system architecture](docs/rc-architecture.png)
 
+---
 
-1. You open a ticket and click **Draft reply**.
-2. The extension reads the ticket and offers a box for anything the model should
-   know that the ticket doesn't say.
-3. It goes through Open OnDemand's authenticated proxy to a FastAPI service in
-   your Slurm job, which prompts a model served by vLLM (Qwen2.5-7B AWQ by
-   default; GLM-4.7-Flash on an 80 GB GPU).
-4. You get back a summary, suggested steps, a confidence score, caveats, and a
-   ready-to-edit draft — written into **work notes**, unsaved.
+## What happens when you click Draft reply
 
-**Nothing is ever submitted automatically.** A human reviews and clicks Update.
+1. The extension reads the ticket from the page — short description,
+   description, comments and work notes — plus any instructions you typed.
+2. It sends them, through Open OnDemand's SSO proxy, to the backend in your
+   Slurm job.
+3. The backend **cleans the ticket** (no notification emails, CC lists,
+   signatures; thread oldest first, each entry labelled RC staff or
+   researcher), runs **read-only cluster lookups** for what the ticket names,
+   and **retrieves** the most relevant RC website and rc-docs sections.
+4. The model (Qwen2.5-7B AWQ by default; GLM-4.7-Flash on an 80 GB GPU)
+   writes a summary, steps for you, a confidence score, caveats and the reply;
+   citations become exact links.
+5. The draft lands in **work notes** (or the field you chose), unsaved. The
+   panel shows *Check before sending* and the draft; steps, lookups, cited
+   pages, quality checks and a feedback form are one click away.
 
-### Every draft is traceable
+---
 
-Each draft writes one private record (`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json`,
-mode 600 in a mode-700 directory, `trace_version: 3`), modelled on what
-LangSmith tracks, with no external service: ticket text never leaves your run
-log.
-
-**Run tree.** The draft is a trace: a tree of runs, each with its own id,
-parent, type, start/end time, latency, status, error, inputs, outputs,
-metadata and tags.
-
-```
-draft                          chain       ticket in, reply out, total tokens
-├── rc_kg.retrieve             retriever   query in, documents (content + url, scores, signals) out
-│   ├── rc_kg.embed_query      embedding   ┐
-│   ├── rc_kg.vector_search    retriever   │ rc_kg's own stage timings
-│   ├── rc_kg.fulltext_search  retriever   │ (marked derived)
-│   ├── rc_kg.topic_boost      tool        │
-│   └── rc_kg.graph_expand     tool        ┘
-├── generate_draft             chain
-│   ├── llm  (each call)       llm         messages, invocation params, completion, finish reason, tokens
-│   └── parse_draft            parser      JSON validation (an error run if it fails)
-├── tokenize.prompt_breakdown  tool        prompt tokens by part: system / ticket / RC sources / instructions
-└── rc_kg.cite                 tool        references, removed URLs, citation-support verdicts
-```
-
-**Grouping and versions** (on the root run): `project` (which graph the draft
-was grounded in, e.g. `rc-copilot/full`), `session_id` (the Slurm job),
-`thread_id` (the ticket — all drafts for one ticket share it), node, GPU,
-model, the **prompt version** (a hash of every prompt template, so outputs can
-be compared across prompt revisions), the TicketMate commit, the rc_kg API
-version and the graph's build. The same `request_id` is returned by
-`/api/draft` and sent to rc_kg as `X-Request-ID`.
-
-**Feedback.** Every draft gets automatic feedback (`grounded`, `references`,
-`citations_flagged`, `urls_removed`, `retrieval_low_confidence`,
-`needed_fallback`). People add their own with `POST /api/feedback`
-(`{"request_id", "key", "score": -1..1, "comment", "correction"}`) or the CLI;
-it is stored beside the run.
-
-**Reading traces** — `cluster/traces.py`:
-
-```bash
-cluster/traces.py list                                  # newest drafts: tokens, latency, grounding
-cluster/traces.py show <request_id> [--io] [--prompt]   # the run tree, inputs/outputs, exact prompts
-cluster/traces.py runs --type llm --status error        # runs across all drafts, filtered
-cluster/traces.py runs --name rc_kg.retrieve --min-ms 1000 --meta strategy=json_object
-cluster/traces.py stats --by prompt_version             # per-step p50/p95, tokens, errors, feedback
-cluster/traces.py feedback <request_id> --key thumbs --score 1 --comment "sent as is"
-cluster/traces.py export drafts.csv                     # one row per draft, no ticket text
-```
-
-The run tree already paid for itself: it showed every session's first ticket
-spending ~3 s in retrieval (vs 0.15 s warm), which led to rc_kg warming its
-queries before reporting ready.
-
-rc_kg logs only request ids, timings and counts — never ticket text. `/scratch`
-is purged monthly; copy logs you need to keep to a private (mode 700) place.
-
-### Evaluation of every draft
-
-Each draft is evaluated as it is made, and every result is stored as feedback
-on its trace (so `cluster/traces.py stats --by prompt_version` compares them
-across models and prompt revisions):
-
-| metric | how | when | direction |
-|---|---|---|---|
-| **assertions** | code checks of the system prompt's rules — sign-off exact, no placeholder name, no invented ticket number, no promised timeline/exception, confidence consistent with caveats, summary ≤ 2 sentences — plus has steps, no URLs outside the sources, no citations to missing sources, cites sources when they were good | instant; shown in the UI | 1 = pass |
-| **hallucination** | LLM judge: share of claims supported by neither the sources nor the ticket; plus `hallucinated_urls` (invented links removed) and `unsupported_citation_rate` (citation check) | judge in the background | **lower is better** |
-| **correctness** | LLM judge (would it resolve the problem, given the sources); people's *Correct / Partly / Wrong*; `edit_similarity` between the draft and the reply actually sent | judge in background; people any time | higher |
-| **conciseness** | reply length against a target (≤180 words = 1, 0 at 450); LLM judge | instant + background | higher |
-| **answer relevance** | embedding similarity of ticket and reply (rc_kg's local model, `/similarity`); LLM judge | instant + background | higher |
-| **user satisfaction** | 👍/👎, 1–5 rating, *used as is / edited / not used*, comment, the reply as sent | the feedback form | higher |
-
-The judge is the serving model grading its own draft, after the reply has
-been returned (`ONLINE_EVAL`, `ONLINE_EVAL_SAMPLE_RATE`): use its scores for
-trends, and people's feedback as ground truth.
-
-**Feedback form.** Under every draft, in both the extension panel and the web
-page, with the automatic checks shown above it. In the extension, *Capture
-what's in the field* reads the reply as you edited it in ServiceNow, so the
-draft can be compared with what was actually sent.
+## Features in detail
 
 ### Ticket context: what the model actually reads
 
 The extension sends the whole ticket page; the backend cleans it before
-retrieval, lookups or the model see it (`app/ticket_context.py`):
+retrieval, lookups or the model see it (`backend/app/ticket_context.py`):
 
 - **Removed:** "Email sent" notifications (copies of comments already in the
   thread), every `To:`/`Cc:`/`From:` line and address list (the RC team is
   CC'd on almost every ticket), "Show email details" and avatar initials,
   signatures after a dashed rule, quoted reply chains, and ServiceNow's
-  automatic acknowledgement ("Thank you for reaching out ... Office Hours").
+  automatic acknowledgement.
 - **Compressed:** "Field changes" to one line (`Incident state: New -> In
   Progress`); "Email received" to its subject.
-- **Kept, word for word:** every comment and work note, ordered oldest first
-  and headed `[date time] Author, role (comment, visible to the researcher |
-  internal work note)`. The system prompt says internal notes must not be
-  revealed to the researcher.
-- **Labelled:** each author as `RC staff` or `researcher`. The notifications
-  sent to the RC team list its members (`g.murugan@...` is "Patel,
-  Gita"), and anyone who writes a work note is staff. The model reads the
-  newest RC staff entries as what has already been done; without the labels
-  it told a researcher to contact the systems team RC had already contacted.
+- **Kept, word for word:** every comment and work note, oldest first, headed
+  `[date time] Author, role (comment, visible to the researcher | internal
+  work note)`. Internal notes must not be revealed to the researcher, and the
+  prompt says so.
+- **Labelled:** each author as `RC staff` or `researcher`, so the model reads
+  the newest staff entries as what has already been done.
 
 **Retrieval searches the researcher's words, not the thread:** the short
-description, the description and the researcher's latest message, without
-greetings, sign-offs or signatures. Searching the whole cleaned thread
-matched RC's own words instead -- the acknowledgement pulled training and
-office-hours pages into 15 of 19 tickets, and staff names matched staff bios.
-The run log's `rc_kg.retrieve` step shows the query that was sent.
+description, the description and the researcher's latest message. Searching
+the whole thread matched RC's own wording instead (the acknowledgement pulled
+training pages into 15 of 19 tickets).
 
-On the 18 real tickets recorded so far this halves the ticket (73,793 ->
-37,449 characters) and removes ~35 addresses per ticket. The cleaned ticket
-then has to fit: the backend reads the model's context window from vLLM and
-gives the ticket what is left after the system prompt, the sources, the
-lookups and the reply (`MAX_TOKENS`), at most `TICKET_MAX_TOKENS` (6,000). A
-thread too long for that keeps its description, its first entry and as many
-of the newest entries as fit, with a marker saying how many were left out, so
-a huge ticket can no longer overflow the model. Under each draft the panel
-shows e.g. `ticket 14,210 -> 3,950 chars · removed 9 notification emails, 35
-addresses`; the run log keeps the raw text and the full statistics.
+On 18 real tickets cleaning halves the text (73,793 → 37,449 characters) and
+removes ~35 addresses per ticket. The result then has to fit: the backend
+reads the model's context window from vLLM and gives the ticket what is left
+after the system prompt, sources, lookups and the reply, at most
+`TICKET_MAX_TOKENS` (6,000). A longer thread keeps its description, first
+entry and newest entries, with a marker saying how many were left out. Under
+each draft: `ticket 14,210 → 3,950 chars · removed 9 notification emails, 35
+addresses`.
 
 ### Cluster lookups (read-only)
 
-Before drafting, the backend looks up what the ticket names, on the cluster,
-as you, inside your job, so the draft can state facts instead of guessing:
+The backend looks up what the ticket names, on the cluster, as you, inside
+your job:
 
 | ticket mentions | command | what the model gets |
 |---|---|---|
 | a username (`doe.l`) | `id doe.l` | the account exists, and its groups |
-| a job ID (`job 4812345`, `slurm-4812345.out`) | `sacct -j 4812345 --parsable2 ...` | state, exit code, run time, memory requested and used, partition, node |
-| a group (`the gaussian group`) | `getent group gaussian` | its size, and whether the ticket's users are in it (not the member list) |
-| a node (`d4043`, `UnavailableNodes:d4043`) | `scontrol show node d4043` | state, partitions, GPUs, CPUs/memory in use, and Slurm's reason if it is down or drained |
-| a partition (`jiang partition`, `-p short`, `nodes on ce-mri`) | `sinfo -h -N -p ce-mri -o %N\|%T\|%E` | node counts by state, and each down or drained node with its reason |
+| a job ID (`job 4812345`, `slurm-4812345.out`) | `sacct -j 4812345 --parsable2 ...` | state, exit code, run time and limit, memory requested and used, partition, node |
+| a group (`the gaussian group`) | `getent group gaussian` | its size, and whether the ticket's users are in it |
+| a node (`d4043`) | `scontrol show node d4043` | state, partitions, GPUs, CPUs/memory in use, Slurm's reason if down or drained |
+| a partition (`-p short`, `nodes on ce-mri`) | `sinfo -h -N -p ce-mri -o %N\|%T\|%E` | node counts by state, each down or drained node with its reason |
 
 **Lookups only.** Those five programs are the only ones that can run, with
-fixed arguments; nothing that changes, updates or deletes data is reachable.
-They are exec'd without a shell, and an argument from the ticket must fully
-match a strict pattern or it is dropped, so a ticket cannot make anything else
-run. Email addresses (the RC team is CC'd on most tickets) are never treated as
+fixed arguments, exec'd without a shell; an argument from the ticket must
+fully match a strict pattern or it is dropped; email addresses are never
 usernames. At most 4 users, 3 jobs, 2 groups, 3 nodes and 2 partitions per
-draft, 5 s each; a word that only looked like a partition name and has no
-nodes leaves no line. The panel
-and the web page list every command that ran and what it found; the run log
-keeps the full output. Turn it off with `CLUSTER_LOOKUPS=false`
-(`app/lookups.py`, tested by `tests/lookups/test_lookups.py`).
+draft, 5 s each. The panel lists every command and its result; the run log
+keeps the output. Off with `CLUSTER_LOOKUPS=false`; tested by
+`tests/lookups/test_lookups.py`, including that injection text runs nothing.
 
-### Grounded in the RC website
+### Grounded in the RC website and rc-docs
 
-Each ticket is also matched against the rc.northeastern.edu website and the
-rc-docs.northeastern.edu documentation, served from a Neo4j knowledge graph by
-[rc-kg](../rc-kg) in the same job. The most
-relevant sections go into the prompt as numbered sources; the model cites them
-as `[S1]`, and the backend turns those into a numbered **References** block in
-the reply (and a Sources line in the steps) with the exact page links. The
-model never writes a URL: one it writes anyway is checked against what was
-retrieved and removed if it is not there, with a caveat saying so.
+Each ticket is matched against rc.northeastern.edu and
+rc-docs.northeastern.edu, served from a Neo4j knowledge graph by
+[rc-kg](../rc-kg) in the same job. The six most relevant sections go into the
+prompt as numbered sources; the model cites them as `[S1]`, and the backend
+turns those into a **References** block with exact page links. The model never
+writes a URL: one it writes anyway is checked against what was retrieved and
+removed if it is not there.
 
-rc_kg starts automatically with the session and needs no setup beyond a graph
-snapshot (`rc-kg/scripts/build_graph.sh`, run once). If
-it is missing or still loading, drafts work exactly as before, with a caveat
-that they were not checked against the website. `/api/health` reports it as
-`knowledge_graph`.
+rc-kg starts with the session and loads its graph in 1–2 minutes; until then,
+or if it is down, drafts are written ungrounded with a caveat saying so.
+`RC_KG_VARIANT=full` (website + rc-docs, default) or `website`; on the same 45
+questions `full` finds the right page in the top 6 for 98% vs 69%
+([evidence](../rc-kg/README.md#graph-variants)). The backend requires rc-kg's
+HTTP API **1.x** and drafts ungrounded rather than misreading a different
+major version.
 
-Two graphs are available: `RC_KG_VARIANT=full` (website + docs, the default)
-or `website` (RC website only), e.g.
-`sbatch --export=ALL,RC_KG_VARIANT=website cluster/serve_stack.sbatch`;
-`/api/health` names the one in use.
+### Every draft is traceable
 
-Requires the rc_kg HTTP API **1.x** (tested against rc_kg `v1.4.0`; see its
-`API_CONTRACT.md`). The backend checks `api_version` and, on a different major
-version, drafts ungrounded with a caveat naming both versions rather than
-misreading fields. `tests/rc_kg/run_contract.sh` (no GPU, ~2 min) checks the
-integration end to end: grounding and citations against a real rc_kg, an
-incompatible rc_kg refused, and rc_kg down.
+Each draft writes one private record,
+`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json` (mode 600 in a
+mode-700 directory), modelled on LangSmith with no external service: a tree of
+runs (cleaning, lookups, retrieval and rc-kg's own stages, each model call,
+parsing, citations, evaluation), the exact prompts, tokens and timings, and the
+versions — model, prompt version (a hash of every template), TicketMate commit,
+rc-kg API and graph build. `cluster/traces.py` reads them:
+
+```bash
+cluster/traces.py list                                  # newest drafts: tokens, latency, grounding
+cluster/traces.py show <request_id> [--io] [--prompt]   # the run tree, inputs/outputs, exact prompts
+cluster/traces.py runs --type llm --status error        # runs across all drafts, filtered
+cluster/traces.py stats --by prompt_version             # per-step p50/p95, tokens, errors, feedback
+cluster/traces.py export drafts.csv                     # one row per draft, no ticket text
+```
+
+rc-kg logs only request ids, timings and counts — never ticket text. `/scratch`
+is purged monthly.
+
+### Evaluation of every draft
+
+| metric | how | when |
+|---|---|---|
+| **assertions** | code checks of the prompt's rules: exact sign-off, no placeholder name, no invented ticket number, no promised timeline, confidence consistent with caveats, short summary, has steps, no URLs outside the sources, cites the sources when they were good (not when you gave instructions) | instant, shown in the panel |
+| **hallucination, correctness** | LLM judge against the sources and the ticket; invented URLs removed; people's *Correct / Partly / Wrong*; similarity between the draft and the reply actually sent | background; any time |
+| **conciseness, relevance** | reply length against a target; embedding similarity of ticket and reply | instant |
+| **user satisfaction** | 👍/👎, 1–5, *used as is / edited / not used*, comment | the feedback form |
+
+The judge is the serving model grading its own draft (`ONLINE_EVAL`): use it
+for trends; people's feedback is the ground truth.
 
 ---
 
-## Quick start
+## Running it
 
-**0 — Install the OOD app, once:**
-`/projects/rc/projects/ticketmate/rc-copilot/install.sh`. It links
-`~/ondemand/dev/rc-copilot` to the published release, so updates reach you on
-your next launch. (Setting up a fresh checkout is covered in the
-[repository README](../README.md#running-it).)
+- **As an RC member:** [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md).
+- **Maintainer setup, batch jobs, tests:** the
+  [repository README](../README.md#running-it).
+- **Prompt iteration without the browser:** run the backend against any vLLM
+  endpoint and paste tickets into its web page —
+  [backend/README.md](backend/README.md).
 
-**1 — Launch the backend.** In Open OnDemand: *Develop → My Sandbox Apps →
-RC Copilot → Launch*. It defaults to Qwen2.5-7B AWQ (4-bit) on any free GPU,
-which fits a T4 and schedules in seconds; pick GLM-4.7-Flash with an 80 GB GPU
-for stronger drafts.
-
-**2 — Install the extension.** Unzip `rc-copilot-extension.zip` (published in
-`/projects/rc/projects/ticketmate/rc-copilot/`; built into
-[`dist/`](dist/rc-copilot-extension.zip) here), then `chrome://extensions` →
-Developer mode → **Load unpacked** → select the folder.
-
-**3 — Open OOD's "My Interactive Sessions".** The extension picks up the
-address and token on its own; there's nothing to copy.
-
-**4 — Open a ticket** and click **Draft reply**. The panel takes half the
-page; change it with **⅓ / ½ / ⅔** in its header or by dragging its left edge
-(double-click the edge for half again), and it remembers your width. Under the
-instructions box, quick chips (*Follow up / close*, *Ask for missing details*,
-*Shorter*, *Step-by-step*, *Mark resolved*) fill in common instructions, and
-**Write the draft into** picks work notes, additional comments or both. It always shows where the draft was written, how sure the model is,
-**Check before sending** and the draft itself; steps, cluster lookups, the RC
-pages cited (as links), quality checks, ticket/model details and the feedback
-form are collapsible sections underneath, and stay open once you open them.
-
-A fresh session takes a few minutes to load the model (longer the first time a
-model is downloaded) and 1–2 minutes to load the knowledge graph. Meanwhile the
-panel shows a progress display instead of an error:
-
-- **the model's loading stage**, read from vLLM's log, with its own counters
-  (weight shards, CUDA-graph passes);
-- **the knowledge graph's checklist**, from Neo4j to query warm-up;
-- **elapsed time**.
-
-It checks every 3 s and signs in when the model is up. If the model is ready
-before the graph, you can draft straight away; those drafts just won't cite RC
-pages yet. A load that fails, such as an out-of-memory error, shows the stage
-it failed at and vLLM's error message. The same data is in the `startup` field
-of `/api/health` (see [`app/startup.py`](backend/app/startup.py)). The web
-page's status line and the toolbar popup show it too.
-
-### Without the browser at all
-
-The fastest loop for tuning the prompt needs neither the extension nor OOD:
-
-```bash
-cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env            # point VLLM_BASE_URL at a running vLLM
-.venv/bin/uvicorn app.main:app --port 8080
-```
-
-Sign in at `http://127.0.0.1:8080` with the access token printed at startup,
-paste tickets, and edit [`app/prompts.py`](backend/app/prompts.py). Getting a
-vLLM endpoint and tunnelling to it is in
-[backend/README.md](backend/README.md#standard-process-the-node-changes-every-time).
+A fresh session takes a few minutes to load the model and 1–2 minutes to load
+the graph; the panel shows both progress displays (vLLM's loading stage, the
+graph's checklist) instead of an error, and drafts as soon as the model is up.
 
 ---
 
@@ -295,84 +167,16 @@ vLLM endpoint and tunnelling to it is in
 
 | Path | What it is |
 | --- | --- |
-| [`backend/`](backend) | FastAPI service — prompt, vLLM client, auth, rc-kg grounding, run logs, evaluation. Knows nothing about ServiceNow |
-| [`extension/`](extension) | Chrome MV3 extension |
-| [`ood-apps/rc-copilot/`](ood-apps/rc-copilot) | OOD interactive app: vLLM + backend in one job |
-| [`ood-apps/capture-test/`](ood-apps/capture-test) | Same, no model — stores what's sent, for testing the data path |
-| [`cluster/`](cluster) | Slurm launchers, install and diagnostic scripts |
-| [`tests/`](tests) | Standalone inference test — run it on the cluster, no browser or OOD needed |
-| [`tests/rc_kg/`](tests/rc_kg) | Contract test against a real rc-kg (`run_contract.sh`, no GPU) |
-| [`tests/ui/`](tests/ui) | Headless-browser tests of the extension panel and the web page (`run.sh`) |
-| [`tests/startup/`](tests/startup) | Startup progress: the vLLM-log parser against a real log (`test_vllm_progress.py`), and a GPU-free slow start (`run_slow_start.sh`) |
-| [`dist/`](dist) | Packaged extension zip |
-| [`docs/`](docs) | Diagram and extension guide |
-| [`../rc-kg/`](../rc-kg) | The knowledge graph the drafts are grounded in (a sibling in this monorepo) |
-
-Helper scripts live in `cluster/`: `install_vllm.sh --check`, `check_gpus.sh`,
-`vllm_status.sh`, `smoke_test.py`, `traces.py`.
-
----
-
-## A few things worth knowing
-
-**The structured output is validated, not trusted.** The model returns JSON;
-three strategies are tried (constrained decoding → JSON mode → prompt-only) and
-whatever comes back is parsed tolerantly and checked against a schema. The
-high/medium/low confidence thresholds are applied *server-side* — the model
-supplies a number, we decide what it means.
-
-**The extension can't fetch from the page.** An MV3 content script runs in the
-page's origin and is subject to CORS, so all network I/O goes through the
-service worker, where `host_permissions` applies instead.
-
-**Three ServiceNow UIs, one content script.** Classic puts the form in an
-iframe, Next Experience hides fields in shadow DOM, Service Portal uses its own
-id convention. Rather than three sets of selectors, fields are found by a
-shadow-piercing DOM walk matched on id, name, `aria-label` and label text.
-
-**Drafts go to work notes by default**, not to customer-visible comments — so a
-mis-click on Update can't send unreviewed model output to a researcher. Two
-other targets can be chosen in the toolbar popup: *additional comments*, and
-*both* (analysis to work notes, reply to comments). Nothing is ever saved
-either way; a human still clicks Update.
-
----
-
-## Status
-
-**Proven**
-
-- Full data path with real tickets: ServiceNow → extension → OOD → Slurm job →
-  disk, including ticket-number extraction
-- Auth against tampered signatures and forged expiries
-- The OOD proxy path, field matching across all three UIs, partition/GPU limits
-
-- **Real inference on the cluster.** Qwen2.5-3B on a T4 (`d1025`) produced a
-  schema-valid draft from the real prompt in 13.9s — summary, 5 steps,
-  confidence 0.80, 4 caveats, a 729-character reply
-- **Real tickets.** Qwen2.5-7B AWQ, the OOD default, has drafted replies to
-  real INC/TASK tickets from the extension (September and October 2026). Those
-  runs predate the rc-kg grounding and the trace format above
-- **Grounding and tracing** pass the contract test against a real rc-kg, with a
-  stub model
-
-**Not yet good enough**
-
-- **Draft quality.** The first real run exposed three prompt defects: the model
-  copied caveats verbatim from the prompt's example list (3 of 4 were
-  contradicted by the ticket), signed off `[Your Name]`, and gave generic
-  "check your versions" advice where the error text already named the fault.
-  All three are now addressed in `prompts.py` and need re-testing
-- **No grounded draft from a real model on record yet.** The rc-kg-grounded
-  path has been exercised only with a stub model
-- **Ticket cleaning is new** (see *Ticket context* above): checked on the
-  18 recorded tickets and in tests, not yet judged on draft quality over many
-  real drafts
-
-**Next step:** work through 20–30 real tickets in grounded sessions, tuning
-[`app/prompts.py`](backend/app/prompts.py) until the drafts are worth sending,
-and compare drafts before and after ticket cleaning (`cluster/traces.py stats
---by prompt_version`).
+| [`backend/`](backend) | FastAPI service: the draft pipeline, prompts, vLLM client, rc-kg client, lookups, run log, evaluation, auth; plus the paste-a-ticket web page in `web/` |
+| [`extension/`](extension) | Chrome MV3 extension: the panel on ServiceNow |
+| [`ood-apps/rc-copilot/`](ood-apps/rc-copilot) | OOD interactive app: vLLM + backend + rc-kg in one job |
+| [`ood-apps/capture-test/`](ood-apps/capture-test) | Same, no model — stores what is sent, to test the data path |
+| `ood-apps/publish.sh`, `install.sh` | Release the app for RC members; link it into a member's sandbox |
+| [`cluster/`](cluster) | Slurm launchers, vLLM install, diagnostics, `traces.py` |
+| [`tests/`](tests) | Inference, contract, startup, lookups, ticket-context and UI tests |
+| [`dist/`](dist) | The packaged extension zip |
+| [`docs/`](docs) | Diagram and the extension/OOD guide |
+| [`../rc-kg/`](../rc-kg) | The knowledge graph (sibling in this monorepo) |
 
 ---
 
@@ -380,21 +184,28 @@ and compare drafts before and after ticket cleaning (`cluster/traces.py stats
 
 | Document | For |
 | --- | --- |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Full design: components, security model, design decisions, deployment |
-| [VLLM_SETUP.md](VLLM_SETUP.md) | Model layer: which GLM fits A100 hardware, and the CUDA install trap |
-| [docs/EXTENSION.md](docs/EXTENSION.md) | Extension + OOD apps in detail |
-| [backend/README.md](backend/README.md) | Backend configuration and API |
-| [tests/README.md](tests/README.md) | Running the inference test on a GPU |
-| [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md) | Install and use, for RC team members |
+| [ood-apps/MEMBERS.md](ood-apps/MEMBERS.md) | **Getting started** for RC team members: install, launch, draft |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Design: the draft pipeline, components, security, decisions, deployment, tests |
+| [backend/README.md](backend/README.md) | Backend configuration, API, running it by hand |
+| [docs/EXTENSION.md](docs/EXTENSION.md) | The extension and the OOD apps in detail |
+| [VLLM_SETUP.md](VLLM_SETUP.md) | The model layer: models, GPUs, the CUDA install trap |
+| [tests/README.md](tests/README.md) | The inference test on a GPU |
 | [../rc-kg/README.md](../rc-kg/README.md) | The knowledge graph: build, serve, evaluate |
 
 ---
 
-## Caveats
+## Status
 
-This is a prototype built against one institution's setup. Hostnames, partition
-names and GPU types are Northeastern-specific and would need changing elsewhere.
+**Working:** real drafts on real tickets with Qwen2.5-7B AWQ, grounded in the
+graph, with lookups, cleaned context and per-draft evaluation; the full path
+ServiceNow → extension → OOD → Slurm job and back; auth against tampered
+sessions; field matching across all three ServiceNow UIs.
 
-Every draft is a starting point. The model can be confidently wrong — that's why
-`caveats` is a first-class field in the response and is shown but deliberately
-never written into the ticket.
+**Being improved:** draft quality, ticket by ticket from reviewed drafts —
+each reviewed failure becomes a case in `rc-kg/eval/ticket_cases.yaml`. Open
+questions (policy review, distributing the extension, GLM vs Qwen) are in
+[ARCHITECTURE.md](ARCHITECTURE.md#11-status-and-open-questions).
+
+Every draft is a starting point. The model can be confidently wrong — that is
+why *Check before sending* is shown with every draft and never written into the
+ticket. Hostnames, partitions and GPU types are Northeastern-specific.
