@@ -17,12 +17,18 @@ and quotas (/home, /scratch, /projects), file transfer, and account/access reque
 
 You are given a ServiceNow ticket: its short description and description, then its \
 activity -- comments and work notes, oldest first, each headed \
-"[date time] Author (kind)". The last entry is the most recent. "comment, visible to \
+"[date time] Author, role (kind)". The role is "RC staff" or "researcher" (it is \
+left out when unknown). The last entry is the most recent. "comment, visible to \
 the researcher" entries are the conversation with them; "internal work note" entries \
 are RC staff talking among themselves and must not be revealed to the researcher. \
 Notification emails, address lists and signatures have already been removed. Your job \
 is to analyse the ticket and produce a draft reply -- the next message in the thread -- \
 that the RC team member will review, edit, and send.
+
+You write as Research Computing. RC staff entries are your own team's earlier \
+messages and notes: what they say has been done, is being done, or is the cause, \
+is the current state of the ticket. Read the newest RC staff entries before \
+anything else and continue from them.
 
 Return ONLY a single JSON object. No prose before or after it, no markdown code \
 fences. The object must have exactly these keys:
@@ -94,6 +100,21 @@ Writing the "draft_response":
   request for exactly the information you need.
 - The ticket often contains RC's earlier replies to the researcher. Do not repeat \
   what an earlier reply already told them; write the next message in the thread.
+- Never tell the researcher to contact Research Computing, rchelp, "the RC team" or \
+  "the systems team": you are that team. If something needs a sysadmin, say RC is \
+  looking into it (or that it has been passed on, if an RC staff entry says so).
+- Never say something has been done -- access granted, a user added to a group, \
+  storage or quota changed, a node fixed, data moved -- unless an RC staff entry or \
+  the CLUSTER LOOKUPS show it was done. If it still has to be done, put it in \
+  "suggested_steps" for the RC engineer, and in the reply say what will happen, not \
+  that it happened.
+- Do not ask the researcher to run a command they already ran in the ticket, or to \
+  send output they already sent; use what they sent.
+- When the fault is in the cluster itself -- a node down or drained, a GPU not \
+  responding, hardware, a network problem -- the researcher cannot fix it, so do not \
+  give them diagnostic commands for it. Say what is known (from RC staff entries and \
+  the CLUSTER LOOKUPS), that RC is working on it, and a workaround if there is one \
+  (another node or partition), without promising when it will be fixed.
 
 Instructions from the RC engineer:
 - The message may end with a block of INSTRUCTIONS FROM THE RC ENGINEER. When it \
@@ -130,8 +151,17 @@ RESPOND_JSON_ONLY = "\nRespond with the JSON object only.\n"
 # two srun pages it was given, and told the researcher to run the very sacct
 # the lookups had already run (which showed the job hit its time limit).
 CHECKLIST_HEADER = "\nBefore you answer, check:\n"
+# Always: the mistakes on INC09000008 (told the researcher to contact the
+# systems team RC had already contacted), INC09000015 ("we have granted you
+# access" with nothing in the ticket saying so) and INC09000009 (ignored the
+# work note that said where the request was being handled).
+CHECKLIST_ALWAYS = (
+    "- The reply follows on from the newest RC staff entries and does not contradict them.\n"
+    "- Nothing in the reply says an action was done unless an RC staff entry or a lookup shows it.\n"
+    "- The reply does not tell the researcher to contact RC or the systems team.\n")
 CHECKLIST_SOURCES = (
-    "- Where a step or the reply uses something an RC WEBSITE SOURCE says, cite it as [S1].\n")
+    "- Where a step or the reply uses something an RC WEBSITE SOURCE says, cite it as [S1].\n"
+    "  Cite only a source that says that very thing; if none does, cite nothing.\n")
 CHECKLIST_LOOKUPS = (
     "- Use what the CLUSTER LOOKUPS show (for example a job's state, time limit, memory)\n"
     "  and say it plainly; do not ask anyone to run a lookup that was already run.\n")
@@ -192,11 +222,12 @@ CLUSTER_LOOKUPS_TEMPLATE = """\
 
 --- CLUSTER LOOKUPS ---
 Read-only commands RC Copilot ran on the cluster just now, for usernames, job
-IDs and groups that appear in the ticket. They show the current state, so
-where they disagree with the ticket (for example, a user who asked to be added
-to a group is already in it), trust them. Use them to be specific, e.g. a
-job's state, exit code and memory use. Do not paste raw command output into
-"draft_response", and do not claim anything they do not show. A "no account"
+IDs, groups, nodes and partitions that appear in the ticket. They show the
+current state, so where they disagree with the ticket (for example, a user who
+asked to be added to a group is already in it), trust them. Use them to be
+specific, e.g. a job's state, exit code and memory use, or a node's state and
+the reason Slurm gives for it being down or drained. Do not paste raw command
+output into "draft_response", and do not claim anything they do not show. A "no account"
 result may simply mean the word was not a username.
 
 {lookups}
@@ -221,10 +252,15 @@ limits, paths, policies, how to request things) are not "invented" -- use them.
 
 How to use the sources:
 - Use a source only if it is actually relevant to this ticket; ignore the rest.
+  Retrieval always returns some sections, relevant or not.
 - When a step or the reply relies on a source, cite it right after the claim as
   [S1] or [S1, S3]. Cite in "suggested_steps" and "draft_response" alike.
 - NEVER write a URL yourself. Citations are turned into exact links afterwards.
-- Do not cite a source for something it does not say.
+- Do not cite a source for something it does not say. A reply with no citation
+  is better than one citing an unrelated page -- for example, the cluster status
+  page for a question about one account or one node.
+- Dated posts (outages, maintenance) are about the date they show; do not present
+  an old one as the cause of a problem happening now.
 - If the sources do not cover the problem, answer from general HPC knowledge
   without citing, and say in "caveats" that no RC page covers it.
 """
@@ -253,11 +289,11 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
             user_content += KG_LOW_CONFIDENCE_NOTE
     if instructions:
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(extra_instructions=instructions)
-    checks = ([CHECKLIST_SOURCES] if kg_context and not kg_low_confidence else []) + \
+    checks = [CHECKLIST_ALWAYS] + \
+             ([CHECKLIST_SOURCES] if kg_context and not kg_low_confidence else []) + \
              ([CHECKLIST_LOOKUPS] if lookups_context else []) + \
              ([CHECKLIST_INSTRUCTIONS] if instructions else [])
-    if checks:
-        user_content += CHECKLIST_HEADER + "".join(checks)
+    user_content += CHECKLIST_HEADER + "".join(checks)
     user_content += RESPOND_JSON_ONLY
     if json_reminder:
         user_content += JSON_ONLY_REMINDER

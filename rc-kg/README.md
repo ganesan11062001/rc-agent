@@ -301,10 +301,29 @@ IN_CATEGORY=77  CHILD_OF=15`. Every section has a 384-dim `bge-small-en-v1.5`
 embedding. `LINKS_TO` includes 81 website → docs and 19 docs → website
 edges.
 
-51 sections are hidden from retrieval as duplicates: 22 texts repeat across
+41 sections are hidden from retrieval as duplicates: 23 texts repeat across
 pages (the "How Can Research Computing Support You?" footer appears 26 times;
 staff bios are repeated on every event page). One canonical copy stays
 retrievable and the others carry `duplicate_of`.
+
+43 more are kept in the graph but not retrieved because they are about people,
+not support (`ingest/run.py`, `_mark_not_support`): the Research Computing Team
+and From the AVP pages, posts in the Researcher Spotlight and From the AVP
+categories, and 6 bios repeated elsewhere (the AVP's on the home page). On 19
+real tickets these were in the top 6 whenever a ticket named a person or
+carried a signature -- the AVP is CC'd on every ticket.
+
+Feed sections keep only their lead (`feed_lead`): a section whose bullets are
+the titles of posts already in the graph. The Status Updates page was one
+11,682-character section listing every status post; it matched any ticket
+about storage, maintenance or access, and only its first 2,500 characters ever
+reached the model. Now it is its first paragraph ("The Explorer Cluster is
+fully operational ..."), and each update is retrieved as its own dated post.
+The same rule trims the Blogs, Tech Tool Tips and From the AVP indexes.
+
+Retrieval regressions from reviewed tickets are in `eval/ticket_cases.yaml`
+(`python -m eval.ticket_cases`): pages a ticket must not get, pages it must,
+and tickets no page covers, which must come back `low_confidence`.
 
 ---
 
@@ -380,13 +399,20 @@ graph without polluting results), and a `section_search` fulltext index over
    MENTION those topics get a small boost. Vector bridges paraphrase ("my job
    got killed" → the OOM section); fulltext catches exact tokens
    (`seff`, `gpu-interactive`, an error string). At most 3 sources per page.
+   Status posts (outages, maintenance, purges) older than 30 days have their
+   score multiplied by 0.6 unless the query is itself about an outage or
+   maintenance: last April's "Explorer and Discovery are Down" is not why one
+   node is down today.
 2. **Graph expansion,** per seed: neighbouring sections (`NEXT`, both ways),
    linked RC pages (`LINKS_TO`), linked external docs (`LINKS_OUT`, mostly
    rc-docs, where the commands live) and topics.
 3. **Output:** numbered sources `[S1]…` with exact URLs and publish dates, a
    `context` block ready to paste into a prompt, `allowed_urls`, and
-   `low_confidence` when the best vector match is under 0.78 (on-topic
-   tickets score 0.85–0.93; "what's the weather in Boston" scores 0.74).
+   `low_confidence` when the best vector match is under 0.83 (the eval
+   questions score 0.84–0.93; off-topic questions such as "how do I reset my
+   Canvas password" at most 0.80). Calibrated on short queries -- TicketMate
+   sends the subject, description and the researcher's latest message, not the
+   whole thread, which scores high whatever it says.
 
 ## API contract and versioning
 
@@ -614,6 +640,6 @@ seff and job-array tips).
 | `retrieval/` | Embedding providers, GraphRAG retriever, citation enforcement and support check, CLI |
 | `api/` | FastAPI service for TicketMate |
 | `API_CONTRACT.md` | The v1 HTTP contract clients rely on |
-| `eval/` | Retrieval: `run.py` (build gate), `retrieval_eval.py` + `metrics.py` (RAGAS + ranking, CIs), `ragas_llm.py` (LLM-judged). Graph: `graph_eval.py`. Citations: `citation_check.py`, `citation_review.py`, `draft_batch.py`. Contract: `contract_check.py` |
+| `eval/` | Retrieval: `run.py` (build gate), `ticket_cases.py` (regressions from reviewed tickets), `retrieval_eval.py` + `metrics.py` (RAGAS + ranking, CIs), `ragas_llm.py` (LLM-judged). Graph: `graph_eval.py`. Citations: `citation_check.py`, `citation_review.py`, `draft_batch.py`. Contract: `contract_check.py` |
 | `scripts/` | `build_graph.sh`, `build_runtime.sh`, `serve_kg.sh`, `with_kg.sh`, `kg_ps.sh`, `contract_test.sh`, `eval_env.sh`, `ragas_eval.sh` (sharing `_kg_instance.sh`); dev Neo4j install / start / stop / dump |
-| `tests/` | 72 unit tests: sectioning, anchors, URLs, duplicates, topics, citations, claims, query building |
+| `tests/` | 90 unit tests: sectioning, anchors, URLs, duplicates, people and feed pages, topics, citations, claims, query building |

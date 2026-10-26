@@ -138,13 +138,26 @@ retrieval, lookups or the model see it (`app/ticket_context.py`):
 - **Removed:** "Email sent" notifications (copies of comments already in the
   thread), every `To:`/`Cc:`/`From:` line and address list (the RC team is
   CC'd on almost every ticket), "Show email details" and avatar initials,
-  signatures after a dashed rule, quoted reply chains.
+  signatures after a dashed rule, quoted reply chains, and ServiceNow's
+  automatic acknowledgement ("Thank you for reaching out ... Office Hours").
 - **Compressed:** "Field changes" to one line (`Incident state: New -> In
   Progress`); "Email received" to its subject.
 - **Kept, word for word:** every comment and work note, ordered oldest first
-  and headed `[date time] Author (comment, visible to the researcher |
+  and headed `[date time] Author, role (comment, visible to the researcher |
   internal work note)`. The system prompt says internal notes must not be
   revealed to the researcher.
+- **Labelled:** each author as `RC staff` or `researcher`. The notifications
+  sent to the RC team list its members (`g.murugan@...` is "Patel,
+  Gita"), and anyone who writes a work note is staff. The model reads the
+  newest RC staff entries as what has already been done; without the labels
+  it told a researcher to contact the systems team RC had already contacted.
+
+**Retrieval searches the researcher's words, not the thread:** the short
+description, the description and the researcher's latest message, without
+greetings, sign-offs or signatures. Searching the whole cleaned thread
+matched RC's own words instead -- the acknowledgement pulled training and
+office-hours pages into 15 of 19 tickets, and staff names matched staff bios.
+The run log's `rc_kg.retrieve` step shows the query that was sent.
 
 On the 18 real tickets recorded so far this halves the ticket (73,793 ->
 37,449 characters) and removes ~35 addresses per ticket. The cleaned ticket
@@ -167,13 +180,17 @@ as you, inside your job, so the draft can state facts instead of guessing:
 | a username (`doe.l`) | `id doe.l` | the account exists, and its groups |
 | a job ID (`job 4812345`, `slurm-4812345.out`) | `sacct -j 4812345 --parsable2 ...` | state, exit code, run time, memory requested and used, partition, node |
 | a group (`the gaussian group`) | `getent group gaussian` | its size, and whether the ticket's users are in it (not the member list) |
+| a node (`d4043`, `UnavailableNodes:d4043`) | `scontrol show node d4043` | state, partitions, GPUs, CPUs/memory in use, and Slurm's reason if it is down or drained |
+| a partition (`jiang partition`, `-p short`, `nodes on ce-mri`) | `sinfo -h -N -p ce-mri -o %N\|%T\|%E` | node counts by state, and each down or drained node with its reason |
 
-**Lookups only.** Those three programs are the only ones that can run, with
+**Lookups only.** Those five programs are the only ones that can run, with
 fixed arguments; nothing that changes, updates or deletes data is reachable.
 They are exec'd without a shell, and an argument from the ticket must fully
 match a strict pattern or it is dropped, so a ticket cannot make anything else
 run. Email addresses (the RC team is CC'd on most tickets) are never treated as
-usernames. At most 4 users, 3 jobs and 2 groups per draft, 5 s each. The panel
+usernames. At most 4 users, 3 jobs, 2 groups, 3 nodes and 2 partitions per
+draft, 5 s each; a word that only looked like a partition name and has no
+nodes leaves no line. The panel
 and the web page list every command that ran and what it found; the run log
 keeps the full output. Turn it off with `CLUSTER_LOOKUPS=false`
 (`app/lookups.py`, tested by `tests/lookups/test_lookups.py`).

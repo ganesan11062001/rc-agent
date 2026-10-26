@@ -47,6 +47,7 @@ class Report:
     recovered_from_sitemap: List[str] = field(default_factory=list)
     docs: Dict = field(default_factory=dict)
     duplicate_sections: Dict[str, int] = field(default_factory=dict)
+    not_retrievable: Dict = field(default_factory=dict)
     internal_links: Dict[str, int] = field(default_factory=dict)
     redirected_links: Dict[str, str] = field(default_factory=dict)
     broken_internal_links: List[str] = field(default_factory=list)
@@ -114,6 +115,68 @@ def _mark_duplicates(rows: List[Dict], ctype: Dict[str, str]) -> Dict[str, int]:
                 hidden += 1
             r["retrievable"] = False
     return {"repeated_texts": repeated, "copies_hidden_from_retrieval": hidden}
+
+
+# Who people are and the AVP's letters: never the answer to a support ticket,
+# but retrieved by any ticket that names a person or carries a signature. On
+# 19 real tickets (2026-10) "RC Home > Alex Morgan, PhD" and the a researcher
+# spotlight were in the top 6 for an access request, a node outage and a GPU
+# fault -- a.morgan is on every ticket's CC list, and "Pat" signed one.
+NOT_SUPPORT_CATEGORIES = {"Researcher Spotlight", "From the AVP"}
+PEOPLE_PAGE_PATHS = ("/research-computing-team", "/from-the-avp")
+_TITLES = re.compile(r",?\s*(?:Ph\.?\s?D|M\.?D|M\.?S)\.?$", re.I)
+_PERSON = re.compile(r"[A-Z][\w'.-]*(?: \(?[A-Z][\w'.-]*\)?){1,3}")
+_NOT_NAME_WORDS = {"research", "computing", "how", "overview", "support", "student", "students",
+                   "team", "alumni", "assistants", "office"}
+
+
+def _person(heading: str) -> Optional[str]:
+    """A heading that is a person's name ("Sam Rivera, PhD"), normalised."""
+    h = _TITLES.sub("", heading.strip())
+    if not _PERSON.fullmatch(h) or {w.strip("()").lower() for w in h.split()} & _NOT_NAME_WORDS:
+        return None
+    return h.lower()
+
+
+def _mark_not_support(rows: List[Dict], page_categories: Dict[str, Set[str]]) -> Dict[str, int]:
+    """Hide people and news-from-leadership content from retrieval: whole
+    pages in NOT_SUPPORT_CATEGORIES or at PEOPLE_PAGE_PATHS, and any section
+    elsewhere headed with the name of someone those people pages introduce
+    (a bio repeated on the home page or a tips page). Like duplicates, the
+    sections stay in the graph; only `retrievable` changes."""
+    people_pages = {r["page_url"] for r in rows
+                    if r["page_url"].rstrip("/").endswith(PEOPLE_PAGE_PATHS)}
+    names = {n for r in rows if r["page_url"] in people_pages for n in [_person(r["heading"])] if n}
+    by_page = by_name = 0
+    for r in rows:
+        if not r["retrievable"]:
+            continue
+        if r["page_url"] in people_pages or page_categories.get(r["page_url"], set()) & NOT_SUPPORT_CATEGORIES:
+            r["retrievable"] = False
+            by_page += 1
+        elif _person(r["heading"]) in names:
+            r["retrievable"] = False
+            by_name += 1
+    return {"people_or_leadership_pages": by_page, "bios_elsewhere": by_name}
+
+
+def feed_lead(text: str, post_titles: List[str]) -> Optional[str]:
+    """If this text is a feed -- bullets that begin with the titles of posts
+    already in the graph -- return only what comes before the first of them.
+
+    The Status Updates page lists every status post in one 11,682-character
+    section. As a whole it matched any ticket about storage, maintenance or
+    access (6 of 19 real tickets), and only its first 2,500 characters ever
+    reached the model. Each update is its own post, with its own date; the
+    page's own words are the lead ("The Explorer Cluster is fully operational").
+    """
+    titles = sorted({t.strip() for t in post_titles if len(t.strip()) >= 12}, key=len, reverse=True)
+    lines = text.split("\n")
+    hits = [i for i, line in enumerate(lines)
+            if line.startswith("- ") and any(line[2:].startswith(t) for t in titles)]
+    if len(hits) < 3:
+        return None
+    return "\n".join(lines[:hits[0]]).strip()
 
 
 def _resolve_internal(
@@ -281,11 +344,18 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
     broken: Set[str] = set()
     per_type_sections: Counter = Counter()
 
+    post_titles = [it.title for it in by_url.values() if it.content_type == "post"]
+    feeds_trimmed: Dict[str, int] = {}
     for url, it in by_url.items():
         parsed = split_sections(it.content_html)
         if not parsed:
             rep.warnings.append("%s produced no sections" % url)
             continue
+        for p in parsed:
+            lead = feed_lead(p.text, post_titles) if it.content_type == "page" else None
+            if lead:
+                feeds_trimmed["%s > %s" % (url, p.heading)] = len(p.text) - len(lead)
+                p.text = lead
 
         inline_ids = anchors_mod.inline_heading_ids(it.content_html)
         # One live fetch per page, only if some heading still needs an id.
@@ -398,6 +468,10 @@ def ingest(clear: bool = False, report_path: Optional[str] = None) -> Report:
         for url in docs["report"].pages_without_sections:
             rep.warnings.append("%s produced no sections" % url)
 
+    page_categories = {url: {all_categories[c] for c in it.categories if c in all_categories}
+                       for url, it in by_url.items()}
+    rep.not_retrievable = dict(_mark_not_support(section_rows, page_categories),
+                               feed_chars_removed=feeds_trimmed)
     rep.duplicate_sections = _mark_duplicates(section_rows, ctype)
     writer.upsert_sections(section_rows)
     writer.link_next(next_rows)

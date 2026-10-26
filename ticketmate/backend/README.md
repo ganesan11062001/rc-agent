@@ -317,7 +317,7 @@ All settings live in `.env` (see `.env.example` for the annotated version).
 | `RC_KG_TIMEOUT_SECONDS` | `15` | Only matters if rc-kg is wedged |
 | `TICKET_CONTEXT_CLEANING` | `true` | Strip notification emails, address lists, signatures and quotes; order the thread oldest first ([app README](../README.md#ticket-context-what-the-model-actually-reads)) |
 | `TICKET_MAX_TOKENS` | `6000` | Most of the prompt the ticket may take; it also always fits the model's context window |
-| `CLUSTER_LOOKUPS` | `true` | Read-only `id` / `sacct` / `getent group` lookups for names and job IDs in the ticket ([app README](../README.md#cluster-lookups-read-only)) |
+| `CLUSTER_LOOKUPS` | `true` | Read-only `id` / `sacct` / `getent group` / `scontrol show node` / `sinfo` lookups for names, job IDs, nodes and partitions in the ticket ([app README](../README.md#cluster-lookups-read-only)) |
 | `CLUSTER_LOOKUP_TIMEOUT_SECONDS` | `5` | Per command |
 | `APP_PORT` | `8080` | Used by `python -m app.main` |
 | `TEMPERATURE` | `0.2` | Low keeps the JSON stable |
@@ -383,7 +383,7 @@ backend/
     models.py       Pydantic models + the JSON schema sent to the server
     prompts.py      Prompt templates  <- tune here
     kg_client.py    rc-kg retrieval and citation processing
-    lookups.py      Read-only cluster lookups (id, sacct, getent group) for the ticket
+    lookups.py      Read-only cluster lookups (id, sacct, getent, scontrol, sinfo) for the ticket
     ticket_context.py  Cleans the scraped ticket and fits it to the context window
     evaluators.py   Per-draft checks and the background LLM judge
     runlog.py       The private per-draft run log

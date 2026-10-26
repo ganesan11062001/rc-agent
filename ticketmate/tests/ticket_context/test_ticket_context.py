@@ -145,6 +145,81 @@ check("note number 0 " in f.text, "the first entry is kept")
 check("please request --mem=32G" in f.text, "the newest entry is kept")
 same = fit(p, 100000)
 check(same.text == p.text and same.stats["entries_omitted"] == 0, "nothing changes when it already fits")
+check(f.query == lp.query and f.query, "fitting keeps the retrieval query")
+
+print("who is who")
+check("Rivera, Sam, RC staff (" in t, "a work-note writer is RC staff on every entry")
+check("Lovelace, Ada, researcher (comment" in t, "the caller's comments are the researcher's")
+
+TEAM2 = "s.rivera@northeastern.edu, jor.lee@northeastern.edu, x.other@northeastern.edu"
+NODE_TICKET = """Ticket: INC0000077
+
+Short description: Re: d4043 GPU not work
+
+Description:
+Hi,
+
+Hope all's well.
+The nvidia-smi command is not responding on d4043.
+srun: Required node not available (down, drained or reserved)
+
+Thanks,
+Grace
+--
+Grace Hopper | Example Lab | 617.555.0100
+
+Work notes / activity:
+GH
+Hopper, Grace
+Additional comments (Customer Viewable Field)•10/22/2026 09:00:00 AM
+RITM Update: reply from: g.hopper@northeastern.edu
+
+Hi, it worked this morning but now my job is pending again.
+
+Best,
+Grace
+CJ
+Rivera, Sam
+Additional comments (Customer Viewable Field)•10/21/2026 09:23:18 AM
+Hello Grace,
+
+I have messaged the systems team to check on why the node is down.
+System
+Email sent•10/21/2026 09:23:23 AM
+Email sent
+Subject:
+Incident INC0000077 has had comments added.
+From:
+Northeastern University
+To:
+%(team)s
+Show email details
+SK
+Lee, Jordan
+Field changes•10/21/2026 09:22:36 AM
+Incident state
+In ProgresswasNew
+AS
+Administrator, System
+Additional comments (Customer Viewable Field)•10/21/2026 09:00:00 AM
+Thank you for reaching out to Research Computing. We will respond to your inquiry as soon as possible.
+
+The RC team also offers Office Hours every Wednesday.
+""" % {"team": TEAM2}
+n = prepare(NODE_TICKET)
+check("Rivera, Sam, RC staff (comment" in n.text, "a team address (s.rivera) makes its owner RC staff")
+check("Lee, Jordan, RC staff (" in n.text, "jor.lee is Lee, Jordan")
+check("Hopper, Grace, researcher (comment" in n.text, "an emailed reply from outside the team is the researcher's")
+check("Office Hours" not in n.text and n.stats["auto_replies_removed"] == 1, "the automatic acknowledgement is gone")
+qy = n.query
+check(qy.startswith("d4043 GPU not work"), "query starts with the subject, without Re: (%r)" % qy[:40])
+check("srun: Required node not available" in qy, "a description line that looks like a label is kept")
+check("now my job is pending again" in qy, "the researcher's latest message is in the query")
+check("messaged the systems team" not in qy, "staff replies are not in the query")
+check(not re.search(r"Hope all|Thanks|Best|Grace|617\.555|reply from|Office Hours", qy),
+      "no greeting, sign-off, signature or acknowledgement in the query: %r" % qy)
+check(prepare("My job 123456 failed with OOM.\n\nThanks,\nAda").query == "My job 123456 failed with OOM.",
+      "pasted text: the query is the text without its sign-off")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)

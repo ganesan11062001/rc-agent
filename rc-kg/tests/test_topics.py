@@ -38,3 +38,13 @@ def test_generic_words_do_not_tag_outages():
     topics = load_topics()
     assert "Maintenance and outages" not in match_topics("use the drop down menu", topics)
     assert "Maintenance and outages" in match_topics("Explorer is down", topics)
+
+
+def test_one_node_down_is_not_an_outage():
+    topics = load_topics()
+    for ticket in ("Node d1004 is down, my job is pending",
+                   "many of the nodes on ce-mri and ai-jumpstart are down",
+                   "the GPU on d4043 is down"):
+        assert "Maintenance and outages" not in match_topics(ticket, topics), ticket
+    assert "Maintenance and outages" in match_topics("Explorer and Discovery are Down", topics)
+    assert "Maintenance and outages" in match_topics("Open OnDemand is down again", topics)

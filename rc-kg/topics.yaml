@@ -113,8 +113,12 @@ topics:
 
   - name: Maintenance and outages
     description: Scheduled maintenance, the MGHPCC shutdown, outages and status.
-    aliases: [maintenance, maintenance window, annual shutdown, MGHPCC, outage, outages, is down, are down,
-              fully operational, status updates, cluster status, degraded]
+    # Whole-service phrases only. A bare "is down" made "node d1004 is down"
+    # an outage ticket and pulled last spring's outage posts into it.
+    aliases: [maintenance, maintenance window, annual shutdown, shutdown, downtime, data center, MGHPCC, outage, outages,
+              cluster is down, clusters are down, cluster down, Explorer is down, Discovery is down,
+              Discovery are down, OOD is down, Open OnDemand is down, can't log in to Explorer,
+              cannot log in to Explorer, fully operational, status updates, cluster status, degraded]
 
   - name: Policies
     description: Cluster use policies, account continuity, acknowledgements.

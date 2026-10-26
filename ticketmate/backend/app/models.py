@@ -58,7 +58,7 @@ class Reference(BaseModel):
 class ClusterLookup(BaseModel):
     """One read-only command run for this draft (app/lookups.py)."""
 
-    kind: str          # "user" | "job" | "group"
+    kind: str          # "user" | "job" | "group" | "node" | "partition"
     target: str
     command: str       # as shown, e.g. "id doe.l"
     ok: bool

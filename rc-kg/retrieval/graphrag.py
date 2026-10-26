@@ -22,6 +22,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from config import get_settings
@@ -54,6 +55,25 @@ _FULLTEXT_WEIGHT = 1.0
 _TOPIC_MODE = "idf"
 # At most this many sources from one page, so one long page cannot fill k.
 _MAX_PER_PAGE = 3
+
+# Status posts (outages, maintenance, purges) are news: last April's "Explorer
+# and Discovery are Down" is not why a node is down today, yet it ranked in
+# the top 6 for node-down tickets. Once a status post is older than this, its
+# score is multiplied by _STALE_FACTOR -- unless the ticket is itself about an
+# outage or maintenance, where an old post may be the one being asked about.
+# Down-weighted rather than dropped: for "globus" on the website alone, the
+# Globus maintenance post is still the best page there is. Swept 2026-10-26:
+# the node-down regression cases pass at 0.4-0.7 alike (the outage alias and
+# the short query fix those); 0.4 pushed "globus" out of the website top 5,
+# 0.6 keeps it and gives the best MRR on both graphs.
+_STATUS_CATEGORIES = {"Status Updates", "Explorer Status", "Discovery Status", "AICR"}
+_OUTAGE_TOPIC = "Maintenance and outages"
+_STALE_AFTER_DAYS = 30
+_STALE_FACTOR = 0.6
+
+# Best vector score under which the result is flagged low_confidence; see
+# where it is used for the measurement.
+LOW_CONFIDENCE_BELOW = 0.83
 
 # Tickets are long and full of log noise. Fulltext gets the distinctive words,
 # capped so the Lucene query stays small.
@@ -182,9 +202,21 @@ RETURN sid,
        prev.heading AS prev_heading, prev.text AS prev_text,
        nxt.heading AS next_heading, nxt.text AS next_text,
        [(s)-[:MENTIONS]->(t:Topic) | t.name] AS topics,
+       [(p)-[:IN_CATEGORY]->(c:Category) | c.name] AS categories,
        [(s)-[:LINKS_TO]->(q:Page) | {title: q.title, url: q.url + '/'}] AS links,
        [(s)-[:LINKS_OUT]->(e:ExternalLink) | e.url] AS external_links
 """
+
+
+def _is_stale_status_post(row: Dict, today: date) -> bool:
+    if row["content_type"] != "post" or not (
+            set(row["categories"] or []) & _STATUS_CATEGORIES or _OUTAGE_TOPIC in (row["topics"] or [])):
+        return False
+    try:
+        published = datetime.fromisoformat((row["published"] or "")[:10]).date()
+    except ValueError:
+        return False
+    return (today - published).days > _STALE_AFTER_DAYS
 
 
 def _clip(text: Optional[str], n: int) -> str:
@@ -193,7 +225,7 @@ def _clip(text: Optional[str], n: int) -> str:
 
 
 def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
-             candidates: int = 30) -> RetrievalResult:
+             candidates: int = 30, today: Optional[date] = None) -> RetrievalResult:
     s = get_settings()
     events = s.include_events_in_retrieval if include_events is None else include_events
     query = query.strip()
@@ -275,9 +307,20 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
         rows = {r["sid"]: r for r in sess.run(EXPAND, sids=order[: k * 4])}
         lap("expand", t)
 
+    today = today or date.today()
+    outage_ticket = _OUTAGE_TOPIC in query_topics
+    stale = 0
+    for sid in order[: k * 4]:
+        if not outage_ticket and _is_stale_status_post(rows[sid], today):
+            fused[sid] *= _STALE_FACTOR
+            signals[sid]["stale"] = 1
+            stale += 1
+    counts["stale_status_posts"] = stale
+    order = sorted(order[: k * 4], key=fused.get, reverse=True)
+
     ranked: List[str] = []
     per_page: Dict[str, int] = {}
-    for sid in order[: k * 4]:
+    for sid in order:
         page = rows[sid]["page_url"]
         if per_page.get(page, 0) >= _MAX_PER_PAGE:
             continue
@@ -312,12 +355,16 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             external_links=sorted(set(r["external_links"])),
         ))
 
-    # Measured on this corpus with bge-small: on-topic tickets put their best
-    # section at 0.85-0.93, an unrelated question ("weather in Boston") tops
-    # out at 0.74. Below the gap, tell the caller rather than let the LLM
-    # answer confidently from noise.
+    # Below the gap, tell the caller rather than let the LLM answer
+    # confidently from noise. 0.78 was set on whole-ticket queries, which
+    # score high whatever they say: on 19 real tickets it never fired, not even
+    # for a node outage no page covers. Re-measured 2026-10-26 on short
+    # queries (subject, description, latest message), bge-small, full graph:
+    # the 45 eval questions score 0.840-0.93, twelve off-topic questions
+    # (parking, Canvas, Outlook, payroll) at most 0.801, and the node-down
+    # ticket INC09000010 0.815.
     best_vec = max((x.vector_score or 0.0 for x in sources), default=0.0)
-    low = best_vec < 0.78
+    low = best_vec < LOW_CONFIDENCE_BELOW
 
     allowed = []
     for src in sources:
@@ -339,9 +386,10 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             "settings": {"k": k, "candidates": candidates, "rrf_k": _RRF_K,
                          "topic_mode": _TOPIC_MODE, "topic_weight": round(topic_weight, 4),
                          "fulltext_weight": _FULLTEXT_WEIGHT, "max_per_page": _MAX_PER_PAGE,
+                         "stale_after_days": _STALE_AFTER_DAYS, "stale_factor": _STALE_FACTOR,
                          "embedding_model": emb.model},
             "best_vector_score": round(best_vec, 4),
-            "low_confidence_threshold": 0.78,
+            "low_confidence_threshold": LOW_CONFIDENCE_BELOW,
             "context_chars": len(context),
         },
     )

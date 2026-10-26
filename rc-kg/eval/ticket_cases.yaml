@@ -1,0 +1,132 @@
+# Retrieval regression cases from real tickets reviewed by the RC team.
+#
+# Unlike questions.yaml (researcher-style questions with pages that answer
+# them), these record what went WRONG on real tickets, so a change that brings
+# a failure back is caught. Queries are what TicketMate now sends rc_kg -- the
+# subject, the description and the researcher's latest message -- reworded so
+# no names, usernames or IDs of real people are kept.
+#
+#   never:      pages no case may retrieve (people, leadership letters)
+#   must_not:   pages this case must not retrieve
+#   expected:   at least one of these pages must be in the top k
+#   low_confidence: true when no page covers the problem, so the flag must be up
+#
+# A page matches if the retrieved section's page URL equals it (no fragment,
+# no trailing slash). Run:  python -m eval.ticket_cases
+#
+# Written 2026-10-26 from the review of INC09000008, INC09000009,
+# INC09000010, INC09000017 and the other 15 tickets drafted that week.
+
+never:
+  - https://rc.northeastern.edu/research-computing-team
+  - https://rc.northeastern.edu/from-the-avp
+  - https://rc.northeastern.edu/2025/04/30/rc-spring-researcher-spotlight-series-david-kaeli
+  - https://rc.northeastern.edu/2025/01/27/rc-spring-researcher-spotlight-series-paul-whitford
+  - https://rc.northeastern.edu/2026/03/09/researcher-spotlight-mingwang-zhong
+
+# Outage posts and the status page: wrong for anything about one node.
+_outages: &outages
+  - https://rc.northeastern.edu/2026/04/19/explorer-and-discovery-are-down
+  - https://rc.northeastern.edu/2026/04/07/explorer-open-ondemand-ood-is-down
+  - https://rc.northeastern.edu/status-updates
+
+cases:
+  - id: INC09000009
+    why: "access-application status got the cluster status page and a spotlight, cited the status page"
+    query: |
+      Application
+
+      I recently filled out the application for access to the cluster (at least I think I did).
+      Can you let me know if there's been any progress on my application? If not, what do I need to do next?
+    must_not:
+      - https://rc.northeastern.edu/status-updates
+    expected:
+      - https://rc.northeastern.edu/getting-access
+      - https://rc.northeastern.edu/service-catalog
+      - https://rc.northeastern.edu/2025/04/30/all-about-explorer-and-the-new-h200-gpus
+
+  - id: INC09000010
+    why: "nodes down on two partitions: status page cited; no page covers partition node outages"
+    query: |
+      Nodes down
+
+      I notice that many of the nodes on ce-mri and ai-jumpstart are down. Any reason for this?
+    must_not: *outages
+    low_confidence: true
+
+  - id: INC09000008
+    why: "one GPU node not responding: retrieved staff bios, AVP posts and the status page"
+    query: |
+      GPU node not working
+
+      We are experiencing an issue with our node d4043. The nvidia-smi command is not responding,
+      and we are unable to check the GPU status. Could you please help us investigate and resolve this issue?
+
+      I think in the morning it worked again. But now it doesn't work. My slurm job shut down at noon.
+      squeue shows: PD 0:00 1 (ReqNodeNotAvail, UnavailableNodes:d4043)
+    must_not: *outages
+
+  - id: node-down-reqnodenotavail
+    why: "the bare 'is down' alias made this an outage ticket and pulled in both outage posts"
+    query: "Node d1004 is down, my job is stuck pending with reason ReqNodeNotAvail"
+    must_not: *outages
+
+  - id: INC09000014
+    why: "one node down in a lab partition"
+    query: |
+      Node d3168 in my lab partition having issues
+
+      Node d3168 is currently down. Whenever I try to request it specifically I get the following:
+      srun: Required node not available (down, drained or reserved)
+    must_not: *outages
+
+  - id: INC09000017
+    why: "GPU idle warning reply; the status page came third"
+    query: |
+      Explorer - Idle Usage Warning
+
+      This 15 minute idle is really annoying - it takes me 25 minutes to load the model and I was
+      disconnected several times tonight. Please fix.
+    must_not:
+      - https://rc.northeastern.edu/status-updates
+    expected:
+      - https://rc-docs.northeastern.edu/en/latest/gpus/idlebot.html
+      - https://rc.northeastern.edu/2025/11/04/debugging-unexpected-job-termination-on-explorer
+
+  - id: INC09000001
+    why: "the auto-acknowledgement in the thread pulled training pages over the R docs"
+    query: |
+      RStudio Session aborted
+
+      Once I create an rmd file from RStudio, it pops up a Session aborted issue for me. What should I do?
+    expected:
+      - https://rc-docs.northeastern.edu/en/latest/software/systemwide/r.html
+
+  - id: INC09000005
+    why: "srun hanging after allocation: a PI-leaves policy page and the status page ranked second and third"
+    query: |
+      srun hanging after job has been allocated resources
+
+      I'm trying to log into a node in my lab's partition, but srun appears to be hanging after printing
+      "srun: job 10945531 has been allocated resources". I've tried three times in the past hour; the longest
+      hung 10+ minutes. squeue shows the job is running.
+    must_not:
+      - https://rc.northeastern.edu/status-updates
+    expected:
+      - https://rc-docs.northeastern.edu/en/latest/runningjobs/interactiveandbatch.html
+
+  - id: INC09000015
+    why: "follow-up question about a separate server and the project storage"
+    query: |
+      Accounts on Explorer
+
+      Could you please grant me access to Explorer and our group's space on Explorer?
+
+      I was wondering if the H100 server in our department is connected to this Explorer storage space.
+    must_not:
+      - https://rc.northeastern.edu/status-updates
+    expected:
+      - https://rc.northeastern.edu/getting-access
+      - https://rc.northeastern.edu/data-storage-options
+      - https://rc-docs.northeastern.edu/en/latest/datamanagement/transferringdata.html
+      - https://rc-docs.northeastern.edu/en/latest/datamanagement/globus.html

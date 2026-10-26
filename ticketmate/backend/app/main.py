@@ -251,9 +251,12 @@ async def draft(request: DraftRequest):
     lookups_task = asyncio.create_task(cluster_lookups()) if settings.cluster_lookups else None
 
     # Ground the draft in the RC website. Never fatal: without it the draft is
-    # produced exactly as before, with a caveat saying so.
+    # produced exactly as before, with a caveat saying so. Retrieval searches
+    # the researcher's own words (subject, description, latest message), not
+    # the thread: RC's replies and signatures matched staff bios and the
+    # status page instead of the question.
     t = time.perf_counter()
-    kg = await kg_client.retrieve(ticket, request_id=request_id)
+    kg = await kg_client.retrieve(prepared.query or ticket, request_id=request_id)
     timings["retrieve"] = int((time.perf_counter() - t) * 1000)
     found_lookups = await lookups_task if lookups_task else []
     lookups_context = lookups.prompt_text(found_lookups)
@@ -272,7 +275,8 @@ async def draft(request: DraftRequest):
     fitted = ticket_context.fit(prepared, int(budget_tokens * ticket_context.CHARS_PER_TOKEN))
     ticket = fitted.text
     context_info = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(ticket),
-                        context_window=window, budget_tokens=budget_tokens)
+                        context_window=window, budget_tokens=budget_tokens,
+                        retrieval_query_chars=len(prepared.query))
     if fitted.stats.get("entries_omitted") or fitted.stats.get("truncated_chars"):
         tr.root.tags.append("ticket_trimmed")
     tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")

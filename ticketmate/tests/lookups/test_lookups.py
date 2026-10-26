@@ -51,8 +51,28 @@ elif name == "sacct":
         time.sleep(30)
     else:
         print("JobID|JobName|User|Account|Partition|State|ExitCode|Elapsed|Timelimit|ReqMem|MaxRSS|AllocCPUS|NodeList|Start|End")
+elif name == "scontrol":
+    if args == ["show", "node", "d4043"]:
+        print("NodeName=d4043 Arch=x86_64 CoresPerSocket=16")
+        print("   CPUAlloc=0 CPUEfctv=32 CPUTot=32 CPULoad=0.01")
+        print("   Gres=gpu:a100:4(S:0-1)")
+        print("   OS=Linux 5.14.0 #1 SMP")
+        print("   RealMemory=512000 AllocMem=0 FreeMem=500000 Sockets=2 Boards=1")
+        print("   State=DOWN+DRAIN+NOT_RESPONDING ThreadsPerCore=1 TmpDisk=0 Weight=1")
+        print("   Partitions=jlab,gpu")
+        print("   BootTime=2026-10-01T08:00:00 SlurmdStartTime=2026-10-01T08:01:00")
+        print("   Reason=GPU ECC errors [root@2026-10-20T11:12:13]")
+    else:
+        print("Node %%s not found" %% args[2]); sys.exit(1)
+elif name == "sinfo":
+    if args[3] == "ce-mri":
+        print("c0601|idle|none")
+        print("c0602|down*|Not responding")
+        print("c0602|down*|Not responding")
+        print("c0603|drained|network maintenance")
+        print("c0604|allocated|none")
 """
-for prog in ("id", "getent", "sacct"):
+for prog in ("id", "getent", "sacct", "scontrol", "sinfo"):
     p = fakebin / prog
     p.write_text(FAKE % {"calls": str(calls)})
     p.chmod(p.stat().st_mode | stat.S_IXUSR)
@@ -104,13 +124,19 @@ found = asyncio.run(lookups.run(TICKET, timeout=2.0))
 check(time.time() - t0 < 10, "finished promptly (%.1fs)" % (time.time() - t0))
 argvs = ran()
 progs = {a[0].rsplit("/", 1)[-1] for a in argvs}
-check(progs <= {"id", "getent", "sacct"}, "only id, getent and sacct ran: %s" % sorted(progs))
+check(progs <= {"id", "getent", "sacct", "scontrol", "sinfo"},
+      "only id, getent, sacct, scontrol and sinfo ran: %s" % sorted(progs))
 for a in argvs:
     prog, args = a[0].rsplit("/", 1)[-1], a[1:]
     if prog == "id":
         ok = len(args) == 1 and lookups.USERNAME.fullmatch(args[0])
     elif prog == "getent":
         ok = len(args) == 2 and args[0] == "group" and lookups.GROUP.fullmatch(args[1])
+    elif prog == "scontrol":
+        ok = len(args) == 3 and args[:2] == ["show", "node"] and lookups.NODE.fullmatch(args[2])
+    elif prog == "sinfo":
+        ok = (len(args) == 6 and args[:3] == ["-h", "-N", "-p"] and lookups.PARTITION.fullmatch(args[3])
+              and args[4:] == ["-o", "%N|%T|%E"])
     else:
         ok = (len(args) == 4 and args[0] == "-j" and lookups.JOB_ID.fullmatch(args[1])
               and args[2] == "--parsable2" and args[3].startswith("--format="))
@@ -130,6 +156,32 @@ check(g is not None and "smith.j" not in g.output, "other members are not passed
 check(g is not None and "x.y" not in g.summary, "membership only for accounts that exist (%s)" % (g and g.summary))
 miss = [lk for lk in found if lk.kind == "user" and not lk.ok]
 check(all("no account" in lk.summary for lk in miss), "unknown users reported as such")
+
+print("nodes and partitions")
+NODES = """d4043 GPU not work. squeue shows (ReqNodeNotAvail, UnavailableNodes:d4043).
+Many of the nodes on ce-mri and nosuchpart are down. Not nodes: explorer-02, c0602.out, /home/c0603
+Nasty: d4044;touch %(p)s  -p x$(touch %(p)s)
+""" % {"p": pwned}
+nc = lookups.find_candidates(NODES)
+check(nc.nodes == ["d4043", "d4044"], "node names found, not hostnames/files/paths: %s" % nc.nodes)
+check(nc.partitions[:2] == ["ce-mri", "nosuchpart"], "partitions from 'nodes on X and Y': %s" % nc.partitions)
+nf = asyncio.run(lookups.run(NODES, timeout=2.0))
+nby = {(lk.kind, lk.target): lk for lk in nf}
+nd = nby.get(("node", "d4043"))
+check(nd is not None and nd.ok and "DOWN+DRAIN" in nd.summary and "GPU ECC errors" in nd.summary,
+      "scontrol: state and Slurm's reason (%s)" % (nd and nd.summary))
+check(nd is not None and "OS=" not in nd.output and "Gres=gpu:a100:4" in nd.output,
+      "only the node fields a draft needs are passed on")
+check(not nby[("node", "d4044")].ok and "no node" in nby[("node", "d4044")].summary, "unknown node reported")
+pt = nby.get(("partition", "ce-mri"))
+check(pt is not None and pt.ok and pt.summary.startswith("4 nodes") and "c0602 down* -- Not responding" in pt.output
+      and "c0603 drained -- network maintenance" in pt.output and "c0601" not in pt.output,
+      "sinfo: counts by state, problem nodes with reasons, a node listed twice counted once (%s)"
+      % (pt and pt.output.replace("\n", " | ")))
+check(("partition", "nosuchpart") not in nby, "a word that is not a partition leaves no line")
+check(not pwned.exists(), "nothing in the ticket was executed")
+check(all(p[0].rsplit("/", 1)[-1] in {"id", "getent", "sacct", "scontrol", "sinfo"} for p in ran()),
+      "still only the five read-only programs")
 
 print("timeouts and missing commands")
 t0 = time.time()

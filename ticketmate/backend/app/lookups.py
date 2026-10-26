@@ -10,9 +10,9 @@ These run inside the RC member's own Slurm job, as them, on text a researcher
 wrote. So the rules are strict, and enforced here rather than trusted to the
 model, which never chooses a command:
 
-- Lookups only. The only programs ever run are `id`, `getent group` and
-  `sacct`, each with a fixed argument list. Nothing that changes, updates or
-  deletes anything is reachable from this module.
+- Lookups only. The only programs ever run are `id`, `getent group`, `sacct`,
+  `scontrol show node` and `sinfo`, each with a fixed argument list. Nothing
+  that changes, updates or deletes anything is reachable from this module.
 - No shell. Commands are exec'd with an argv list, so `;`, `$( )`, backticks
   or quotes in a ticket are just characters.
 - Every argument taken from the ticket must fully match a strict pattern
@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 MAX_USERS = 4
 MAX_JOBS = 3
 MAX_GROUPS = 2
+MAX_NODES = 3
+MAX_PARTITIONS = 2
 MAX_OUTPUT_CHARS = 2000
 
 # What an argument must look like, in full, before it is passed to a command.
@@ -43,6 +45,9 @@ MAX_OUTPUT_CHARS = 2000
 USERNAME = re.compile(r"[a-z][a-z0-9-]{0,30}\.[a-z][a-z0-9-]{0,30}")
 JOB_ID = re.compile(r"[1-9][0-9]{4,9}")
 GROUP = re.compile(r"[a-z][a-z0-9_-]{2,31}")
+# Explorer's compute nodes: c0602, d4043.
+NODE = re.compile(r"[a-z]{1,2}[0-9]{4}")
+PARTITION = re.compile(r"[a-z][a-z0-9_-]{1,31}")
 
 # Tokens shaped like a username that are really file names or abbreviations.
 _NOT_USER_SUFFIXES = {
@@ -66,12 +71,25 @@ _JOB_CANDIDATES = [
     re.compile(r"\b(?:sacct|seff|scontrol show job)\s+(?:-j\s*)?([1-9][0-9]{4,9})\b"),
 ]
 _GROUP_CANDIDATE = re.compile(r"\b([A-Za-z][A-Za-z0-9_-]{2,31})\s+(?:unix\s+)?group\b")
+# "UnavailableNodes:d4043" counts; "explorer-02", "x.c0602" and "c0602.out" do not.
+_NODE_CANDIDATE = re.compile(r"(?<![\w./@-])([a-z]{1,2}[0-9]{4})(?![\w@/-]|\.[a-z0-9])")
+_PARTITION_CANDIDATES = [
+    re.compile(r"\b([a-z][a-z0-9_-]{1,31})\s+partition\b", re.I),
+    re.compile(r"\bpartition\s*[:=]?\s*([a-z][a-z0-9_-]{1,31})\b"),
+    re.compile(r"(?:\s-p\s*|--partition[= ])([a-z][a-z0-9_-]{1,31})\b"),
+    # "the nodes on ce-mri and ai-jumpstart are down"
+    re.compile(r"\bnodes\s+(?:on|in)\s+(?:the\s+)?([a-z][a-z0-9_-]{1,31})(?:\s*(?:,|and|&)\s*([a-z][a-z0-9_-]{1,31}))?"),
+]
+_NOT_PARTITIONS = _NOT_GROUPS | {"this", "that", "which", "each", "every", "specific", "default", "any",
+                                 "slurm", "settings", "name", "names", "list", "is", "was", "nodes", "node", "jobid",
+                                 "having", "has", "have", "are", "were", "with", "for", "and", "to", "on",
+                                 "in", "of", "not", "request", "requests", "limits", "limit", "time", "info"}
 
 
 @dataclass
 class Lookup:
     """One command that ran (or was skipped), for the prompt, the UI and the run log."""
-    kind: str                     # "user" | "job" | "group"
+    kind: str                     # "user" | "job" | "group" | "node" | "partition"
     target: str
     command: str                  # as displayed, e.g. "id doe.l"
     ok: bool
@@ -89,6 +107,8 @@ class Candidates:
     users: List[str] = field(default_factory=list)
     jobs: List[str] = field(default_factory=list)
     groups: List[str] = field(default_factory=list)
+    nodes: List[str] = field(default_factory=list)
+    partitions: List[str] = field(default_factory=list)
 
 
 def _first(seen: List[str], value: str, pattern: "re.Pattern[str]", limit: int) -> None:
@@ -113,6 +133,13 @@ def find_candidates(ticket_text: str) -> Candidates:
         name = m.group(1).lower()
         if name not in _NOT_GROUPS:
             _first(c.groups, name, GROUP, MAX_GROUPS)
+    for m in _NODE_CANDIDATE.finditer(ticket_text):
+        _first(c.nodes, m.group(1), NODE, MAX_NODES)
+    found = sorted((m.start(), g.lower()) for p in _PARTITION_CANDIDATES for m in p.finditer(ticket_text)
+                   for g in m.groups() if g)
+    for _, name in found:
+        if name not in _NOT_PARTITIONS and not NODE.fullmatch(name):
+            _first(c.partitions, name, PARTITION, MAX_PARTITIONS)
     return c
 
 
@@ -217,11 +244,56 @@ async def _group(name: str, users: List[str], timeout: float) -> Lookup:
     return Lookup("group", name, " ".join(argv), True, summary, summary, ms)
 
 
+# What the draft needs from `scontrol show node`; the rest (sockets, kernel,
+# energy counters) is noise in a prompt.
+_NODE_FIELDS = ("NodeName", "State", "Partitions", "Gres", "CPUAlloc", "CPUTot", "RealMemory",
+                "AllocMem", "Reason", "BootTime", "LastBusyTime")
+
+
+async def _node(name: str, timeout: float) -> Lookup:
+    argv = ["scontrol", "show", "node", name]
+    rc, out, ms = await _run(argv, timeout)
+    if rc != 0 or "NodeName=" not in out:
+        return Lookup("node", name, " ".join(argv), False, "no node named %s" % name, "", ms)
+    fields = {}
+    for m in re.finditer(r"(\w+)=(.*?)(?=\s+\w+=|\s*$)", out, re.M):
+        if m.group(1) in _NODE_FIELDS and m.group(1) not in fields:
+            fields[m.group(1)] = m.group(2).strip()
+    summary = "%s, partitions %s" % (fields.get("State", "?"), fields.get("Partitions", "?"))
+    if fields.get("Reason"):
+        summary += ", reason: " + fields["Reason"]
+    shown = "\n".join("%s=%s" % (k, fields[k]) for k in _NODE_FIELDS if k in fields)
+    return Lookup("node", name, " ".join(argv), True, summary, shown, ms)
+
+
+async def _partition(name: str, timeout: float) -> Lookup:
+    argv = ["sinfo", "-h", "-N", "-p", name, "-o", "%N|%T|%E"]
+    rc, out, ms = await _run(argv, timeout)
+    shown = "sinfo -N -p %s" % name
+    rows = [l.split("|", 2) for l in out.splitlines() if l.count("|") >= 2]
+    if rc != 0 or not rows:
+        return Lookup("partition", name, shown, False, "no partition named %s" % name, "", ms)
+    nodes: Dict[str, "tuple[str, str]"] = {}
+    for node, state, reason in rows:          # a node in two partitions is listed twice
+        nodes.setdefault(node, (state, reason))
+    counts: Dict[str, int] = {}
+    for state, _ in nodes.values():
+        counts[state] = counts.get(state, 0) + 1
+    summary = "%d nodes: %s" % (len(nodes), ", ".join("%d %s" % (n, s) for s, n in sorted(counts.items())))
+    # Only the nodes that are not working normally, with Slurm's reason.
+    bad = [(n, s, r) for n, (s, r) in sorted(nodes.items())
+           if re.search(r"down|drain|fail|maint|not_responding|unknown|inval", s, re.I)]
+    lines = [summary] + ["%s %s%s" % (n, s, (" -- " + r) if r and r != "none" else "") for n, s, r in bad[:15]]
+    if len(bad) > 15:
+        lines.append("... and %d more" % (len(bad) - 15))
+    return Lookup("partition", name, shown, True, summary, "\n".join(lines), ms)
+
+
 async def run(ticket_text: str, timeout: float = 5.0) -> List[Lookup]:
     """Every lookup the ticket calls for, run concurrently. Never raises: a
     command that is missing, fails or times out becomes a Lookup saying so."""
     c = find_candidates(ticket_text)
-    if not (c.users or c.jobs or c.groups):
+    if not (c.users or c.jobs or c.groups or c.nodes or c.partitions):
         return []
     try:
         # Users first, so group membership is only reported for accounts that
@@ -234,7 +306,13 @@ async def run(ticket_text: str, timeout: float = 5.0) -> List[Lookup]:
             rest += [_job(j, timeout) for j in c.jobs]
         if c.groups and shutil.which("getent"):
             rest += [_group(g, known, timeout) for g in c.groups]
-        return users + list(await asyncio.gather(*rest))
+        if c.nodes and shutil.which("scontrol"):
+            rest += [_node(n, timeout) for n in c.nodes]
+        if c.partitions and shutil.which("sinfo"):
+            rest += [_partition(p, timeout) for p in c.partitions]
+        found = users + list(await asyncio.gather(*rest))
+        # A word that only looked like a partition name is not worth a line.
+        return [lk for lk in found if lk.ok or lk.kind != "partition"]
     except Exception as exc:          # never let a lookup break a draft
         logger.warning("cluster lookups failed: %s", exc)
         return []
