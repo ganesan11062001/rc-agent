@@ -395,6 +395,9 @@ aside#rc-copilot-panel .rc-list { margin: 0; padding-left: 18px; font-size: 12.5
 aside#rc-copilot-panel .rc-list li { margin-bottom: 6px; }
 aside#rc-copilot-panel .rc-steps li::marker   { color: var(--rc-accent); font-weight: 700; }
 aside#rc-copilot-panel .rc-caveats li::marker { color: var(--rc-warn); }
+aside#rc-copilot-panel .rc-lookups code { font-family: var(--rc-mono); font-size: 11px; background: var(--rc-sunken); border: 1px solid var(--rc-line); border-radius: 4px; padding: 0 4px; margin-right: 4px; }
+aside#rc-copilot-panel .rc-lookups .rc-lk-ok::marker { color: var(--rc-ok); }
+aside#rc-copilot-panel .rc-lookups .rc-lk-miss { color: var(--rc-ink-3); }
 
 aside#rc-copilot-panel .rc-draft {
   all: initial;

@@ -169,6 +169,24 @@ the ticket as usual.
 """
 
 
+# Appended when read-only cluster lookups ran for names and job IDs in the
+# ticket (app/lookups.py). Right after the ticket: they are facts about it.
+CLUSTER_LOOKUPS_TEMPLATE = """\
+
+--- CLUSTER LOOKUPS ---
+Read-only commands RC Copilot ran on the cluster just now, for usernames, job
+IDs and groups that appear in the ticket. They show the current state, so
+where they disagree with the ticket (for example, a user who asked to be added
+to a group is already in it), trust them. Use them to be specific, e.g. a
+job's state, exit code and memory use. Do not paste raw command output into
+"draft_response", and do not claim anything they do not show. A "no account"
+result may simply mean the word was not a username.
+
+{lookups}
+--- END CLUSTER LOOKUPS ---
+"""
+
+
 # Appended when rc_kg returned website sections for this ticket. It sits
 # between the ticket and the engineer's instructions, so those stay last. The
 # citation rule is what keeps links honest: markers are swapped for exact URLs
@@ -202,7 +220,7 @@ to this ticket; do not stretch them to fit.
 
 def build_messages(ticket_text: str, json_reminder: bool = False,
                    extra_instructions: str = "", kg_context: str = "",
-                   kg_low_confidence: bool = False):
+                   kg_low_confidence: bool = False, lookups_context: str = ""):
     """Build the chat messages for one drafting request."""
     instructions = (extra_instructions or "").strip()
     if instructions:
@@ -210,6 +228,8 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
             extra_instructions=instructions, ticket_text=ticket_text.strip())
     else:
         user_content = USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
+    if lookups_context:
+        user_content += CLUSTER_LOOKUPS_TEMPLATE.format(lookups=lookups_context.strip())
     if kg_context:
         user_content += KG_CONTEXT_TEMPLATE.format(context=kg_context.strip())
         if kg_low_confidence:

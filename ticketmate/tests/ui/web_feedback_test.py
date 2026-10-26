@@ -1,7 +1,7 @@
 """Browser test of the backend's web UI: sign in, draft, read the automatic
 checks, give feedback, and confirm what the backend stored. Run through
 tests/ui/run.sh, which starts rc_kg, a stub model and the backend."""
-import glob, json, sys, time
+import glob, json, os, sys, time
 from playwright.sync_api import sync_playwright
 APP, RUNS, SHOTS = sys.argv[1], sys.argv[2], sys.argv[3]
 fails = []
@@ -16,9 +16,14 @@ with sync_playwright() as p:
     pg.goto("http://127.0.0.1:%s/" % APP)
     pg.fill("#access-token", "uitest"); pg.click("#login-btn")
     pg.wait_for_selector("#app-main:not([hidden])", timeout=15000)
-    pg.fill("#ticket-text", "Hi, my job 4123456 was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?")
+    me = os.environ.get("USER", "")
+    pg.fill("#ticket-text", "Hi, my job 4123456 was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. "
+                            "My username is %s. What should I do?" % me)
     pg.click("#draft-btn")
     pg.wait_for_selector("#results:not([hidden])", timeout=60000)
+    if "." in me:   # Explorer-style username, so the backend looks it up with `id`
+        check(pg.is_visible("#lookups-card") and ("id " + me) in pg.inner_text("#lookups"),
+              "cluster lookups card shows the read-only command that ran")
     ev = pg.inner_text("#eval-summary")
     print("  eval summary:", ev)
     check("Automatic checks:" in ev and "passed" in ev, "automatic checks shown")

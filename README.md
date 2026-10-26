@@ -85,6 +85,7 @@ ticketmate/tests/rc_kg/run_contract.sh      # TicketMate against a real rc-kg, n
 rc-kg/scripts/contract_test.sh              # rc-kg's side of the API contract
 (cd rc-kg && .venv/bin/python -m pytest tests -q)      # rc-kg unit tests
 ticketmate/tests/startup/run_slow_start.sh  # startup progress display, no GPU
+ticketmate/backend/.venv/bin/python ticketmate/tests/lookups/test_lookups.py   # read-only lookups, no shell
 ticketmate/tests/ui/run.sh                  # extension and web UI, headless browser
 ```
 

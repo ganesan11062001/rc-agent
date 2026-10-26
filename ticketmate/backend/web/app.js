@@ -222,11 +222,29 @@
 
     fillList(el("suggested-steps"), data.suggested_steps, "No steps returned.");
     fillList(el("caveats"), data.caveats, "The model flagged nothing — check it yourself anyway.");
+    renderLookups(data.lookups);
 
     el("draft-response").value = data.draft_response || "";
     renderFeedback(data);
     results.hidden = false;
     results.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // Read-only cluster lookups the backend ran for this ticket (none: no card).
+  function renderLookups(items) {
+    var list = el("lookups");
+    list.textContent = "";
+    items = Array.isArray(items) ? items : [];
+    el("lookups-card").hidden = items.length === 0;
+    items.forEach(function (l) {
+      var li = document.createElement("li");
+      if (!l.ok) li.className = "lookup-miss";
+      var code = document.createElement("code");
+      code.textContent = l.command;
+      li.appendChild(code);
+      li.appendChild(document.createTextNode(" " + l.summary));
+      list.appendChild(li);
+    });
   }
 
   /* ---------- evaluation + feedback ---------- */

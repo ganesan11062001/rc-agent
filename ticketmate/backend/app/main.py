@@ -1,5 +1,6 @@
 """RC Copilot — FastAPI app serving the drafting API and the static frontend."""
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -14,11 +15,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, evaluators, kg_client, runlog, tracing
+from . import auth, evaluators, kg_client, lookups, runlog, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, generate_draft, token_breakdown
 from . import startup as startup_progress
 from .models import (
+    ClusterLookup,
     DraftRequest,
     DraftResponse,
     FeedbackRequest,
@@ -224,11 +226,27 @@ async def draft(request: DraftRequest):
         tags=["rc-copilot"],
     )
 
+    # Read-only cluster lookups for the names and job IDs in the ticket, run
+    # while rc_kg retrieves. Never fatal, never anything that changes data.
+    async def cluster_lookups():
+        t0 = time.perf_counter()
+        with tracing.run("cluster.lookups", "tool", metadata={"read_only": True}) as lrun:
+            found = await lookups.run(request.ticket_text, settings.cluster_lookup_timeout_seconds)
+            if lrun is not None:
+                lrun.end({"lookups": [lk.to_dict() for lk in found]})
+        timings["lookups"] = int((time.perf_counter() - t0) * 1000)
+        return found
+    lookups_task = asyncio.create_task(cluster_lookups()) if settings.cluster_lookups else None
+
     # Ground the draft in the RC website. Never fatal: without it the draft is
     # produced exactly as before, with a caveat saying so.
     t = time.perf_counter()
     kg = await kg_client.retrieve(request.ticket_text, request_id=request_id)
     timings["retrieve"] = int((time.perf_counter() - t) * 1000)
+    found_lookups = await lookups_task if lookups_task else []
+    lookups_context = lookups.prompt_text(found_lookups)
+    if found_lookups:
+        tr.root.tags.append("lookups:%d" % len(found_lookups))
     tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
     # The project is the deployment: which graph this draft was grounded in.
     variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
@@ -258,6 +276,7 @@ async def draft(request: DraftRequest):
                 "started_at": started_at,
                 "versions": {"ticket_mate": _TM_VERSION, "rc_kg": kg.trace.get("rc_kg")},
                 "retrieval": kg.trace,
+                "cluster_lookups": [lk.to_dict() for lk in found_lookups],
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,
@@ -275,11 +294,13 @@ async def draft(request: DraftRequest):
     try:
         with tracing.run("generate_draft", "chain",
                          inputs={"ticket_chars": len(request.ticket_text), "kg_context_chars": len(kg.context),
-                                 "kg_low_confidence": kg.low_confidence},
+                                 "kg_low_confidence": kg.low_confidence,
+                                 "lookups_chars": len(lookups_context)},
                          metadata={"prompt_version": _PROMPT_VERSION["version"]}) as grun:
             llm_draft, model_name = await generate_draft(
                 request.ticket_text, request.extra_instructions, trace,
                 kg_context=kg.context, kg_low_confidence=kg.low_confidence,
+                lookups_context=lookups_context,
             )
             if grun is not None:
                 grun.end({"draft": llm_draft.model_dump(), "strategy": trace.get("strategy")})
@@ -310,6 +331,7 @@ async def draft(request: DraftRequest):
                 "system_prompt": trace["messages"][0]["content"],
                 "ticket_text": request.ticket_text,
                 "rc_sources": kg.context,
+                "cluster_lookups": lookups_context,
                 "engineer_instructions": request.extra_instructions,
             })
             if krun is not None:
@@ -338,6 +360,7 @@ async def draft(request: DraftRequest):
 
     response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
     response.references = references
+    response.lookups = [ClusterLookup(**lk.to_dict()) for lk in found_lookups]
 
     # Evaluators that need no LLM, run now so the UI can show failures:
     # assertions (the system prompt's rules, as code) and metrics.
@@ -370,7 +393,7 @@ async def draft(request: DraftRequest):
 
     logger.info(
         "draft ok | id=%s input_chars=%d confidence=%.2f label=%s steps=%d "
-        "caveats=%d references=%d kg=%s tokens=%d (prompt %d, completion %d, calls %d) "
+        "caveats=%d references=%d kg=%s lookups=%d tokens=%d (prompt %d, completion %d, calls %d) "
         "latency_ms=%d model=%s",
         request_id,
         len(request.ticket_text),
@@ -380,6 +403,7 @@ async def draft(request: DraftRequest):
         len(response.caveats),
         len(response.references),
         response.kg_status,
+        len(found_lookups),
         tokens["total_tokens"], tokens["prompt_tokens"], tokens["completion_tokens"],
         tokens["model_calls"],
         elapsed_ms,

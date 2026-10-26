@@ -53,6 +53,18 @@ class Reference(BaseModel):
     url: str
 
 
+class ClusterLookup(BaseModel):
+    """One read-only command run for this draft (app/lookups.py)."""
+
+    kind: str          # "user" | "job" | "group"
+    target: str
+    command: str       # as shown, e.g. "id doe.l"
+    ok: bool
+    summary: str
+    output: str = ""
+    ms: int = 0
+
+
 class DraftResponse(LLMDraft):
     """What /api/draft returns: the model's draft plus derived fields."""
 
@@ -64,6 +76,8 @@ class DraftResponse(LLMDraft):
     # "ok" | "unavailable" | "disabled".
     references: List[Reference] = Field(default_factory=list)
     kg_status: str = "disabled"
+    # Read-only cluster lookups that ran for this draft, and fed its prompt.
+    lookups: List[ClusterLookup] = Field(default_factory=list)
     # Traceability: the id of this draft's run log (and of rc_kg's log lines
     # for it), and the tokens it cost across every model call it took.
     request_id: str = ""

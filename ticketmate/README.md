@@ -130,6 +130,27 @@ page, with the automatic checks shown above it. In the extension, *Capture
 what's in the field* reads the reply as you edited it in ServiceNow, so the
 draft can be compared with what was actually sent.
 
+### Cluster lookups (read-only)
+
+Before drafting, the backend looks up what the ticket names, on the cluster,
+as you, inside your job, so the draft can state facts instead of guessing:
+
+| ticket mentions | command | what the model gets |
+|---|---|---|
+| a username (`doe.l`) | `id doe.l` | the account exists, and its groups |
+| a job ID (`job 4812345`, `slurm-4812345.out`) | `sacct -j 4812345 --parsable2 ...` | state, exit code, run time, memory requested and used, partition, node |
+| a group (`the gaussian group`) | `getent group gaussian` | its size, and whether the ticket's users are in it (not the member list) |
+
+**Lookups only.** Those three programs are the only ones that can run, with
+fixed arguments; nothing that changes, updates or deletes data is reachable.
+They are exec'd without a shell, and an argument from the ticket must fully
+match a strict pattern or it is dropped, so a ticket cannot make anything else
+run. Email addresses (the RC team is CC'd on most tickets) are never treated as
+usernames. At most 4 users, 3 jobs and 2 groups per draft, 5 s each. The panel
+and the web page list every command that ran and what it found; the run log
+keeps the full output. Turn it off with `CLUSTER_LOOKUPS=false`
+(`app/lookups.py`, tested by `tests/lookups/test_lookups.py`).
+
 ### Grounded in the RC website
 
 Each ticket is also matched against the rc.northeastern.edu website and the

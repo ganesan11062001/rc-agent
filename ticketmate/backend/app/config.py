@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     # is wedged.
     rc_kg_timeout_seconds: float = 15.0
 
+    # --- Cluster lookups ----------------------------------------------------
+    # Before drafting, run read-only lookups for the usernames, job IDs and
+    # groups the ticket names (`id`, `sacct -j`, `getent group`; see
+    # app/lookups.py) and give the results to the model. Never anything that
+    # changes data. They run as you, inside your job.
+    cluster_lookups: bool = True
+    cluster_lookup_timeout_seconds: float = 5.0
+
     # --- App -------------------------------------------------------------
     app_port: int = 8080
 

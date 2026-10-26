@@ -655,6 +655,17 @@
       html += "</ol>";
     }
 
+    /* Read-only commands the backend ran for names and job IDs in the ticket;
+       shown so the facts the draft relies on can be checked. */
+    if (Array.isArray(data.lookups) && data.lookups.length) {
+      html += '<h3 class="rc-h">Cluster lookups</h3><ul class="rc-list rc-lookups">';
+      for (const l of data.lookups) {
+        html += '<li class="' + (l.ok ? "rc-lk-ok" : "rc-lk-miss") + '"><code>' +
+                escapeHtml(l.command) + "</code> " + escapeHtml(l.summary) + "</li>";
+      }
+      html += '</ul><p class="rc-meta">Read-only, run just now in your session.</p>';
+    }
+
     if (caveats.length) {
       html += '<h3 class="rc-h">Check before sending</h3><ul class="rc-list rc-caveats">';
       for (const c of caveats) html += "<li>" + escapeHtml(c) + "</li>";
