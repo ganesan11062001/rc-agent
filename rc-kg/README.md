@@ -55,6 +55,33 @@ tell which graph it is grounded in. In TicketMate: `RC_KG_VARIANT=website`
 (e.g. `sbatch --export=ALL,RC_KG_VARIANT=website serve_stack.sbatch`), and
 `/api/health` names the graph.
 
+**Which to run: the evidence** (`eval/variants.py`, 2026-10-26, both graphs
+on the same 45 questions, k=6 as TicketMate uses):
+
+| | website only | website + rc-docs |
+|---|---|---|
+| all 45 questions: Hit@1 / Hit@6 / MRR | 0.49 / 0.69 / 0.57 | **0.69 / 0.98 / 0.80** |
+| answer on the website (24) | **0.75** / 1.00 / **0.86** | 0.71 / 1.00 / 0.83 |
+| answer only in rc-docs (14) | 0 / 0 / 0 — and only 2 of 14 flagged low-confidence | **0.57 / 1.00 / 0.71** |
+| answer on both sites (7) | 0.57 / **1.00** / 0.72 | **0.86** / 0.86 / **0.86** |
+| reviewed ticket cases | 9/9 | 9/9 |
+| 24 real tickets: sources from rc-docs, prompt chars | 0 of 6, ~9.4k | 1.5 of 6, ~9.4k |
+
+`full` stays the default. A third of the questions are answered only by
+rc-docs, and on those the website graph does not just miss: 12 of 14 times it
+returns website pages confidently, which is worse than saying nothing.
+Adding rc-docs costs a little at the top of website-only answers (3 questions
+one rank lower, 2 one higher) and one question ("add a student to my
+/projects directory") falls out of the top 6. With 45 questions one question
+is 2 points of Hit@k, so only the docs-only gap is large enough to be sure of.
+Re-run after a retrieval change:
+
+```bash
+for v in full website; do RC_KG_VARIANT=$v scripts/with_kg.sh -m eval.variants collect /tmp/$v.json \
+    --runs /scratch/$USER/rc_copilot_runs; done
+.venv/bin/python -m eval.variants compare /tmp/website.json /tmp/full.json
+```
+
 ## Deploying: build once, serve anywhere
 
 The graph is built once and stored on `/projects`; every job that needs it
