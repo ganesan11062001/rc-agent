@@ -52,7 +52,9 @@ _NOT_USER_SUFFIXES = {
     "ini", "env", "e", "g", "x", "lock", "bashrc", "sif", "img", "mat", "nc", "h5", "hdf5",
 }
 _NOT_GROUPS = {"the", "your", "my", "our", "their", "this", "that", "research", "user", "users",
-               "unix", "linux", "slurm", "access", "a", "an", "same", "new", "following", "group"}
+               "unix", "linux", "slurm", "access", "a", "an", "same", "new", "following", "group",
+               # ServiceNow's own field labels ("Assignment group", "Support group").
+               "assignment", "support", "resolver", "approval", "watch"}
 
 # A username: a standalone token, not part of an email, path, URL or domain.
 _USER_CANDIDATE = re.compile(r"(?<![\w@./-])([a-z][a-z0-9-]*\.[a-z][a-z0-9-]*)(?![\w@-]|\.[a-z0-9])")
@@ -175,16 +177,26 @@ async def _job(job_id: str, timeout: float) -> Lookup:
     rss = [r.get("MaxRSS") for r in rows if r.get("MaxRSS")]
     summary = "%s, exit %s, ran %s of %s, %s requested%s, %s on %s" % (
         job.get("State", "?"), job.get("ExitCode", "?"), job.get("Elapsed", "?"), job.get("Timelimit", "?"),
-        job.get("ReqMem", "?"), (", max RSS " + max(rss, key=_mem_bytes)) if rss else "",
+        job.get("ReqMem", "?"), (", max RSS " + _human(max(rss, key=_mem_bytes))) if rss else "",
         job.get("Partition", "?"), job.get("NodeList", "?"))
     return Lookup("job", job_id, shown, True, summary, "\n".join(lines[:10]), ms)
+
+
+def _human(value: str) -> str:
+    """sacct's MaxRSS ("62489320K") as people write it ("59.6G")."""
+    b = _mem_bytes(value)
+    for unit, size in (("T", 1024 ** 4), ("G", 1024 ** 3), ("M", 1024 ** 2)):
+        if b >= size:
+            return "%.1f%s" % (b / size, unit)
+    return value
 
 
 def _mem_bytes(value: str) -> float:
     m = re.fullmatch(r"([\d.]+)([KMGT]?)", value or "")
     if not m:
         return 0.0
-    return float(m.group(1)) * {"": 1, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}[m.group(2)]
+    # sacct's K/M/G are binary (KiB, ...).
+    return float(m.group(1)) * {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}[m.group(2)]
 
 
 async def _group(name: str, users: List[str], timeout: float) -> Lookup:
