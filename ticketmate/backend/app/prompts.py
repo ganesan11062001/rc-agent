@@ -88,17 +88,45 @@ Writing the "draft_response":
   If it matters and you do not know it, ask for it or raise it in "caveats" instead.
 - If the ticket is too vague to troubleshoot, the draft should be a polite, specific \
   request for exactly the information you need.
+- The ticket often contains RC's earlier replies to the researcher. Do not repeat \
+  what an earlier reply already told them; write the next message in the thread.
+
+Instructions from the RC engineer:
+- The message may end with a block of INSTRUCTIONS FROM THE RC ENGINEER. When it \
+  does, those instructions decide what "draft_response" is for, what it says, and how \
+  long it is. They override the guidance above about what a reply contains.
+- If they ask for a particular kind of reply -- a follow-up, a closure notice, a \
+  request for one detail, a shorter answer -- then "draft_response" is exactly that \
+  reply and nothing more. Do not re-answer the ticket, and do not restate steps or \
+  results from earlier replies, unless the instructions ask for it.
+- Write the reply they describe in your own words, as a finished message to the \
+  researcher; do not copy the instruction text into it.
+- Saying what the instructions tell you to say (for example, that the ticket will be \
+  closed if there are no further questions) is not an invented promise.
+- Still always: the JSON format, the exact sign-off, no placeholders, and no facts or \
+  commitments that neither the ticket nor the instructions gave you.
 """
 
-# `{ticket_text}` is the only placeholder.
+# `{ticket_text}` is the only placeholder. "Respond with the JSON object only."
+# is not here: build_messages() puts it last, after the sources and the
+# engineer's instructions, so it never separates the ticket from them.
 USER_PROMPT_TEMPLATE = """\
 Draft a response for the following ServiceNow ticket.
 
 --- BEGIN TICKET TEXT ---
 {ticket_text}
 --- END TICKET TEXT ---
+"""
 
-Respond with the JSON object only.
+RESPOND_JSON_ONLY = "\nRespond with the JSON object only.\n"
+
+# Opens the user turn when the RC member typed guidance. A 7B model reading a
+# long ticket first settles on its usual full answer; saying up front that the
+# engineer has decided what this reply is for keeps the instructions in force.
+INSTRUCTIONS_NOTICE = """\
+The RC engineer handling this ticket has said what this reply should be. Their
+instructions are at the end of this message, after the ticket; follow them.
+
 """
 
 # Appended to the user turn only when the server rejected guided decoding, so
@@ -112,7 +140,7 @@ JSON_ONLY_REMINDER = (
 # Appended when the RC member typed guidance. It is placed *after* the ticket
 # so it reads as the most recent instruction, and the precedence rule is stated
 # explicitly -- otherwise models tend to treat ticket text and operator
-# instructions as equally authoritative.
+# instructions as equally authoritative, and write their usual full answer.
 EXTRA_INSTRUCTIONS_TEMPLATE = """\
 
 --- INSTRUCTIONS FROM THE RC ENGINEER ---
@@ -120,9 +148,13 @@ EXTRA_INSTRUCTIONS_TEMPLATE = """\
 --- END INSTRUCTIONS ---
 
 These come from the RC engineer handling this ticket, who knows things the
-ticket does not record. Where they conflict with your own reading of the
-ticket, follow them. They are guidance for you, not text to quote back to the
-researcher, and they must not appear verbatim in "draft_response".
+ticket does not record. They take priority over your own reading of the ticket
+and over the usual shape of a reply: they decide what "draft_response" is for,
+what it says and how long it is. If they ask for a particular kind of message
+(a follow-up, a closure notice, a request for one detail), write exactly that
+message and nothing more -- do not re-answer the ticket or repeat an earlier
+reply. Write it in your own words; do not copy the instruction text into
+"draft_response". The other fields still describe the ticket as usual.
 """
 
 
@@ -161,14 +193,17 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
                    extra_instructions: str = "", kg_context: str = "",
                    kg_low_confidence: bool = False):
     """Build the chat messages for one drafting request."""
-    user_content = USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
+    has_instructions = bool(extra_instructions and extra_instructions.strip())
+    user_content = (INSTRUCTIONS_NOTICE if has_instructions else "") + \
+        USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
     if kg_context:
         user_content += KG_CONTEXT_TEMPLATE.format(context=kg_context.strip())
         if kg_low_confidence:
             user_content += KG_LOW_CONFIDENCE_NOTE
-    if extra_instructions and extra_instructions.strip():
+    if has_instructions:
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(
             extra_instructions=extra_instructions.strip())
+    user_content += RESPOND_JSON_ONLY
     if json_reminder:
         user_content += JSON_ONLY_REMINDER
     return [

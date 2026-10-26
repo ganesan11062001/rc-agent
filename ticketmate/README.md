@@ -293,8 +293,9 @@ either way; a human still clicks Update.
 - **No grounded draft from a real model on record yet.** The rc-kg-grounded
   path has been exercised only with a stub model
 - **Long tickets go to the model as scraped.** The extension cuts the activity
-  stream at 4,000 characters (keeping the *oldest* entries) and nothing removes
-  email headers, CC lists, quoted reply chains or signatures. The per-draft
+  stream at 4,000 characters (ServiceNow lists it newest first, so the oldest
+  entries are what gets dropped) and nothing removes email headers, CC lists,
+  quoted reply chains or signatures. The per-draft
   token breakdown measures what this costs but nothing reduces it yet
 
 **Next step:** work through 20–30 real tickets in grounded sessions, tuning
