@@ -343,7 +343,8 @@ async def draft(request: DraftRequest):
     # assertions (the system prompt's rules, as code) and metrics.
     with tracing.run("evaluate", "chain", metadata={"evaluators": "assertions, metrics, answer_relevance"}) as erun:
         checks = evaluators.assertions(response.model_dump(), request.ticket_text, kg.status,
-                                       kg.low_confidence, cite_trace)
+                                       kg.low_confidence, cite_trace,
+                                       instructed=bool(request.extra_instructions.strip()))
         measures = evaluators.metrics(response.model_dump(), cite_trace)
         relevance = await evaluators.answer_relevance(request.ticket_text, response.draft_response, request_id)
         if relevance is not None:

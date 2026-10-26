@@ -120,13 +120,26 @@ Draft a response for the following ServiceNow ticket.
 
 RESPOND_JSON_ONLY = "\nRespond with the JSON object only.\n"
 
-# Opens the user turn when the RC member typed guidance. A 7B model reading a
-# long ticket first settles on its usual full answer; saying up front that the
-# engineer has decided what this reply is for keeps the instructions in force.
-INSTRUCTIONS_NOTICE = """\
-The RC engineer handling this ticket has said what this reply should be. Their
-instructions are at the end of this message, after the ticket; follow them.
+# Used instead of USER_PROMPT_TEMPLATE when the RC member typed guidance: the
+# guidance becomes the task. Appending it as a note after a long ticket did not
+# work -- Qwen2.5-7B, asked for a short follow-up on INC09000013, re-wrote the
+# previous resolution four times, with the note stated first and last and the
+# system prompt saying it overrides. A small model follows the task line it was
+# given, so the task line is now the engineer's instruction, and the ticket is
+# labelled as background.
+INSTRUCTED_PROMPT_TEMPLATE = """\
+Write the next message to the researcher on this ServiceNow ticket.
 
+The RC engineer handling the ticket has said what that message must be:
+
+>>> {extra_instructions}
+
+The ticket below is background only. It shows what has already been said,
+including RC's earlier replies: do not repeat those.
+
+--- BEGIN TICKET TEXT ---
+{ticket_text}
+--- END TICKET TEXT ---
 """
 
 # Appended to the user turn only when the server rejected guided decoding, so
@@ -137,24 +150,22 @@ JSON_ONLY_REMINDER = (
 )
 
 
-# Appended when the RC member typed guidance. It is placed *after* the ticket
-# so it reads as the most recent instruction, and the precedence rule is stated
-# explicitly -- otherwise models tend to treat ticket text and operator
-# instructions as equally authoritative, and write their usual full answer.
+# Closes an instructed prompt, after the ticket and any sources, so the
+# instruction is also the last thing read before the JSON reminder.
 EXTRA_INSTRUCTIONS_TEMPLATE = """\
 
 --- INSTRUCTIONS FROM THE RC ENGINEER ---
-{extra_instructions}
---- END INSTRUCTIONS ---
+"draft_response" must be the message the RC engineer asked for:
 
-These come from the RC engineer handling this ticket, who knows things the
-ticket does not record. They take priority over your own reading of the ticket
-and over the usual shape of a reply: they decide what "draft_response" is for,
-what it says and how long it is. If they ask for a particular kind of message
-(a follow-up, a closure notice, a request for one detail), write exactly that
-message and nothing more -- do not re-answer the ticket or repeat an earlier
-reply. Write it in your own words; do not copy the instruction text into
-"draft_response". The other fields still describe the ticket as usual.
+>>> {extra_instructions}
+
+Write exactly that message, in your own words, as a finished reply to the
+researcher: greeting, that message, the sign-off -- and nothing else. Do not
+re-explain the ticket and do not repeat what an earlier reply already said.
+Use a source only if the message itself needs it. The other fields
+("problem_summary", "suggested_steps", "confidence", "caveats") still describe
+the ticket as usual.
+--- END INSTRUCTIONS ---
 """
 
 
@@ -193,16 +204,18 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
                    extra_instructions: str = "", kg_context: str = "",
                    kg_low_confidence: bool = False):
     """Build the chat messages for one drafting request."""
-    has_instructions = bool(extra_instructions and extra_instructions.strip())
-    user_content = (INSTRUCTIONS_NOTICE if has_instructions else "") + \
-        USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
+    instructions = (extra_instructions or "").strip()
+    if instructions:
+        user_content = INSTRUCTED_PROMPT_TEMPLATE.format(
+            extra_instructions=instructions, ticket_text=ticket_text.strip())
+    else:
+        user_content = USER_PROMPT_TEMPLATE.format(ticket_text=ticket_text.strip())
     if kg_context:
         user_content += KG_CONTEXT_TEMPLATE.format(context=kg_context.strip())
         if kg_low_confidence:
             user_content += KG_LOW_CONFIDENCE_NOTE
-    if has_instructions:
-        user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(
-            extra_instructions=extra_instructions.strip())
+    if instructions:
+        user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(extra_instructions=instructions)
     user_content += RESPOND_JSON_ONLY
     if json_reminder:
         user_content += JSON_ONLY_REMINDER

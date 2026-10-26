@@ -60,7 +60,7 @@ def _sentences(text: str) -> int:
 
 
 def assertions(response: Dict[str, Any], ticket_text: str, kg_status: str, kg_low_confidence: bool,
-               cite_trace: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+               cite_trace: Optional[Dict[str, Any]], instructed: bool = False) -> Dict[str, bool]:
     reply = response.get("draft_response") or ""
     caveats = response.get("caveats") or []
     allowed_ids = {m.upper() for m in _TICKET_ID.findall(ticket_text)}
@@ -79,7 +79,9 @@ def assertions(response: Dict[str, Any], ticket_text: str, kg_status: str, kg_lo
         "assert_urls_from_sources": not cite.get("removed_urls"),
         "assert_no_unknown_citations": not cite.get("unknown_refs"),
     }
-    if kg_status == "ok" and not kg_low_confidence:
+    # Not when the engineer said what the reply is: a follow-up or closure
+    # note has nothing to cite, and the instructions outrank the default shape.
+    if kg_status == "ok" and not kg_low_confidence and not instructed:
         checks["assert_cites_when_grounded"] = bool(response.get("references"))
     return checks
 
