@@ -386,6 +386,28 @@ def _count_sync(root: str, model: str, text: str, timeout: float) -> int:
         return int(json.loads(r.read())["count"])
 
 
+_context_window: Dict[str, int] = {}
+
+
+async def context_window() -> Optional[int]:
+    """The served model's context length (vLLM reports max_model_len in
+    /v1/models), cached per model; None if the server does not say."""
+    settings = get_settings()
+    name = settings.vllm_model_name
+    if name in _context_window:
+        return _context_window[name]
+    try:
+        listing = await get_client(settings).models.list()
+    except Exception:          # the draft call reports real errors
+        return None
+    for m in listing.data:
+        n = getattr(m, "max_model_len", None) or (getattr(m, "model_extra", None) or {}).get("max_model_len")
+        if m.id == name and n:
+            _context_window[name] = int(n)
+            return int(n)
+    return None
+
+
 async def token_breakdown(parts: Dict[str, str]) -> Optional[Dict[str, int]]:
     """Tokens per prompt part, counted by the serving model's own tokenizer
     (vLLM's /tokenize, beside /v1). Best-effort: None if the server has no

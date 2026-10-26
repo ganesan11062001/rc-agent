@@ -17,7 +17,10 @@
   "use strict";
 
   const PANEL_ID = "rc-copilot-panel";
-  const MAX_ACTIVITY_CHARS = 4000;
+  // The whole thread, in practice: the backend strips the notification noise
+  // and fits what is left to the model (backend/app/ticket_context.py). At
+  // 4,000 the noise alone filled the cut and the older messages never arrived.
+  const MAX_ACTIVITY_CHARS = 100000;
 
   /* ---------- field discovery ---------- */
 
@@ -567,6 +570,21 @@
     renderResult(reply.data || {});
   }
 
+  /* What the ticket became before the model read it (backend ticket_context). */
+  function contextHtml(c) {
+    if (!c.raw_chars) return "";
+    const n = (x) => Number(x || 0).toLocaleString();
+    const bits = ["ticket " + n(c.raw_chars) + " → " + n(c.chars) + " chars"];
+    if (c.notifications_removed) bits.push(n(c.notifications_removed) + " notification emails");
+    if (c.addresses_removed) bits.push(n(c.addresses_removed) + " addresses");
+    if (c.signatures_removed || c.quoted_chains_removed) {
+      bits.push(n((c.signatures_removed || 0) + (c.quoted_chains_removed || 0)) + " signatures/quotes");
+    }
+    let line = bits[0] + (bits.length > 1 ? " · removed " + bits.slice(1).join(", ") : "");
+    if (c.entries_omitted) line += " · " + n(c.entries_omitted) + " middle entries left out to fit the model";
+    return '<p class="rc-meta rc-context">' + escapeHtml(line) + "</p>";
+  }
+
   /* The analysis half of the response, formatted for work notes. Deliberately
      plain text: ServiceNow journal fields do not render markdown. */
   function analysisText(data) {
@@ -682,6 +700,7 @@
     if (data.usage && data.usage.total_tokens) meta.push(data.usage.total_tokens + " tokens");
     if (data.request_id) meta.push("draft " + escapeHtml(data.request_id));
     if (meta.length) html += '<p class="rc-meta">' + meta.join(" · ") + "</p>";
+    html += contextHtml(data.context || {});
 
     html += evaluationHtml(data.evaluations || {});
     if (data.request_id) html += feedbackHtml();

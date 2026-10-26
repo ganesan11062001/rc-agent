@@ -15,9 +15,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, evaluators, kg_client, lookups, runlog, tracing
+from . import auth, evaluators, kg_client, lookups, runlog, ticket_context, tracing
 from .config import get_settings
-from .llm_client import LLMError, check_health, generate_draft, token_breakdown
+from .llm_client import LLMError, check_health, context_window, generate_draft, token_breakdown
+from .prompts import SYSTEM_PROMPT
 from . import startup as startup_progress
 from .models import (
     ClusterLookup,
@@ -226,12 +227,23 @@ async def draft(request: DraftRequest):
         tags=["rc-copilot"],
     )
 
+    # What the model reads is the cleaned ticket, not the scraped page:
+    # notification emails, address lists and signatures out, the thread oldest
+    # first (app/ticket_context.py). Retrieval and lookups read it too.
+    with tracing.run("ticket_context.prepare", "tool",
+                     inputs={"raw_chars": len(request.ticket_text)}) as crun:
+        prepared = (ticket_context.prepare(request.ticket_text) if settings.ticket_context_cleaning
+                    else ticket_context.Prepared(request.ticket_text.strip(), len(request.ticket_text), {}))
+        if crun is not None:
+            crun.end({"chars": len(prepared.text), "stats": prepared.stats})
+    ticket = prepared.text
+
     # Read-only cluster lookups for the names and job IDs in the ticket, run
     # while rc_kg retrieves. Never fatal, never anything that changes data.
     async def cluster_lookups():
         t0 = time.perf_counter()
         with tracing.run("cluster.lookups", "tool", metadata={"read_only": True}) as lrun:
-            found = await lookups.run(request.ticket_text, settings.cluster_lookup_timeout_seconds)
+            found = await lookups.run(ticket, settings.cluster_lookup_timeout_seconds)
             if lrun is not None:
                 lrun.end({"lookups": [lk.to_dict() for lk in found]})
         timings["lookups"] = int((time.perf_counter() - t0) * 1000)
@@ -241,12 +253,28 @@ async def draft(request: DraftRequest):
     # Ground the draft in the RC website. Never fatal: without it the draft is
     # produced exactly as before, with a caveat saying so.
     t = time.perf_counter()
-    kg = await kg_client.retrieve(request.ticket_text, request_id=request_id)
+    kg = await kg_client.retrieve(ticket, request_id=request_id)
     timings["retrieve"] = int((time.perf_counter() - t) * 1000)
     found_lookups = await lookups_task if lookups_task else []
     lookups_context = lookups.prompt_text(found_lookups)
     if found_lookups:
         tr.root.tags.append("lookups:%d" % len(found_lookups))
+
+    # Fit the ticket to what the model's context window leaves once everything
+    # else in the prompt, and the reply itself, are accounted for; a long
+    # thread keeps its description, first entry and newest entries.
+    window = await context_window()
+    est = lambda s: int(len(s or "") / ticket_context.CHARS_PER_TOKEN)
+    reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg.context) + est(lookups_context)
+                + 2 * est(request.extra_instructions) + 700)   # instructions appear twice; templates
+    budget_tokens = settings.ticket_max_tokens if window is None else \
+        max(800, min(settings.ticket_max_tokens, window - reserved))
+    fitted = ticket_context.fit(prepared, int(budget_tokens * ticket_context.CHARS_PER_TOKEN))
+    ticket = fitted.text
+    context_info = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(ticket),
+                        context_window=window, budget_tokens=budget_tokens)
+    if fitted.stats.get("entries_omitted") or fitted.stats.get("truncated_chars"):
+        tr.root.tags.append("ticket_trimmed")
     tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
     # The project is the deployment: which graph this draft was grounded in.
     variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
@@ -275,6 +303,7 @@ async def draft(request: DraftRequest):
                 "request_id": request_id,
                 "started_at": started_at,
                 "versions": {"ticket_mate": _TM_VERSION, "rc_kg": kg.trace.get("rc_kg")},
+                "ticket_context": context_info,
                 "retrieval": kg.trace,
                 "cluster_lookups": [lk.to_dict() for lk in found_lookups],
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
@@ -293,12 +322,12 @@ async def draft(request: DraftRequest):
     t = time.perf_counter()
     try:
         with tracing.run("generate_draft", "chain",
-                         inputs={"ticket_chars": len(request.ticket_text), "kg_context_chars": len(kg.context),
+                         inputs={"ticket_chars": len(ticket), "kg_context_chars": len(kg.context),
                                  "kg_low_confidence": kg.low_confidence,
                                  "lookups_chars": len(lookups_context)},
                          metadata={"prompt_version": _PROMPT_VERSION["version"]}) as grun:
             llm_draft, model_name = await generate_draft(
-                request.ticket_text, request.extra_instructions, trace,
+                ticket, request.extra_instructions, trace,
                 kg_context=kg.context, kg_low_confidence=kg.low_confidence,
                 lookups_context=lookups_context,
             )
@@ -329,7 +358,7 @@ async def draft(request: DraftRequest):
         with tracing.run("tokenize.prompt_breakdown", "tool") as krun:
             breakdown = await token_breakdown({
                 "system_prompt": trace["messages"][0]["content"],
-                "ticket_text": request.ticket_text,
+                "ticket_text": ticket,
                 "rc_sources": kg.context,
                 "cluster_lookups": lookups_context,
                 "engineer_instructions": request.extra_instructions,
@@ -361,6 +390,7 @@ async def draft(request: DraftRequest):
     response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
     response.references = references
     response.lookups = [ClusterLookup(**lk.to_dict()) for lk in found_lookups]
+    response.context = context_info
 
     # Evaluators that need no LLM, run now so the UI can show failures:
     # assertions (the system prompt's rules, as code) and metrics.
@@ -369,7 +399,7 @@ async def draft(request: DraftRequest):
                                        kg.low_confidence, cite_trace,
                                        instructed=bool(request.extra_instructions.strip()))
         measures = evaluators.metrics(response.model_dump(), cite_trace)
-        relevance = await evaluators.answer_relevance(request.ticket_text, response.draft_response, request_id)
+        relevance = await evaluators.answer_relevance(ticket, response.draft_response, request_id)
         if relevance is not None:
             measures["answer_relevance_embedding"] = relevance
         if erun is not None:
@@ -393,7 +423,7 @@ async def draft(request: DraftRequest):
 
     logger.info(
         "draft ok | id=%s input_chars=%d confidence=%.2f label=%s steps=%d "
-        "caveats=%d references=%d kg=%s lookups=%d tokens=%d (prompt %d, completion %d, calls %d) "
+        "caveats=%d references=%d kg=%s lookups=%d ticket_chars=%d->%d tokens=%d (prompt %d, completion %d, calls %d) "
         "latency_ms=%d model=%s",
         request_id,
         len(request.ticket_text),
@@ -404,6 +434,7 @@ async def draft(request: DraftRequest):
         len(response.references),
         response.kg_status,
         len(found_lookups),
+        len(request.ticket_text), len(ticket),
         tokens["total_tokens"], tokens["prompt_tokens"], tokens["completion_tokens"],
         tokens["model_calls"],
         elapsed_ms,
@@ -421,7 +452,7 @@ async def draft(request: DraftRequest):
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
         # LLM-as-judge in the background; it appends its grades beside the run.
-        evaluators.schedule_judge(request_id, request.ticket_text, kg.context, response.model_dump())
+        evaluators.schedule_judge(request_id, ticket, kg.context, response.model_dump())
 
     if settings.debug:
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())

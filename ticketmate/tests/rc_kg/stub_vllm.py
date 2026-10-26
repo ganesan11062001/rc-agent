@@ -13,7 +13,9 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out)
     def do_GET(self):
-        self._send({"object": "list", "data": [{"id": "stub-model", "object": "model"}]})
+        # vLLM reports the context length here; the backend budgets the ticket by it.
+        self._send({"object": "list", "data": [{"id": "stub-model", "object": "model",
+                    "max_model_len": int(os.environ.get("STUB_MAX_MODEL_LEN", "16384"))}]})
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path.rstrip("/").endswith("/tokenize"):

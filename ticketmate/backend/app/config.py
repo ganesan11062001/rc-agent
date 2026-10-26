@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     cluster_lookups: bool = True
     cluster_lookup_timeout_seconds: float = 5.0
 
+    # --- Ticket context ----------------------------------------------------
+    # Clean the scraped ticket before anything reads it: drop notification
+    # emails, CC/To address lists, signatures and quoted chains; order the
+    # thread oldest first (app/ticket_context.py).
+    ticket_context_cleaning: bool = True
+    # The most of the prompt the ticket may take. It also always fits what the
+    # model's context window leaves after the system prompt, sources, lookups
+    # and the reply (max_tokens); a longer thread keeps its first and newest
+    # entries.
+    ticket_max_tokens: int = 6000
+
     # --- App -------------------------------------------------------------
     app_port: int = 8080
 

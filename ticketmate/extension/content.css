@@ -414,6 +414,7 @@ aside#rc-copilot-panel .rc-draft:focus {
 }
 
 aside#rc-copilot-panel .rc-meta { margin: 9px 0 0; font-size: 10.5px; color: var(--rc-ink-3); }
+aside#rc-copilot-panel .rc-context { margin-top: 3px; }
 
 /* ---------- footer ---------- */
 

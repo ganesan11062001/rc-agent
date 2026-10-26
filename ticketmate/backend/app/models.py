@@ -21,7 +21,9 @@ def confidence_label(score: float) -> str:
 class DraftRequest(BaseModel):
     """What the frontend POSTs to /api/draft."""
 
-    ticket_text: str = Field(..., min_length=1, max_length=50_000)
+    # Raw page text, so it can be long: the backend cleans it and fits it to
+    # the model's context window (app/ticket_context.py).
+    ticket_text: str = Field(..., min_length=1, max_length=200_000)
 
     # Optional free-text guidance from the RC member: context the ticket does
     # not contain, or a steer on tone/length.
@@ -76,6 +78,9 @@ class DraftResponse(LLMDraft):
     # "ok" | "unavailable" | "disabled".
     references: List[Reference] = Field(default_factory=list)
     kg_status: str = "disabled"
+    # What the ticket became before the model read it: chars before/after,
+    # notifications, addresses and signatures removed, entries kept/omitted.
+    context: Dict[str, Any] = Field(default_factory=dict)
     # Read-only cluster lookups that ran for this draft, and fed its prompt.
     lookups: List[ClusterLookup] = Field(default_factory=list)
     # Traceability: the id of this draft's run log (and of rc_kg's log lines

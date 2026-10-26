@@ -130,6 +130,33 @@ page, with the automatic checks shown above it. In the extension, *Capture
 what's in the field* reads the reply as you edited it in ServiceNow, so the
 draft can be compared with what was actually sent.
 
+### Ticket context: what the model actually reads
+
+The extension sends the whole ticket page; the backend cleans it before
+retrieval, lookups or the model see it (`app/ticket_context.py`):
+
+- **Removed:** "Email sent" notifications (copies of comments already in the
+  thread), every `To:`/`Cc:`/`From:` line and address list (the RC team is
+  CC'd on almost every ticket), "Show email details" and avatar initials,
+  signatures after a dashed rule, quoted reply chains.
+- **Compressed:** "Field changes" to one line (`Incident state: New -> In
+  Progress`); "Email received" to its subject.
+- **Kept, word for word:** every comment and work note, ordered oldest first
+  and headed `[date time] Author (comment, visible to the researcher |
+  internal work note)`. The system prompt says internal notes must not be
+  revealed to the researcher.
+
+On the 18 real tickets recorded so far this halves the ticket (73,793 ->
+37,449 characters) and removes ~35 addresses per ticket. The cleaned ticket
+then has to fit: the backend reads the model's context window from vLLM and
+gives the ticket what is left after the system prompt, the sources, the
+lookups and the reply (`MAX_TOKENS`), at most `TICKET_MAX_TOKENS` (6,000). A
+thread too long for that keeps its description, its first entry and as many
+of the newest entries as fit, with a marker saying how many were left out, so
+a huge ticket can no longer overflow the model. Under each draft the panel
+shows e.g. `ticket 14,210 -> 3,950 chars · removed 9 notification emails, 35
+addresses`; the run log keeps the raw text and the full statistics.
+
 ### Cluster lookups (read-only)
 
 Before drafting, the backend looks up what the ticket names, on the cluster,
@@ -313,15 +340,14 @@ either way; a human still clicks Update.
   All three are now addressed in `prompts.py` and need re-testing
 - **No grounded draft from a real model on record yet.** The rc-kg-grounded
   path has been exercised only with a stub model
-- **Long tickets go to the model as scraped.** The extension cuts the activity
-  stream at 4,000 characters (ServiceNow lists it newest first, so the oldest
-  entries are what gets dropped) and nothing removes email headers, CC lists,
-  quoted reply chains or signatures. The per-draft
-  token breakdown measures what this costs but nothing reduces it yet
+- **Ticket cleaning is new** (see *Ticket context* above): checked on the
+  18 recorded tickets and in tests, not yet judged on draft quality over many
+  real drafts
 
 **Next step:** work through 20–30 real tickets in grounded sessions, tuning
 [`app/prompts.py`](backend/app/prompts.py) until the drafts are worth sending,
-and clean up the ticket text before it is prompted.
+and compare drafts before and after ticket cleaning (`cluster/traces.py stats
+--by prompt_version`).
 
 ---
 
