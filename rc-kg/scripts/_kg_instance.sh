@@ -158,12 +158,23 @@ KG_PARENT="${RC_KG_TMP:-${TMPDIR:-/tmp}}"
 
 _kg_starttime() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 
+# The dir only appears under its swept name once it has an owner. Created
+# there directly, it was ownerless for an instant, and an instance starting
+# alongside could sweep it as stale and delete it mid-start (the contract
+# test starts two at once; the first one's graph then never came up). So it
+# is built under a name the sweep does not match, then renamed into place.
 kg_new_dir() {
-  local d
-  d="$(mktemp -d "$KG_PARENT/rc_kg_${USER}_${1}_XXXX")" \
+  local tmp d _
+  tmp="$(mktemp -d "$KG_PARENT/.rc_kg_${USER}_new_XXXXXX")" \
     || kg_die "cannot create an instance dir under $KG_PARENT"
-  echo "$$ $(_kg_starttime $$)" > "$d/owner"
-  echo "$d"
+  echo "$$ $(_kg_starttime $$)" > "$tmp/owner" || kg_die "cannot write $tmp/owner"
+  for _ in 1 2 3 4 5; do
+    d="$(mktemp -u "$KG_PARENT/rc_kg_${USER}_${1}_XXXX")"
+    # -T: fails rather than moving inside if the name was taken meanwhile.
+    mv -T "$tmp" "$d" 2>/dev/null && { echo "$d"; return 0; }
+  done
+  rm -rf "$tmp"
+  kg_die "cannot name an instance dir under $KG_PARENT"
 }
 
 _kg_owner_alive() {
@@ -207,6 +218,10 @@ kg_sweep_stale() {
     rm -rf "$d" && n=$((n + 1))
     kg_log "removed stale instance $(basename "$d")${pids:+ (stopped pids $pids)}"
   done
+  # Half-made dirs from a start killed before kg_new_dir renamed them; never a
+  # recent one, which may be another instance's, being made right now.
+  find "$KG_PARENT" -maxdepth 1 -name ".rc_kg_${USER}_new_*" -user "$USER" -mmin +60 \
+       -exec rm -rf {} + 2>/dev/null
   return 0
 }
 
