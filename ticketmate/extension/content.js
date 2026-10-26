@@ -635,23 +635,17 @@
     const pct = typeof data.confidence === "number" ? Math.round(data.confidence * 100) : null;
     const caveats = Array.isArray(data.caveats) ? data.caveats : [];
 
-    let html = '<h3 class="rc-h">Result</h3>';
-
-    html +=
-      '<div class="rc-conf rc-' + escapeHtml(level) + '">' +
-        '<div class="rc-conf-top">' +
-          '<span class="rc-conf-label">Confidence</span>' +
-          '<span class="rc-conf-val">' + escapeHtml(level) +
-          (pct === null ? "" : " · " + pct + "%") + "</span>" +
-        "</div>" +
-        '<div class="rc-meter"><i style="width:' + (pct === null ? 0 : pct) + '%"></i></div>' +
-      "</div>";
+    /* Layout: what you act on is always shown -- where the draft went, how
+       sure the model is, what to check, the draft. Everything else (steps,
+       lookups, cited pages, checks, details, feedback) is one click away in a
+       section whose title says what is inside, and stays open once opened. */
+    let html = "";
 
     const pretty = (k) => escapeHtml(k.replace("_", " "));
     if (wrote) {
       html += '<p class="rc-msg rc-ok"><span>Written into <b>' +
               done.map(pretty).join("</b> and <b>") +
-              "</b>, unsaved. Review before Update.";
+              "</b>, unsaved. Review it, then click Update.";
       if (failed.length) {
         html += " Could not find: " + failed.map(pretty).join(", ") + ".";
       }
@@ -659,57 +653,91 @@
     } else {
       html += '<p class="rc-msg rc-warn"><span>No writable ' +
               writes.map(([k]) => pretty(k)).join(" or ") +
-              " field here — copy from below.</span></p>";
+              " field here — copy the draft from below.</span></p>";
     }
 
-    if (data.problem_summary) {
-      html += '<h3 class="rc-h">Summary</h3><p class="rc-summary">' +
-              escapeHtml(data.problem_summary) + "</p>";
+    html +=
+      '<div class="rc-conf rc-' + escapeHtml(level) + '">' +
+        '<div class="rc-conf-top">' +
+          '<span class="rc-conf-label">How sure the model is</span>' +
+          '<span class="rc-conf-val">' + escapeHtml(level) +
+          (pct === null ? "" : " · " + pct + "%") + "</span>" +
+        "</div>" +
+        '<div class="rc-meter"><i style="width:' + (pct === null ? 0 : pct) + '%"></i></div>' +
+      "</div>";
+
+    if (caveats.length) {
+      html += '<div class="rc-caveat-box"><h3 class="rc-h">Check before sending</h3>' +
+              '<ul class="rc-list rc-caveats">';
+      for (const c of caveats) html += "<li>" + escapeHtml(c) + "</li>";
+      html += "</ul></div>";
     }
 
-    if (Array.isArray(data.suggested_steps) && data.suggested_steps.length) {
-      html += '<h3 class="rc-h">Steps</h3><ol class="rc-list rc-steps">';
-      for (const s of data.suggested_steps) html += "<li>" + escapeHtml(s) + "</li>";
-      html += "</ol>";
+    html += '<h3 class="rc-h">Draft reply</h3>' +
+            '<textarea class="rc-draft" spellcheck="true">' +
+            escapeHtml(data.draft_response || "") + "</textarea>";
+
+    const steps = Array.isArray(data.suggested_steps) ? data.suggested_steps : [];
+    if (data.problem_summary || steps.length) {
+      let body = "";
+      if (data.problem_summary) body += '<p class="rc-summary">' + escapeHtml(data.problem_summary) + "</p>";
+      if (steps.length) {
+        body += '<ol class="rc-list rc-steps">';
+        for (const st of steps) body += "<li>" + escapeHtml(st) + "</li>";
+        body += "</ol>";
+      }
+      html += moreSection("steps", "What’s going on & steps for you" + (steps.length ? " (" + steps.length + ")" : ""), body);
     }
 
     /* Read-only commands the backend ran for names and job IDs in the ticket;
        shown so the facts the draft relies on can be checked. */
-    if (Array.isArray(data.lookups) && data.lookups.length) {
-      html += '<h3 class="rc-h">Cluster lookups</h3><ul class="rc-list rc-lookups">';
-      for (const l of data.lookups) {
-        html += '<li class="' + (l.ok ? "rc-lk-ok" : "rc-lk-miss") + '"><code>' +
+    const lookups = Array.isArray(data.lookups) ? data.lookups : [];
+    if (lookups.length) {
+      let body = '<ul class="rc-list rc-lookups">';
+      for (const l of lookups) {
+        body += '<li class="' + (l.ok ? "rc-lk-ok" : "rc-lk-miss") + '"><code>' +
                 escapeHtml(l.command) + "</code> " + escapeHtml(l.summary) + "</li>";
       }
-      html += '</ul><p class="rc-meta">Read-only, run just now in your session.</p>';
+      body += '</ul><p class="rc-meta">Read-only, run just now in your session. Nothing was changed.</p>';
+      html += moreSection("lookups", "Cluster lookups (" + lookups.length + " ran)", body);
     }
 
-    if (caveats.length) {
-      html += '<h3 class="rc-h">Check before sending</h3><ul class="rc-list rc-caveats">';
-      for (const c of caveats) html += "<li>" + escapeHtml(c) + "</li>";
-      html += "</ul>";
+    const refs = Array.isArray(data.references) ? data.references : [];
+    if (refs.length) {
+      let body = '<ol class="rc-list rc-refs">';
+      for (const r of refs) {
+        body += '<li><a href="' + escapeHtml(r.url) + '" target="_blank" rel="noopener noreferrer">' +
+                escapeHtml(r.title || r.url) + "</a></li>";
+      }
+      body += "</ol>";
+      html += moreSection("refs", "RC pages cited (" + refs.length + ")", body);
+    } else if (data.kg_status && data.kg_status !== "ok") {
+      html += moreSection("refs", "RC pages cited (none — knowledge graph " + escapeHtml(data.kg_status) + ")",
+                          '<p class="rc-meta">This draft was not checked against the RC website.</p>');
     }
 
-    html += '<h3 class="rc-h">Draft</h3>' +
-            '<textarea class="rc-draft" spellcheck="true">' +
-            escapeHtml(data.draft_response || "") + "</textarea>";
+    const ev = evaluationSection(data.evaluations || {});
+    if (ev) html += ev;
 
     const meta = [];
-    if (data.model) meta.push(escapeHtml(data.model));
-    if (typeof data.latency_ms === "number") meta.push((data.latency_ms / 1000).toFixed(1) + "s");
-    if (data.usage && data.usage.total_tokens) meta.push(data.usage.total_tokens + " tokens");
-    if (data.request_id) meta.push("draft " + escapeHtml(data.request_id));
-    if (meta.length) html += '<p class="rc-meta">' + meta.join(" · ") + "</p>";
-    html += contextHtml(data.context || {});
+    if (data.model) meta.push("model " + escapeHtml(data.model));
+    if (typeof data.latency_ms === "number") meta.push((data.latency_ms / 1000).toFixed(1) + " s");
+    if (data.usage && data.usage.total_tokens) meta.push(data.usage.total_tokens.toLocaleString() + " tokens");
+    if (data.request_id) meta.push("draft id " + escapeHtml(data.request_id));
+    const ctx = contextHtml(data.context || {});
+    if (meta.length || ctx) {
+      html += moreSection("details", "Ticket & model details",
+        (meta.length ? '<p class="rc-meta">' + meta.join(" · ") + "</p>" : "") + ctx);
+    }
 
-    html += evaluationHtml(data.evaluations || {});
-    if (data.request_id) html += feedbackHtml();
+    if (data.request_id) html += moreSection("feedback", "Rate this draft", feedbackHtml());
 
     const foot =
       '<button type="button" class="rc-btn rc-btn-primary rc-copy">Copy</button>' +
       '<button type="button" class="rc-btn rc-btn-ghost rc-insert">Insert</button>';
 
     showResultHtml(html, foot);
+    rememberSections();
 
     const area = $(".rc-draft");
     const flash = (btn, text) => {
@@ -758,22 +786,52 @@
     assert_cites_when_grounded: "cites the RC sources it was given"
   };
 
-  /* The backend's automatic checks for this draft (app/evaluators.py). A
-     failed assertion is shown, not hidden: it is something to fix before Update. */
-  function evaluationHtml(ev) {
+  /* The backend's automatic checks for this draft (app/evaluators.py), as a
+     section: the title says how many passed, the body lists each in words.
+     A failed check is not hidden: the title is marked, it is something to fix
+     before Update. */
+  function evaluationSection(ev) {
     const checks = ev.assertions || {};
     const keys = Object.keys(checks);
     if (!keys.length) return "";
     const failed = keys.filter((k) => !checks[k]);
     const m = ev.metrics || {};
+    let body = '<ul class="rc-list rc-checklist">';
+    for (const k of keys) {
+      body += '<li class="' + (checks[k] ? "rc-pass" : "rc-fail") + '">' +
+              (checks[k] ? "✓ " : "✗ ") + escapeHtml(ASSERT_NAMES[k] || k) + "</li>";
+    }
+    body += "</ul>";
     const bits = [];
-    if (typeof m.conciseness === "number") bits.push("conciseness " + m.conciseness.toFixed(2));
-    if (typeof m.answer_relevance_embedding === "number") bits.push("relevance " + m.answer_relevance_embedding.toFixed(2));
     if (typeof m.reply_words === "number") bits.push(m.reply_words + " words");
-    return '<p class="rc-eval' + (failed.length ? " rc-eval-fail" : "") + '">' +
-      "Automatic checks: " + (keys.length - failed.length) + "/" + keys.length + " passed" +
-      (failed.length ? " — failed: " + failed.map((k) => escapeHtml(ASSERT_NAMES[k] || k)).join(", ") : "") +
-      (bits.length ? "<br>" + bits.join(" · ") : "") + "</p>";
+    if (typeof m.conciseness === "number") bits.push("conciseness " + m.conciseness.toFixed(2));
+    if (typeof m.answer_relevance_embedding === "number") bits.push("relevance to the ticket " + m.answer_relevance_embedding.toFixed(2));
+    if (bits.length) body += '<p class="rc-meta">' + bits.join(" · ") + "</p>";
+    const title = "Quality checks: " + (keys.length - failed.length) + " of " + keys.length + " passed" +
+                  (failed.length ? " — " + failed.map((k) => ASSERT_NAMES[k] || k).join(", ") : "");
+    return moreSection("checks", title, body, failed.length ? "rc-more-warn" : "");
+  }
+
+  /* A collapsible section. Which ones are open is remembered for this tab, so
+     a section you use stays open on the next draft. */
+  const OPEN_SECTIONS_KEY = "rc-copilot-open-sections";
+  function openSections() {
+    try { return JSON.parse(sessionStorage.getItem(OPEN_SECTIONS_KEY) || "{}"); } catch (e) { return {}; }
+  }
+  function moreSection(key, title, body, extraClass) {
+    return '<details class="rc-more' + (extraClass ? " " + extraClass : "") + '" data-sec="' + key + '"' +
+           (openSections()[key] ? " open" : "") + '><summary class="rc-more-title">' + escapeHtml(title) +
+           '</summary><div class="rc-more-body">' + body + "</div></details>";
+  }
+  function rememberSections() {
+    const panel = document.getElementById(PANEL_ID);
+    for (const d of panel ? panel.querySelectorAll("details.rc-more") : []) {
+      d.addEventListener("toggle", function () {
+        const open = openSections();
+        open[d.dataset.sec] = d.open;
+        try { sessionStorage.setItem(OPEN_SECTIONS_KEY, JSON.stringify(open)); } catch (e) {}
+      });
+    }
   }
 
   function feedbackHtml() {
@@ -782,7 +840,7 @@
       chips.map(([text, score, value]) =>
         '<button type="button" class="rc-fb-chip" data-score="' + score + '" data-value="' + (value || "") + '">' +
         text + "</button>").join("") + "</div>";
-    return '<h3 class="rc-h">Feedback</h3><div class="rc-fb">' +
+    return '<div class="rc-fb">' +
       row("thumbs", "Helpful?", [["👍", 1], ["👎", 0]]) +
       row("correctness", "Correct?", [["Correct", 1], ["Partly", 0.5], ["Wrong", 0]]) +
       row("usage", "Used it?", [["As is", 1, "used_as_is"], ["Edited", 0.5, "edited"], ["Not used", 0, "not_used"]]) +

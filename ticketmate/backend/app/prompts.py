@@ -124,6 +124,19 @@ Draft a response for the following ServiceNow ticket.
 
 RESPOND_JSON_ONLY = "\nRespond with the JSON object only.\n"
 
+# The last thing before the answer: only the items that apply to this draft.
+# The rules are stated earlier, but a 7B model reading 5-8k tokens of ticket
+# and sources acts on what it read last: on INC09000005 it cited neither of
+# two srun pages it was given, and told the researcher to run the very sacct
+# the lookups had already run (which showed the job hit its time limit).
+CHECKLIST_HEADER = "\nBefore you answer, check:\n"
+CHECKLIST_SOURCES = (
+    "- Where a step or the reply uses something an RC WEBSITE SOURCE says, cite it as [S1].\n")
+CHECKLIST_LOOKUPS = (
+    "- Use what the CLUSTER LOOKUPS show (for example a job's state, time limit, memory)\n"
+    "  and say it plainly; do not ask anyone to run a lookup that was already run.\n")
+CHECKLIST_INSTRUCTIONS = "- \"draft_response\" is the message the RC engineer asked for, nothing more.\n"
+
 # Used instead of USER_PROMPT_TEMPLATE when the RC member typed guidance: the
 # guidance becomes the task. Appending it as a note after a long ticket did not
 # work -- Qwen2.5-7B, asked for a short follow-up on INC09000013, re-wrote the
@@ -240,6 +253,11 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
             user_content += KG_LOW_CONFIDENCE_NOTE
     if instructions:
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(extra_instructions=instructions)
+    checks = ([CHECKLIST_SOURCES] if kg_context and not kg_low_confidence else []) + \
+             ([CHECKLIST_LOOKUPS] if lookups_context else []) + \
+             ([CHECKLIST_INSTRUCTIONS] if instructions else [])
+    if checks:
+        user_content += CHECKLIST_HEADER + "".join(checks)
     user_content += RESPOND_JSON_ONLY
     if json_reminder:
         user_content += JSON_ONLY_REMINDER

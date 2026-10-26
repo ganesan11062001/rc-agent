@@ -230,7 +230,11 @@ Developer mode → **Load unpacked** → select the folder.
 **3 — Open OOD's "My Interactive Sessions".** The extension picks up the
 address and token on its own; there's nothing to copy.
 
-**4 — Open a ticket** and click **Draft reply**.
+**4 — Open a ticket** and click **Draft reply**. The panel takes half the
+page. It always shows where the draft was written, how sure the model is,
+**Check before sending** and the draft itself; steps, cluster lookups, the RC
+pages cited (as links), quality checks, ticket/model details and the feedback
+form are collapsible sections underneath, and stay open once you open them.
 
 A fresh session takes a few minutes to load the model (longer the first time a
 model is downloaded) and 1–2 minutes to load the knowledge graph. Meanwhile the

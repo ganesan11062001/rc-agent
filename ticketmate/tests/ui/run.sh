@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Browser test of the web UI's evaluation display and feedback form.
+# Browser tests: the web UI's evaluation display and feedback form, and the
+# extension panel's result layout.
 #
 #   tests/ui/run.sh        exit 0 = pass; screenshots in $SHOTS (default /tmp)
 #
@@ -27,4 +28,7 @@ for _ in $(seq 1 150); do
   python3 -c "import json,sys,urllib.request as u; o=u.build_opener(u.ProxyHandler({})); sys.exit(0 if json.load(o.open('http://127.0.0.1:$AP/api/health',timeout=3))['knowledge_graph']=='ok' else 1)" 2>/dev/null && break
   sleep 2
 done
-"$PW_PYTHON" "$HERE/web_feedback_test.py" "$AP" "$WORK/runs" "$SHOTS"
+"$PW_PYTHON" "$HERE/web_feedback_test.py" "$AP" "$WORK/runs" "$SHOTS"; rc=$?
+# The extension panel's result layout (no backend needed: the worker is mocked).
+"$PW_PYTHON" "$HERE/extension_result_test.py" "$SHOTS" || rc=1
+exit $rc

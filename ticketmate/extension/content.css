@@ -95,7 +95,9 @@ aside#rc-copilot-panel.rc-panel {
   z-index: 2147483647;
 
   box-sizing: border-box;
-  width: 400px;
+  /* Half the page: room for the draft without hiding the ticket. */
+  width: 50vw;
+  min-width: min(420px, 100vw);
   max-width: 100vw;
 
   display: flex;
@@ -402,10 +404,10 @@ aside#rc-copilot-panel .rc-lookups .rc-lk-miss { color: var(--rc-ink-3); }
 aside#rc-copilot-panel .rc-draft {
   all: initial;
   box-sizing: border-box; display: block; width: 100%;
-  min-height: 170px; padding: 11px 12px;
+  min-height: 320px; padding: 11px 12px;
   background: var(--rc-sunken);
   border: 1px solid var(--rc-line-strong); border-radius: 9px;
-  font: 400 11.5px/1.6 var(--rc-mono); color: var(--rc-ink);
+  font: 400 13.5px/1.6 var(--rc-sans); color: var(--rc-ink);
   white-space: pre-wrap; resize: vertical;
 }
 aside#rc-copilot-panel .rc-draft:focus {
@@ -435,9 +437,6 @@ aside#rc-copilot-panel .rc-foot .rc-btn { margin-top: 0; }
 }
 
 /* ---------- evaluation + feedback ---------- */
-aside#rc-copilot-panel .rc-eval { margin: 8px 0 0; padding: 7px 9px; border-radius: 8px; font-size: 11.5px;
-  line-height: 1.45; background: #e8effb; color: #1f4a8f; }
-aside#rc-copilot-panel .rc-eval.rc-eval-fail { background: #fdf0da; color: #8a5a05; }
 aside#rc-copilot-panel .rc-fb { display: flex; flex-direction: column; gap: 6px; }
 aside#rc-copilot-panel .rc-fb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 aside#rc-copilot-panel .rc-fb-label { min-width: 64px; font-size: 11.5px; color: var(--rc-ink-3); }
@@ -449,3 +448,29 @@ aside#rc-copilot-panel .rc-fb-actions { display: flex; gap: 6px; justify-content
 aside#rc-copilot-panel .rc-fb-status { margin: 0; font-size: 11px; color: var(--rc-ink-3); min-height: 1em; }
 aside#rc-copilot-panel .rc-fb-capture { font-size: 11.5px; }
 aside#rc-copilot-panel .rc-fb-send { min-width: 64px; }
+
+/* Result layout: the things to act on, then collapsible sections. */
+aside#rc-copilot-panel .rc-caveat-box {
+  margin: 12px 0 4px; padding: 2px 12px 6px; border-radius: 10px;
+  background: var(--rc-warn-bg); border: 1px solid var(--rc-warn-line);
+}
+aside#rc-copilot-panel .rc-caveat-box .rc-h { color: var(--rc-warn); }
+aside#rc-copilot-panel .rc-more {
+  margin-top: 8px; border: 1px solid var(--rc-line); border-radius: 10px; background: var(--rc-surface);
+}
+aside#rc-copilot-panel .rc-more[open] { background: var(--rc-sunken); }
+aside#rc-copilot-panel .rc-more-title {
+  cursor: pointer; list-style: none; padding: 9px 12px; font-size: 12.5px; font-weight: 600;
+  color: var(--rc-ink); display: flex; align-items: center; gap: 8px;
+}
+aside#rc-copilot-panel .rc-more-title::-webkit-details-marker { display: none; }
+aside#rc-copilot-panel .rc-more-title::before {
+  content: "▸"; color: var(--rc-ink-3); font-size: 11px; transition: transform .15s;
+}
+aside#rc-copilot-panel .rc-more[open] > .rc-more-title::before { transform: rotate(90deg); }
+aside#rc-copilot-panel .rc-more-warn > .rc-more-title { color: var(--rc-warn); }
+aside#rc-copilot-panel .rc-more-body { padding: 0 12px 10px; }
+aside#rc-copilot-panel .rc-refs a { color: var(--rc-info); text-decoration: underline; }
+aside#rc-copilot-panel .rc-checklist { list-style: none; padding-left: 2px; }
+aside#rc-copilot-panel .rc-checklist .rc-pass { color: var(--rc-ok); }
+aside#rc-copilot-panel .rc-checklist .rc-fail { color: var(--rc-bad); font-weight: 600; }
