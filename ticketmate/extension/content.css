@@ -474,3 +474,41 @@ aside#rc-copilot-panel .rc-refs a { color: var(--rc-info); text-decoration: unde
 aside#rc-copilot-panel .rc-checklist { list-style: none; padding-left: 2px; }
 aside#rc-copilot-panel .rc-checklist .rc-pass { color: var(--rc-ok); }
 aside#rc-copilot-panel .rc-checklist .rc-fail { color: var(--rc-bad); font-weight: 600; }
+
+/* Width: drag the left edge, or pick a preset in the header. */
+aside#rc-copilot-panel { min-width: min(340px, 100vw); }
+aside#rc-copilot-panel[data-resizing="1"] { transition: none; user-select: none; }
+aside#rc-copilot-panel .rc-resize {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; z-index: 2;
+  cursor: ew-resize; background: transparent;
+}
+aside#rc-copilot-panel .rc-resize:hover,
+aside#rc-copilot-panel[data-resizing="1"] .rc-resize { background: linear-gradient(90deg, transparent 3px, var(--rc-info-line) 3px, var(--rc-info-line) 5px, transparent 5px); }
+aside#rc-copilot-panel .rc-sizes {
+  margin-left: auto; display: inline-flex; border: 1px solid var(--rc-line); border-radius: 7px; overflow: hidden;
+}
+aside#rc-copilot-panel .rc-size {
+  all: unset; cursor: pointer; padding: 2px 8px; font: 600 12px/1.4 var(--rc-sans); color: var(--rc-ink-3);
+}
+aside#rc-copilot-panel .rc-size + .rc-size { border-left: 1px solid var(--rc-line); }
+aside#rc-copilot-panel .rc-size:hover { background: var(--rc-sunken); color: var(--rc-ink); }
+aside#rc-copilot-panel .rc-size.rc-size-on { background: var(--rc-ink); color: #fff; }
+
+/* Compose: quick instructions and where the draft goes. */
+aside#rc-copilot-panel .rc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+aside#rc-copilot-panel .rc-chip {
+  all: unset; cursor: pointer; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--rc-line-strong); background: var(--rc-surface);
+  font: 500 11.5px/1.5 var(--rc-sans); color: var(--rc-ink-2);
+}
+aside#rc-copilot-panel .rc-chip:hover { border-color: var(--rc-info); color: var(--rc-info); background: var(--rc-info-bg); }
+aside#rc-copilot-panel .rc-target-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--rc-ink-2);
+}
+aside#rc-copilot-panel .rc-target-label { font-weight: 600; }
+aside#rc-copilot-panel .rc-target {
+  font: 400 12px/1.4 var(--rc-sans); color: var(--rc-ink); padding: 3px 6px;
+  border: 1px solid var(--rc-line-strong); border-radius: 6px; background: var(--rc-surface); max-width: 100%;
+}
+aside#rc-copilot-panel .rc-target-note { margin: 4px 0 0; font-size: 11px; color: var(--rc-ink-3); }
+aside#rc-copilot-panel .rc-target-note.rc-danger { color: var(--rc-bad); }

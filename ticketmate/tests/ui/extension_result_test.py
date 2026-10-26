@@ -45,7 +45,8 @@ PAGE = """<!doctype html><html><body style="font-family:sans-serif;margin:0">
 <label>Number <input name="number" value="INC0012345"></label><br>
 <label>Short description <input name="short_description" value="srun hangs"></label><br>
 <label>Description <textarea name="description">srun hangs after allocation.</textarea></label><br>
-<label>Work notes <textarea name="work_notes"></textarea></label>
+<label>Work notes <textarea name="work_notes"></textarea></label><br>
+<label>Additional comments <textarea name="comments"></textarea></label>
 </div></body></html>"""
 
 INIT = """
@@ -53,12 +54,21 @@ window.chrome = { runtime: {
   sendMessage: async (m) => {
     if (m.type === "PING") return { ok: true, data: { status: "ok", configured_model: "stub" }, startup: null };
     if (m.type === "SIGN_IN") return { ok: true, expiresAt: Date.now() / 1000 + 3 * 3600 };
-    if (m.type === "GET_CONFIG") return { ok: true, data: { targetField: "work_notes" } };
+    if (m.type === "GET_CONFIG") {
+      const all = JSON.parse(sessionStorage.getItem("__store") || "{}");
+      return { ok: true, data: { targetField: (all.oodConfig || {}).targetField || "work_notes" } };
+    }
     if (m.type === "DRAFT") return { ok: true, data: %s };
     return { ok: false, error: "not mocked" };
   },
   getURL: (p) => p, onMessage: { addListener() {} } },
-  storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: { addListener() {} } } };
+  // chrome.storage.local, kept in the page's sessionStorage so it survives a reload.
+  storage: { local: {
+    get: async (k) => { const all = JSON.parse(sessionStorage.getItem("__store") || "{}");
+                        return typeof k === "string" ? (k in all ? { [k]: all[k] } : {}) : all; },
+    set: async (o) => { const all = JSON.parse(sessionStorage.getItem("__store") || "{}");
+                        Object.assign(all, o); sessionStorage.setItem("__store", JSON.stringify(all)); } },
+    onChanged: { addListener() {} } } };
 """ % json.dumps(DRAFT)
 
 fails = []
@@ -80,14 +90,53 @@ with sync_playwright() as p:
     pg.goto("https://servicenow.test/incident.do")
     open_key = re.search(r'OPEN_KEY\s*=\s*"([^"]+)"', open(os.path.join(EXT, "content.js")).read()).group(1)
     pg.evaluate("k => sessionStorage.setItem(k, '1')", open_key)
-    pg.add_style_tag(path=os.path.join(EXT, "content.css"))
-    pg.add_script_tag(path=os.path.join(EXT, "content.js"))
     panel = "aside#rc-copilot-panel"
-    pg.wait_for_selector(panel + " .rc-go", timeout=10000)
-    pg.wait_for_timeout(600)
 
-    width = pg.evaluate("s => document.querySelector(s).getBoundingClientRect().width", panel)
-    check(abs(width - 700) <= 2, "panel is half the page (%dpx of 1400)" % width)
+    def load_panel():
+        pg.add_style_tag(path=os.path.join(EXT, "content.css"))
+        pg.add_script_tag(path=os.path.join(EXT, "content.js"))
+        pg.wait_for_selector(panel + " .rc-go", timeout=10000)
+        pg.wait_for_timeout(700)
+
+    def width():
+        return pg.evaluate("s => document.querySelector(s).getBoundingClientRect().width", panel)
+
+    load_panel()
+    check(abs(width() - 700) <= 2, "panel starts at half the page (%dpx of 1400)" % width())
+    pg.screenshot(path=os.path.join(shots, "ext-compose.png"))
+
+    print("width")
+    pg.click(panel + ' .rc-size[data-size="third"]'); pg.wait_for_timeout(200)
+    check(abs(width() - 1400 / 3) <= 2, "⅓ preset (%dpx)" % width())
+    pg.click(panel + ' .rc-size[data-size="wide"]'); pg.wait_for_timeout(200)
+    check(abs(width() - 1400 * 2 / 3) <= 2, "⅔ preset (%dpx)" % width())
+    box = pg.eval_on_selector(panel + " .rc-resize", "e => { const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + 300]; }")
+    pg.mouse.move(*box); pg.mouse.down(); pg.mouse.move(1400 - 820, 300, steps=8); pg.mouse.up(); pg.wait_for_timeout(200)
+    check(abs(width() - 820) <= 4, "dragging the left edge resizes it (%dpx)" % width())
+    check(pg.eval_on_selector_all(panel + " .rc-size.rc-size-on", "els => els.length") == 0,
+          "no preset is marked after a custom width")
+    pg.reload(); pg.evaluate("k => sessionStorage.setItem(k, '1')", open_key); load_panel()
+    check(abs(width() - 820) <= 4, "the width is remembered after a reload (%dpx)" % width())
+    pg.dblclick(panel + " .rc-resize"); pg.wait_for_timeout(200)
+    check(abs(width() - 700) <= 2, "double-click on the edge: back to half (%dpx)" % width())
+
+    print("compose")
+    pg.click(panel + ' .rc-chip:has-text("Follow up / close")')
+    check("we will go ahead and close the ticket" in pg.input_value(panel + " .rc-notes"),
+          "a quick instruction chip fills the instructions box")
+    pg.click(panel + ' .rc-chip:has-text("Follow up / close")')
+    check(pg.input_value(panel + " .rc-notes").count("close the ticket") == 1, "clicking it twice does not repeat it")
+    pg.select_option(panel + " .rc-target", "comments"); pg.wait_for_timeout(200)
+    check("researcher sees" in pg.inner_text(panel + " .rc-target-note") and
+          "rc-danger" in pg.get_attribute(panel + " .rc-target-note", "class"),
+          "choosing comments warns that the researcher sees it")
+    stored = pg.evaluate("() => JSON.parse(sessionStorage.getItem('__store') || '{}').oodConfig")
+    check((stored or {}).get("targetField") == "comments", "the choice is saved (same setting as the popup)")
+    pg.click(panel + " .rc-go"); pg.wait_for_selector(panel + " .rc-draft", timeout=10000); pg.wait_for_timeout(300)
+    check("1-hour time limit" in pg.input_value("textarea[name=comments]") and not pg.input_value("textarea[name=work_notes]"),
+          "the draft goes where you chose")
+    pg.select_option(panel + " .rc-target", "work_notes"); pg.wait_for_timeout(200)
+    pg.fill("textarea[name=comments]", "")
 
     pg.click(panel + " .rc-go")
     pg.wait_for_selector(panel + " .rc-draft", timeout=10000)

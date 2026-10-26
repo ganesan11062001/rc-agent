@@ -215,6 +215,104 @@
     return p ? p.querySelector(sel) : null;
   };
 
+  /* ---------- panel width ---------- */
+
+  // Remembered across pages and tickets: a preset (a share of the page) or
+  // the exact width the edge was dragged to.
+  const WIDTH_KEY = "rcPanelWidth";
+  const SIZES = { third: "33.333vw", half: "50vw", wide: "66.667vw" };
+  const MIN_WIDTH = 340;
+
+  function applyWidth(panel, w) {
+    panel.style.width = w && w.px ? Math.round(w.px) + "px" : SIZES[(w && w.size) || "half"];
+    for (const b of panel.querySelectorAll(".rc-size")) {
+      b.classList.toggle("rc-size-on", !(w && w.px) && b.dataset.size === ((w && w.size) || "half"));
+    }
+  }
+  function saveWidth(w) {
+    try { chrome.storage.local.set({ [WIDTH_KEY]: w }); } catch (e) { /* extension reloaded */ }
+  }
+  function wireWidth(panel) {
+    applyWidth(panel, { size: "half" });
+    try {
+      chrome.storage.local.get(WIDTH_KEY).then((s) => applyWidth(panel, s[WIDTH_KEY] || { size: "half" }), () => {});
+    } catch (e) { /* extension reloaded */ }
+    for (const b of panel.querySelectorAll(".rc-size")) {
+      b.addEventListener("click", () => { const w = { size: b.dataset.size }; applyWidth(panel, w); saveWidth(w); });
+    }
+    const grip = panel.querySelector(".rc-resize");
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      panel.dataset.resizing = "1";
+      const move = (ev) => {
+        const px = Math.max(MIN_WIDTH, Math.min(window.innerWidth * 0.95, window.innerWidth - ev.clientX));
+        applyWidth(panel, { px: px });
+      };
+      const up = () => {
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", up);
+        delete panel.dataset.resizing;
+        saveWidth({ px: panel.getBoundingClientRect().width });
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up);
+    });
+    grip.addEventListener("dblclick", () => { const w = { size: "half" }; applyWidth(panel, w); saveWidth(w); });
+  }
+
+  /* ---------- compose: quick instructions, where the draft goes ---------- */
+
+  // One click adds the instruction; it can still be edited before drafting.
+  const QUICK_INSTRUCTIONS = [
+    ["Follow up / close", "Write a short follow-up on our previous reply: if they have no further questions, we will go ahead and close the ticket."],
+    ["Ask for missing details", "Only ask the researcher for the details we still need to troubleshoot (for example the job ID, the exact error message, the path to the script)."],
+    ["Shorter", "Keep the reply short: three or four sentences."],
+    ["Step-by-step", "Give the researcher clear step-by-step instructions with the exact commands to run."],
+    ["Mark resolved", "Tell the researcher the issue is resolved, summarise briefly what was done, and invite them to reply if anything is still not working."]
+  ];
+
+  // Same setting as the toolbar popup (oodConfig.targetField), so they agree.
+  const CFG_KEY = "oodConfig";
+  const TARGET_NOTES = {
+    work_notes: ["Internal only: a mis-click can't reach the researcher.", ""],
+    comments: ["The researcher sees additional comments. The draft lands unsaved, but one wrong Update sends it.", "rc-danger"],
+    both: ["The reply goes to additional comments, which the researcher sees; the analysis goes to work notes.", "rc-danger"]
+  };
+  function showTargetNote(panel, value) {
+    const note = panel.querySelector(".rc-target-note");
+    const [text, cls] = TARGET_NOTES[value] || TARGET_NOTES.work_notes;
+    note.textContent = text;
+    note.className = "rc-target-note" + (cls ? " " + cls : "");
+  }
+  function wireCompose(panel) {
+    const notes = panel.querySelector(".rc-notes");
+    for (const chip of panel.querySelectorAll(".rc-chip")) {
+      chip.addEventListener("click", () => {
+        const text = chip.dataset.text;
+        if (!notes.value.includes(text)) notes.value = (notes.value.trim() ? notes.value.trim() + "\n" : "") + text;
+        notes.focus();
+      });
+    }
+    const sel = panel.querySelector(".rc-target");
+    showTargetNote(panel, sel.value);
+    try {
+      chrome.storage.local.get(CFG_KEY).then((s) => {
+        const v = (s[CFG_KEY] || {}).targetField;
+        if (v) { sel.value = v; showTargetNote(panel, v); }
+      }, () => {});
+    } catch (e) { /* extension reloaded */ }
+    sel.addEventListener("change", async () => {
+      showTargetNote(panel, sel.value);
+      try {
+        const s = await chrome.storage.local.get(CFG_KEY);
+        const cfg = s[CFG_KEY] || {};
+        cfg.targetField = sel.value;
+        await chrome.storage.local.set({ [CFG_KEY]: cfg });
+      } catch (e) { /* extension reloaded */ }
+    });
+  }
+
   /* ---------- open / closed ---------- */
 
   function isOpen() {
@@ -253,10 +351,17 @@
     panel.setAttribute("role", "complementary");
     panel.setAttribute("aria-label", "RC Copilot");
     panel.innerHTML = [
+      // Drag the left edge to any width; double-click it for half the page.
+      '<div class="rc-resize" title="Drag to resize · double-click for half the page" aria-hidden="true"></div>',
       '<header class="rc-head">',
         '<span class="rc-mark" aria-hidden="true"></span>',
         '<span class="rc-title">RC Copilot</span>',
-        '<button type="button" class="rc-icon-btn rc-collapse" aria-label="Collapse">›</button>',
+        '<span class="rc-sizes" role="group" aria-label="Panel width">',
+          '<button type="button" class="rc-size" data-size="third" title="A third of the page">⅓</button>',
+          '<button type="button" class="rc-size" data-size="half" title="Half the page">½</button>',
+          '<button type="button" class="rc-size" data-size="wide" title="Two thirds of the page">⅔</button>',
+        "</span>",
+        '<button type="button" class="rc-icon-btn rc-collapse" aria-label="Collapse" title="Hide the panel">›</button>',
       "</header>",
 
       // status strip — the thing the toolbar popup used to own
@@ -273,15 +378,28 @@
 
       '<div class="rc-scroll">',
         '<section class="rc-sec rc-sec-ticket">',
-          '<h3 class="rc-h">Ticket</h3>',
+          '<h3 class="rc-h">This ticket</h3>',
           '<div class="rc-ticket"></div>',
         "</section>",
 
         '<section class="rc-sec rc-sec-compose">',
           '<h3 class="rc-h">Instructions <span class="rc-opt">optional</span></h3>',
-          '<textarea class="rc-notes" rows="3" placeholder="Anything the model should know that the ticket doesn\'t say."></textarea>',
+          '<textarea class="rc-notes" rows="3" placeholder="What should this reply say? Anything the ticket doesn\'t say? (e.g. a follow-up, or a fact you know)"></textarea>',
+          '<div class="rc-chips" aria-label="Quick instructions">',
+            QUICK_INSTRUCTIONS.map(([label, text]) =>
+              '<button type="button" class="rc-chip" data-text="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' +
+              escapeHtml(label) + "</button>").join(""),
+          "</div>",
+          '<label class="rc-target-row"><span class="rc-target-label">Write the draft into</span>',
+            '<select class="rc-target">',
+              '<option value="work_notes">Work notes (internal only)</option>',
+              '<option value="comments">Additional comments (the researcher sees it)</option>',
+              '<option value="both">Both: analysis to work notes, reply to comments</option>',
+            "</select>",
+          "</label>",
+          '<p class="rc-target-note"></p>',
           '<button type="button" class="rc-btn rc-btn-primary rc-go">Draft reply</button>',
-          '<p class="rc-hint">Ctrl+Enter to draft</p>',
+          '<p class="rc-hint">Ctrl+Enter to draft · nothing is saved until you click Update in ServiceNow</p>',
         "</section>",
 
         '<section class="rc-sec rc-sec-result" hidden></section>',
@@ -293,6 +411,8 @@
     document.body.appendChild(panel);
 
     panel.querySelector(".rc-collapse").addEventListener("click", () => setOpen(false));
+    wireWidth(panel);
+    wireCompose(panel);
     panel.querySelector(".rc-status").addEventListener("click", testConnection);
     panel.querySelector(".rc-go").addEventListener("click", draft);
     panel.querySelector(".rc-notes").addEventListener("keydown", function (e) {
@@ -503,13 +623,13 @@
 
     box.innerHTML =
       '<div class="rc-ticket-id">' +
-        (lastTicket.number ? escapeHtml(lastTicket.number) : "<em>no number</em>") +
-        '<span class="rc-chars">' + lastTicket.text.length.toLocaleString() + " chars</span>" +
+        (lastTicket.number ? escapeHtml(lastTicket.number) : "<em>no ticket number found</em>") +
+        '<span class="rc-chars">read from this page</span>' +
       "</div>" +
       '<ul class="rc-checks">' +
         row(lastTicket.has.short, "short description") +
         row(lastTicket.has.description, "description") +
-        row(lastTicket.has.activity, "activity stream") +
+        row(lastTicket.has.activity, lastTicket.has.activity ? "comments & work notes" : "no comments yet") +
       "</ul>";
   }
 

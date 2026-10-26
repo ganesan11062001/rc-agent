@@ -231,7 +231,11 @@ Developer mode → **Load unpacked** → select the folder.
 address and token on its own; there's nothing to copy.
 
 **4 — Open a ticket** and click **Draft reply**. The panel takes half the
-page. It always shows where the draft was written, how sure the model is,
+page; change it with **⅓ / ½ / ⅔** in its header or by dragging its left edge
+(double-click the edge for half again), and it remembers your width. Under the
+instructions box, quick chips (*Follow up / close*, *Ask for missing details*,
+*Shorter*, *Step-by-step*, *Mark resolved*) fill in common instructions, and
+**Write the draft into** picks work notes, additional comments or both. It always shows where the draft was written, how sure the model is,
 **Check before sending** and the draft itself; steps, cluster lookups, the RC
 pages cited (as links), quality checks, ticket/model details and the feedback
 form are collapsible sections underneath, and stay open once you open them.
