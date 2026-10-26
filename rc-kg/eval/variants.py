@@ -130,7 +130,7 @@ def compare(paths: List[str]) -> None:
         print("  -- %s (%d)" % (label, sc[0]["n"]))
         for m in ("hit@1", "hit@3", "hit@%d" % k, "mrr"):
             row("   " + m, [s[m] for s in sc])
-        row("   flagged low_confidence", [s["low_conf"] for s in sc], "%.0f%%" if False else "%.2f")
+        row("   flagged low_confidence", [s["low_conf"] for s in sc], "%.2f")
 
     print("\n2. Reviewed ticket cases (eval/ticket_cases.yaml)")
     row("passed", [sum(c["ok"] for c in d["ticket_cases"]) for d in data], "%d")

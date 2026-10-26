@@ -1,8 +1,9 @@
-"""Settings. Every provider-specific choice is an environment variable.
+"""Settings, from environment variables or .env (see .env.example).
 
-Nothing here hardcodes an embedding or LLM vendor: the retrieval layer reads
-`embedding_provider` / `llm_provider` and dispatches, so swapping OpenAI for a
-local vLLM is a .env change, not a code change.
+Nothing here hardcodes an embedding or LLM vendor: `embedding_provider`
+selects the embedder (retrieval/embeddings.py), and the LLM is any
+OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, the OpenAI API) at
+`llm_base_url`, so swapping one for another is a .env change.
 """
 
 from functools import lru_cache
@@ -17,9 +18,8 @@ class Settings(BaseSettings):
     )
 
     # --- Source site ------------------------------------------------------
-    # Only this host is ingested. Anything else is recorded as an ExternalLink
-    # and never fetched.
-    site_base: str = "https://rc.northeastern.edu"
+    # The RC website's WordPress API and sitemap. Which hosts count as internal
+    # (ingested) versus ExternalLink (never fetched) is ingest/urls.py's call.
     wp_api: str = "https://rc.northeastern.edu/wp-json/wp/v2"
     sitemap_index: str = "https://rc.northeastern.edu/wp-sitemap.xml"
 
@@ -55,8 +55,7 @@ class Settings(BaseSettings):
     embedding_api_key: Optional[str] = None
 
     # --- LLM --------------------------------------------------------------
-    # "openai_compatible" covers vLLM, llama.cpp, Ollama and the OpenAI API.
-    llm_provider: str = "openai_compatible"
+    # Any OpenAI-compatible chat endpoint: vLLM, llama.cpp, Ollama, OpenAI.
     llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
     llm_base_url: Optional[str] = None
     llm_api_key: Optional[str] = None

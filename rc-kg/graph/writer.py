@@ -6,7 +6,7 @@ small, but one round trip per node is still 500 round trips for no reason.
 """
 
 import logging
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List
 
 from config import get_settings
 
@@ -163,23 +163,6 @@ def upsert_external(rows: List[Dict]) -> int:
 def link_out(rows: List[Dict]) -> int:
     return _run(LINK_OUT, rows)
 
-
-def delete_pages_not_in(urls: List[str]) -> int:
-    """Phase 4: remove pages that are no longer published, and their sections."""
-    s = get_settings()
-    with driver().session(database=s.neo4j_database) as sess:
-        rec = sess.run(
-            "MATCH (p:Page) WHERE NOT p.url IN $urls "
-            "OPTIONAL MATCH (p)-[:HAS_SECTION]->(sec:Section) "
-            "WITH collect(DISTINCT p) AS ps, collect(DISTINCT sec) AS ss "
-            "FOREACH (x IN ss | DETACH DELETE x) "
-            "FOREACH (x IN ps | DETACH DELETE x) "
-            "RETURN size(ps) AS pages, size(ss) AS sections",
-            urls=urls,
-        ).single()
-    if rec and rec["pages"]:
-        logger.info("deleted %d stale page(s), %d section(s)", rec["pages"], rec["sections"])
-    return rec["pages"] if rec else 0
 
 
 def counts() -> Dict[str, int]:

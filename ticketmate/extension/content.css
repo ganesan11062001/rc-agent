@@ -426,12 +426,13 @@ aside#rc-copilot-panel .rc-foot {
 }
 aside#rc-copilot-panel .rc-foot .rc-btn { margin-top: 0; }
 
+/* !important: the width control sets an inline width, which would otherwise win. */
 @media (max-width: 520px) {
-  aside#rc-copilot-panel.rc-panel { width: 100vw; }
+  aside#rc-copilot-panel.rc-panel { width: 100vw !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  button#rc-copilot-rail.rc-rail,
+  button#rc-copilot-fab,
   aside#rc-copilot-panel.rc-panel,
   aside#rc-copilot-panel * { animation: none !important; transition: none !important; }
 }

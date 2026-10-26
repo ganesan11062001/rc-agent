@@ -21,11 +21,10 @@ better; for everything else higher is better. Each record says which.
 """
 
 import asyncio
-import json
 import logging
 import random
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from . import kg_client, runlog
 from .config import get_settings

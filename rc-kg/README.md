@@ -214,7 +214,7 @@ cp .env.example .env      # start_neo4j.sh fills in the NEO4J_* lines
 ```
 
 Embedding and LLM providers are environment variables
-(`EMBEDDING_PROVIDER`, `LLM_PROVIDER`). Nothing in the code names a vendor.
+(`EMBEDDING_PROVIDER`; the LLM is any OpenAI-compatible `LLM_BASE_URL`). Nothing in the code names a vendor.
 
 ---
 

@@ -28,7 +28,7 @@ from . import sitemap as sitemap_mod
 from . import wp_api
 from .http import session
 from .sections import split_sections
-from .urls import classify, host_of, is_wp_api_url, normalize
+from .urls import classify, is_wp_api_url, normalize
 
 logger = logging.getLogger("ingest")
 
@@ -60,18 +60,6 @@ class Report:
 def section_id(content_type: str, wp_id: int, order: int) -> str:
     return "%s-%d-%03d" % (content_type, wp_id, order)
 
-
-def _is_past(iso_date: str) -> bool:
-    """Has this dated item already happened? Used only for events."""
-    if not iso_date:
-        return False
-    try:
-        d = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if d.tzinfo is None:
-        d = d.replace(tzinfo=timezone.utc)
-    return d < datetime.now(timezone.utc)
 
 
 # Docs first: when the same text is on both sites, the docs page is the
