@@ -171,6 +171,8 @@ async def generate_draft(ticket_text: str,
                          kg_context: str = "",
                          kg_low_confidence: bool = False,
                          lookups_context: str = "",
+                         playbook_context: str = "",
+                         playbook_missing: Tuple[str, ...] = (),
                          ) -> Tuple[LLMDraft, str]:
     """Send one ticket to the model and return (validated draft, model name).
 
@@ -207,6 +209,8 @@ async def generate_draft(ticket_text: str,
                 kg_context=kg_context,
                 kg_low_confidence=kg_low_confidence,
                 lookups_context=lookups_context,
+                playbook_context=playbook_context,
+                playbook_missing=playbook_missing,
             )
             kwargs: Dict[str, Any] = {
                 "model": settings.vllm_model_name,

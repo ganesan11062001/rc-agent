@@ -62,12 +62,22 @@ class Settings(BaseSettings):
     rc_kg_timeout_seconds: float = 15.0
 
     # --- Cluster lookups ----------------------------------------------------
-    # Before drafting, run read-only lookups for the usernames, job IDs and
-    # groups the ticket names (`id`, `sacct -j`, `getent group`; see
-    # app/lookups.py) and give the results to the model. Never anything that
-    # changes data. They run as you, inside your job.
+    # Before drafting, run read-only lookups for the usernames, job IDs,
+    # groups, nodes, partitions, projects and libraries the ticket names (`id`,
+    # `sacct`, `getent group`, `scontrol show node`, `sinfo`, `squeue`,
+    # `sshare`, `stat`, `ldconfig -p`; see app/lookups.py) and give the results
+    # to the model. Never anything that changes data. They run as you, inside
+    # your job.
     cluster_lookups: bool = True
     cluster_lookup_timeout_seconds: float = 5.0
+
+    # --- RC workflow playbooks ---------------------------------------------
+    # RC's procedures (app/playbooks/*.md: AICR membership, multi-GPU and long
+    # partition access, group access, Gaussian, storage extension, courses,
+    # long pending jobs). When the researcher's words match one, its runbook
+    # goes into the prompt and the draft follows its current stage. Nothing
+    # is run; the steps are for the RC engineer.
+    playbooks: bool = True
 
     # --- Ticket context ----------------------------------------------------
     # Clean the scraped ticket before anything reads it: drop notification

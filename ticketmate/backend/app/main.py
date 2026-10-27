@@ -15,10 +15,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, evaluators, kg_client, lookups, runlog, ticket_context, tracing
+from . import auth, evaluators, kg_client, lookups, playbooks, runlog, ticket_context, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, context_window, generate_draft, token_breakdown
-from .prompts import SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT, instruction_wants_sources
 from . import startup as startup_progress
 from .models import (
     ClusterLookup,
@@ -281,12 +281,33 @@ async def draft(request: DraftRequest):
     if found_lookups:
         tr.root.tags.append("lookups:%d" % len(found_lookups))
 
+    # RC's procedures for this kind of request (AICR, multi-GPU, long
+    # partition, group access, ...), chosen from the researcher's own words.
+    with tracing.run("playbooks.match", "tool", inputs={"query_chars": len(prepared.query)}) as prun:
+        found_playbooks = playbooks.find(prepared.query or ticket, ticket,
+                                         instructions=request.extra_instructions) if settings.playbooks else []
+        if prun is not None:
+            prun.end({"playbooks": [m.to_dict() for m in found_playbooks]})
+    playbook_context = playbooks.prompt_text(found_playbooks)
+    playbook_missing = tuple(playbooks.missing_text(found_playbooks))
+    if playbook_missing:
+        tr.root.tags.append("playbook:missing_info")
+    for m in found_playbooks:
+        tr.root.tags.append("playbook:" + m.playbook.name)
+
     # Fit the ticket to what the model's context window leaves once everything
     # else in the prompt, and the reply itself, are accounted for; a long
     # thread keeps its description, first entry and newest entries.
+    # A follow-up or closure the engineer asked for needs no website page;
+    # leaving the sources out gives their ~2k tokens to the thread. They are
+    # still retrieved, and in the trace.
+    kg_prompt_context = kg.context if instruction_wants_sources(request.extra_instructions) else ""
+    if kg.context and not kg_prompt_context:
+        tr.root.tags.append("kg:sources_not_needed")
     window = await context_window()
     est = lambda s: int(len(s or "") / ticket_context.CHARS_PER_TOKEN)
-    reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg.context) + est(lookups_context)
+    reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg_prompt_context) + est(lookups_context)
+                + est(playbook_context)
                 + 2 * est(request.extra_instructions) + 700)   # instructions appear twice; templates
     budget_tokens = settings.ticket_max_tokens if window is None else \
         max(800, min(settings.ticket_max_tokens, window - reserved))
@@ -294,7 +315,8 @@ async def draft(request: DraftRequest):
     ticket = fitted.text
     context_info = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(ticket),
                         context_window=window, budget_tokens=budget_tokens,
-                        retrieval_query_chars=len(prepared.query))
+                        retrieval_query_chars=len(prepared.query),
+                        playbooks=[m.playbook.name for m in found_playbooks])
     if fitted.stats.get("entries_omitted") or fitted.stats.get("truncated_chars"):
         tr.root.tags.append("ticket_trimmed")
     tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
@@ -329,6 +351,7 @@ async def draft(request: DraftRequest):
                 "ticket_context": context_info,
                 "retrieval": kg.trace,
                 "cluster_lookups": [lk.to_dict() for lk in found_lookups],
+                "playbooks": [m.to_dict() for m in found_playbooks],
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,
@@ -345,14 +368,16 @@ async def draft(request: DraftRequest):
     t = time.perf_counter()
     try:
         with tracing.run("generate_draft", "chain",
-                         inputs={"ticket_chars": len(ticket), "kg_context_chars": len(kg.context),
+                         inputs={"ticket_chars": len(ticket), "kg_context_chars": len(kg_prompt_context),
                                  "kg_low_confidence": kg.low_confidence,
-                                 "lookups_chars": len(lookups_context)},
+                                 "lookups_chars": len(lookups_context),
+                                 "playbook_chars": len(playbook_context)},
                          metadata={"prompt_version": _PROMPT_VERSION["version"]}) as grun:
             llm_draft, model_name = await generate_draft(
                 ticket, request.extra_instructions, trace,
-                kg_context=kg.context, kg_low_confidence=kg.low_confidence,
-                lookups_context=lookups_context,
+                kg_context=kg_prompt_context, kg_low_confidence=kg.low_confidence,
+                lookups_context=lookups_context, playbook_context=playbook_context,
+                playbook_missing=playbook_missing,
             )
             if grun is not None:
                 grun.end({"draft": llm_draft.model_dump(), "strategy": trace.get("strategy")})
@@ -395,7 +420,8 @@ async def draft(request: DraftRequest):
     t = time.perf_counter()
     if kg.status == "ok":
         fields, refs, cite_trace = await kg_client.apply_citations(
-            llm_draft.model_dump(), kg, request_id=request_id)
+            llm_draft.model_dump(), kg, request_id=request_id,
+            extra_allowed_urls=[u for m in found_playbooks for u in m.urls])
         llm_draft = LLMDraft(**fields)
         references = [Reference(**r) for r in refs]
         if kg.low_confidence and not references:
@@ -475,7 +501,7 @@ async def draft(request: DraftRequest):
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
         # LLM-as-judge in the background; it appends its grades beside the run.
-        evaluators.schedule_judge(request_id, ticket, kg.context, response.model_dump())
+        evaluators.schedule_judge(request_id, ticket, kg_prompt_context, response.model_dump())
 
     if settings.debug:
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())

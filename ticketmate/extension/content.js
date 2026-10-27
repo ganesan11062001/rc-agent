@@ -731,6 +731,8 @@
     }
     let line = bits[0] + (bits.length > 1 ? " · removed " + bits.slice(1).join(", ") : "");
     if (c.entries_omitted) line += " · " + n(c.entries_omitted) + " middle entries left out to fit the model";
+    // RC workflow runbooks the draft followed (backend/app/playbooks).
+    if (Array.isArray(c.playbooks) && c.playbooks.length) line += " · workflow: " + c.playbooks.join(", ");
     return '<p class="rc-meta rc-context">' + escapeHtml(line) + "</p>";
   }
 

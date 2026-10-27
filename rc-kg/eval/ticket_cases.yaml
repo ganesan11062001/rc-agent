@@ -130,3 +130,36 @@ cases:
       - https://rc.northeastern.edu/data-storage-options
       - https://rc-docs.northeastern.edu/en/latest/datamanagement/transferringdata.html
       - https://rc-docs.northeastern.edu/en/latest/datamanagement/globus.html
+
+  # Added 2026-10-27 from the second round of test tickets: problems no page
+  # covers, which must come back low_confidence (the vector score alone
+  # cannot tell; see known_gap in retrieval/graphrag.py).
+  - id: node-drained-kill-task
+    why: "one lab node drained 'Kill task failed': no page covers it, flag never raised"
+    query: |
+      Explorer HPC Node d4999 Drained - Kill Task Failed
+
+      A compute node in our lab partition, d4999, is in the DRAINED state with the reason
+      "Kill task failed". I have canceled my pending job but the node is still drained.
+    must_not: *outages
+    low_confidence: true
+
+  - id: node-instability-reqnodenotavail
+    why: "a node that keeps going down; checkpointing pages ranked top"
+    query: |
+      Recurring node instability - jobs cancelled
+
+      Node d4998 was briefly back online but has not stayed up for 24 hours. My jobs requesting it
+      stay pending with ReqNodeNotAvail, and some running jobs were cancelled when it went down.
+    must_not: *outages
+    low_confidence: true
+
+  - id: cluster-slowdown
+    why: "general slowness; no page covers it, H200 access post ranked first"
+    query: |
+      Explorer slowdown and job submission failures
+
+      The Explorer cluster has been very slow during working hours for weeks. It takes minutes to
+      navigate directories, submit jobs, and open or copy files.
+    must_not: *outages
+    low_confidence: true

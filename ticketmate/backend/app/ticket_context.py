@@ -208,6 +208,33 @@ def parse_activity(text: str) -> List[Entry]:
     return entries
 
 
+# A forwarded request ("Copying rchelp." over the original email) has almost
+# no words of its own; the request is the quoted message (INC09000011).
+_FORWARD_MIN_WORDS = 4      # "Copying rchelp." has 2; "My job 123456 failed with OOM." has 5
+
+
+def _forwarded_message(raw_head: str, stats: Dict[str, int]) -> str:
+    """The first quoted message in the description, cleaned, if the
+    description's own words are too few to be the request; else ""."""
+    desc = raw_head.partition("Description:")[2] if "Description:" in raw_head else raw_head
+    lines = desc.splitlines()
+    start = next((i for i, l in enumerate(lines) if _QUOTE_START.match(l)), None)
+    if start is None:
+        return ""
+    own = _researcher_words(_clean_text("\n".join(lines[:start]), dict(stats)))
+    if len(re.findall(r"[A-Za-z]{2,}", own)) >= _FORWARD_MIN_WORDS:
+        return ""
+    body = []
+    for line in lines[start + 1:]:
+        if _QUOTE_START.match(line) or _RULE.match(line):
+            break                         # the next quote, or a signature
+        body.append(re.sub(r"^\s*>\s?", "", line))
+    text = _clean_text("\n".join(body), dict(stats))
+    if text:
+        stats["forwarded_message_kept"] = 1
+    return text
+
+
 def _team_addresses(entries: List[Entry]) -> set:
     """The RC team's addresses: everyone on a notification sent to the team."""
     team = set()
@@ -311,10 +338,16 @@ def prepare(ticket_text: str) -> Prepared:
         cut = min(i for i, l in enumerate(first) if _HEADER.match(l.strip()))
         head, activity, sep = "\n".join(first[:max(0, cut - 2)]), ticket_text, ACTIVITY_LABEL
     if not entries:
+        forwarded = _forwarded_message(ticket_text, stats)
         text = _clean_text(ticket_text, stats)
+        if forwarded:
+            text += "\n\n(forwarded message, quoted in the email)\n" + forwarded
         return Prepared(text, len(ticket_text), stats, build_query(text))
 
+    forwarded = _forwarded_message(head, stats)
     head = _clean_text(head, stats)
+    if forwarded:
+        head += "\n\n(forwarded message, quoted in the email)\n" + forwarded
     team = _team_addresses(entries)
     team_locals = {a.split("@")[0] for a in team}
     note_writers = {e.author.strip().lower() for e in entries if e.kind.lower().startswith("work notes")}

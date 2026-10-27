@@ -4,6 +4,8 @@ This file is the main knob for tuning output quality in v0 — edit the
 constants below and restart (or just save, with `--reload`) to iterate.
 """
 
+import re
+
 # The JSON contract is repeated in the system prompt even though we also use
 # guided decoding: models produce noticeably better *content* when they know
 # what each field is for, and the instructions are the only thing keeping us
@@ -100,9 +102,11 @@ Writing the "draft_response":
   request for exactly the information you need.
 - The ticket often contains RC's earlier replies to the researcher. Do not repeat \
   what an earlier reply already told them; write the next message in the thread.
-- Never tell the researcher to contact Research Computing, rchelp, "the RC team" or \
-  "the systems team": you are that team. If something needs a sysadmin, say RC is \
-  looking into it (or that it has been passed on, if an RC staff entry says so).
+- Never send the researcher to Research Computing, rchelp, "the RC team" or "the \
+  systems team" to get THIS problem solved: you are that team. If something needs a \
+  sysadmin, say RC is looking into it (or that it has been passed on, if an RC staff \
+  entry says so). Inviting them to write to rchelp@northeastern.edu if anything else \
+  comes up, at the end of a follow-up or closing message, is fine.
 - Never say something has been done -- access granted, a user added to a group, \
   storage or quota changed, a node fixed, data moved -- unless an RC staff entry or \
   the CLUSTER LOOKUPS show it was done. If it still has to be done, put it in \
@@ -158,13 +162,18 @@ CHECKLIST_HEADER = "\nBefore you answer, check:\n"
 CHECKLIST_ALWAYS = (
     "- The reply follows on from the newest RC staff entries and does not contradict them.\n"
     "- Nothing in the reply says an action was done unless an RC staff entry or a lookup shows it.\n"
-    "- The reply does not tell the researcher to contact RC or the systems team.\n")
+    "- The reply does not send the researcher to RC or the systems team to solve this problem.\n")
 CHECKLIST_SOURCES = (
     "- Where a step or the reply uses something an RC WEBSITE SOURCE says, cite it as [S1].\n"
     "  Cite only a source that says that very thing; if none does, cite nothing.\n")
 CHECKLIST_LOOKUPS = (
     "- Use what the CLUSTER LOOKUPS show (for example a job's state, time limit, memory)\n"
     "  and say it plainly; do not ask anyone to run a lookup that was already run.\n")
+CHECKLIST_PLAYBOOK = (
+    "- The steps and the reply are those of the RC WORKFLOW stage this ticket is at.\n")
+CHECKLIST_MISSING = (
+    "- The reply asks the researcher for what the RC WORKFLOW still needs, unless the ticket gives it\n"
+    "  another way: {items}.\n")
 CHECKLIST_INSTRUCTIONS = "- \"draft_response\" is the message the RC engineer asked for, nothing more.\n"
 
 # Used instead of USER_PROMPT_TEMPLATE when the RC member typed guidance: the
@@ -265,15 +274,68 @@ How to use the sources:
   without citing, and say in "caveats" that no RC page covers it.
 """
 
+# Appended when the ticket is a request RC has a set procedure for
+# (app/playbooks.py). Last before the engineer's instructions: a 7B model acts
+# on what it read last, and the procedure decides what the reply is.
+PLAYBOOK_TEMPLATE = """\
+
+--- RC WORKFLOW ---
+This ticket is a request Research Computing has a set procedure for. Follow it:
+- Work out which stage the ticket is at from the RC staff entries; the newest
+  ones decide. A stage is done only if an RC staff entry or a lookup shows it.
+- "suggested_steps" are that stage's steps for the RC engineer, in order, with
+  the values from the ticket filled in (username, email, project, job ID,
+  ticket number). Never invent a value: if one is missing, the step says to
+  find it, and the reply asks for it if only the researcher can give it.
+- "draft_response" is that stage's reply, in your own words. Commands that
+  only RC runs (reservations, adding members on someone's behalf, RC's own
+  scripts) go in "suggested_steps", never in the reply -- unless the
+  procedure's reply itself gives the researcher a command to run.
+- MISSING lists what the procedure needs that the ticket does not seem to
+  give. First check the ticket: if it gives it another way (a name instead of
+  a username, a project's title instead of its number), use that. Otherwise,
+  if only the researcher can supply it, the reply asks for exactly those items
+  -- clearly, as a short list -- and does not say the request is being
+  processed yet; "suggested_steps" start with waiting for those details. If RC
+  can find it itself (a username from an email), make finding it a step and
+  do not ask. Never ask the researcher for their OWN username or email: RC
+  has them from the ticket; ask only about other people (students to add).
+
+{playbooks}
+--- END RC WORKFLOW ---
+"""
+
 KG_LOW_CONFIDENCE_NOTE = """\
 Note: retrieval matched these sources only weakly. They may well be unrelated
 to this ticket; do not stretch them to fit.
 """
 
 
+# The engineer's instruction asks for a follow-up or a closure, not an answer.
+_FOLLOW_UP = re.compile(r"(?i)\b(clos(e|es|ed|ing|ure)|follow(ing)?[\s-]?up|check(ing)?[\s-]in|any updates?|status update|"
+                        r"remind(er)?|resolv(e|ed)|no response|nudge|ping|thank(s| you)|acknowledg\w*|"
+                        r"let (them|him|her) know|confirm(ed)? (it|that|this)? ?(works|is done|is working))\b")
+# ... unless it asks for something a page would supply.
+_NEEDS_SOURCES = re.compile(r"(?i)\b(link|docs?|documentation|page|how (to|do|can)|explain|steps?|instructions?|"
+                            r"guide|commands?|cite|sources?|references?|tutorial)\b")
+
+
+def instruction_wants_sources(extra_instructions: str) -> bool:
+    """False when the engineer asked for a follow-up or closure that needs no
+    page. Measured on 41 runs (2026-10-26/27): 40 were such instructions, none
+    cited a source, and the sources took ~2,100 tokens (25-30% of the prompt)
+    that the thread needed -- the reviewers' complaints were replies that
+    repeated earlier ones and missed staff notes."""
+    text = (extra_instructions or "").strip()
+    if not text:
+        return True
+    return not (_FOLLOW_UP.search(text) and not _NEEDS_SOURCES.search(text))
+
+
 def build_messages(ticket_text: str, json_reminder: bool = False,
                    extra_instructions: str = "", kg_context: str = "",
-                   kg_low_confidence: bool = False, lookups_context: str = ""):
+                   kg_low_confidence: bool = False, lookups_context: str = "",
+                   playbook_context: str = "", playbook_missing=()):
     """Build the chat messages for one drafting request."""
     instructions = (extra_instructions or "").strip()
     if instructions:
@@ -287,11 +349,16 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
         user_content += KG_CONTEXT_TEMPLATE.format(context=kg_context.strip())
         if kg_low_confidence:
             user_content += KG_LOW_CONFIDENCE_NOTE
+    if playbook_context:
+        user_content += PLAYBOOK_TEMPLATE.format(playbooks=playbook_context.strip())
     if instructions:
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(extra_instructions=instructions)
     checks = [CHECKLIST_ALWAYS] + \
              ([CHECKLIST_SOURCES] if kg_context and not kg_low_confidence else []) + \
              ([CHECKLIST_LOOKUPS] if lookups_context else []) + \
+             ([CHECKLIST_PLAYBOOK] if playbook_context else []) + \
+             ([CHECKLIST_MISSING.format(items="; ".join(playbook_missing))]
+              if playbook_context and playbook_missing else []) + \
              ([CHECKLIST_INSTRUCTIONS] if instructions else [])
     user_content += CHECKLIST_HEADER + "".join(checks)
     user_content += RESPOND_JSON_ONLY

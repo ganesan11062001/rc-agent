@@ -63,7 +63,12 @@ retrieval, lookups or the model see it (`backend/app/ticket_context.py`):
 **Retrieval searches the researcher's words, not the thread:** the short
 description, the description and the researcher's latest message. Searching
 the whole thread matched RC's own wording instead (the acknowledgement pulled
-training pages into 15 of 19 tickets).
+training pages into 15 of 19 tickets). A forwarded email with no words of its
+own ("Copying rchelp.") keeps the quoted request it forwards, for the model
+and for retrieval. When your instruction asks for a follow-up or a closure and
+not for a page or how-to, the website sources are left out of the prompt
+(still retrieved, tagged `kg:sources_not_needed`): in 40 of 41 such runs none
+was cited, and their ~2k tokens are better spent on the thread.
 
 On 18 real tickets cleaning halves the text (73,793 → 37,449 characters) and
 removes ~35 addresses per ticket. The result then has to fit: the backend
@@ -86,14 +91,66 @@ your job:
 | a group (`the gaussian group`) | `getent group gaussian` | its size, and whether the ticket's users are in it |
 | a node (`d4043`) | `scontrol show node d4043` | state, partitions, GPUs, CPUs/memory in use, Slurm's reason if down or drained |
 | a partition (`-p short`, `nodes on ce-mri`) | `sinfo -h -N -p ce-mri -o %N\|%T\|%E` | node counts by state, each down or drained node with its reason |
+| a job that was found | `sacct -j 4812345 --batch-script`; `squeue -j ... --start` / `-O TimeLeft` | its `#SBATCH` lines and commands (first 2 jobs); for a pending job the expected start and reason, for a running one the time left |
+| a user, when the ticket says jobs are pending / not starting | `squeue -u <user>`; `sshare -a -u <user>` and `-A <their account>` | their jobs with start times and reasons; FairShare (flagged under 0.5), the group's size and the heaviest member's share of usage, never other members' names |
+| a user, when the ticket says jobs fail / crash / are killed | `sacct -u <user> -S now-7days -X` | counts by state, and the jobs that did not complete |
+| a project (`/projects/smithlab`) | `stat -c %U\|%G /projects/smithlab` | who owns it (the PI, usually); nothing if this node cannot see the owner |
+| a library (`libcudnn.so.8`) | `ldconfig -p`, filtered | whether it, or another version of it, is in the system library cache |
 
-**Lookups only.** Those five programs are the only ones that can run, with
+Groups are also looked up in `/shared/admin/ROOT/etc/group.xtra` (a file
+read). Taken from the team's Slurm cheat sheet; its commands that change
+things (`scontrol update`, node drain/resume, `project ... add members`) are
+not here and cannot be.
+
+**Lookups only.** Those nine programs are the only ones that can run, with
 fixed arguments, exec'd without a shell; an argument from the ticket must
 fully match a strict pattern or it is dropped; email addresses are never
-usernames. At most 4 users, 3 jobs, 2 groups, 3 nodes and 2 partitions per
-draft, 5 s each. The panel lists every command and its result; the run log
+usernames. At most 4 users, 3 jobs, 2 groups, 3 nodes, 2 partitions, 2
+projects and 3 libraries per draft, queue/FairShare/history for 2 users, 5 s
+each. The panel lists every command and its result; the run log
 keeps the output. Off with `CLUSTER_LOOKUPS=false`; tested by
 `tests/lookups/test_lookups.py`, including that injection text runs nothing.
+
+### RC workflow playbooks
+
+Some requests are not answered from the website: RC has a procedure for them.
+Each procedure is a Markdown runbook in `backend/app/playbooks/`, with a
+header saying which tickets it is for:
+
+| playbook | for |
+|---|---|
+| `aicr-access` | adding/removing someone on an AICR project, closing one (`aicr-access.bash`, PR, `aicr_neu.csv` to the AICR support address) |
+| `multigpu-access` | multi-GPU partition access: memory vs scaling, 24 h test reservation, verifying the benchmark (`gpu-logs` > 10% per GPU), granting |
+| `long-partition` | long partition access: the checkpointing question, granting |
+| `explorer-access` | Explorer access through a research group: PI self-service, adding with the owner's approval |
+| `gaussian` | the Gaussian group, and how to start with Gaussian |
+| `storage-extension` | more /projects storage (the PI's extension form; 35 TB free) |
+| `course-request` | a course on Explorer (explorer-courses PR, starter email; no rosters, groups or reservations) |
+| `pending-fairshare` | jobs pending for a long time (FairShare is per PI group) |
+
+When the researcher's words match a playbook (RC's own replies never do), its
+runbook and the values found in the ticket (emails, project ids, usernames,
+the ticket number) go into the prompt. The model works out which stage the
+ticket is at from the RC staff entries -- an AICR request with a PR link in a
+work note is waiting for review, not new -- and writes that stage's steps,
+with the values filled in, and that stage's reply. **Nothing is run:** the
+script, reservations and group changes are steps for you. The panel's
+context line and the run log name the playbook used (`playbook:<name>` tag).
+
+**Missing information is asked for.** Each playbook lists what RC needs
+before it can act (`require.<field>: what to ask for`; e.g. AICR needs each
+person's email, the project number and its year). When the ticket gives none
+of a requirement's fields, the prompt marks it MISSING and the checklist
+names it: the reply asks the researcher for exactly those items, as a short
+list, and does not say the request is being processed yet. The model first
+checks whether the ticket gives it another way (a project's title instead of
+its number), makes it a step instead when RC can find it (a username from an
+email), and never asks researchers for their own username or email. Drafts
+that asked are tagged `playbook:missing_info`.
+
+To add or change a procedure, edit or add a file and restart the backend;
+`tests/playbooks/test_playbooks.py` checks that every file parses and routes
+the right tickets (add a case for a new one). Off with `PLAYBOOKS=false`.
 
 ### Grounded in the RC website and rc-docs
 

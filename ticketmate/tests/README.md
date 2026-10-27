@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | `rc_kg/run_contract.sh` | The whole draft path against a real rc-kg and a stub model: grounding, citations, traces, evaluators, fallbacks, version mismatch, rc-kg down | `tests/rc_kg/run_contract.sh` | no GPU, ~5 min |
 | `lookups/test_lookups.py` | Only allowlisted, read-only commands run; injection text in a ticket runs nothing; timeouts | `backend/.venv/bin/python tests/lookups/test_lookups.py` | nothing |
+| `playbooks/test_playbooks.py` | Every RC workflow playbook parses; each routes the tickets it is for and not look-alikes; values are extracted; the runbook reaches the prompt only when one matched | `backend/.venv/bin/python tests/playbooks/test_playbooks.py` | nothing |
 | `ticket_context/test_ticket_context.py` | Cleaning keeps every message and drops the noise; fitting to a budget | `backend/.venv/bin/python tests/ticket_context/test_ticket_context.py` | nothing |
 | `startup/` | The vLLM-log progress parser on a real log; a GPU-free slow start | `tests/startup/run_slow_start.sh` | no GPU |
 | `ui/` | The web page and the extension panel in headless Chromium | `tests/ui/run.sh` | Playwright (see its header) |

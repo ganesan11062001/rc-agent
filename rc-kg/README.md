@@ -411,7 +411,10 @@ graph without polluting results), and a `section_search` fulltext index over
    `context` block ready to paste into a prompt, `allowed_urls`, and
    `low_confidence` when the best vector match is under 0.83 (the eval
    questions score 0.84–0.93; off-topic questions such as "how do I reset my
-   Canvas password" at most 0.80). Calibrated on short queries -- TicketMate
+   Canvas password" at most 0.80). Problems no page covers are also flagged
+   by what the query says (`known_gap`): one node down or drained, or the
+   cluster being slow -- on real tickets their scores (0.83-0.88) overlap the
+   covered ones, so no threshold can catch them. Calibrated on short queries -- TicketMate
    sends the subject, description and the researcher's latest message, not the
    whole thread, which scores high whatever it says.
 

@@ -21,3 +21,13 @@ def test_short_terms_exact_and_special_characters_escaped():
 
 def test_stopwords_and_duplicates_dropped():
     assert _fulltext_query("Hi, please help: the the GPU gpu") == "GPU"
+
+
+def test_known_gaps_are_recognised_by_intent():
+    from retrieval.graphrag import known_gap
+    assert known_gap("Node d4043 is down, ReqNodeNotAvail") == "a node fault"
+    assert known_gap("d3168 drained: Kill task failed") == "a node fault"
+    assert known_gap("The Explorer cluster has been very slow; directories take minutes") == "cluster slowness"
+    for covered in ("My Slurm job died and sacct says OUT_OF_MEMORY", "How do I get a GPU on d1025 in sbatch?",
+                    "the drop down menu in OOD", "my code runs slowly, how do I profile it with seff"):
+        assert known_gap(covered) is None, covered

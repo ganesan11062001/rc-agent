@@ -279,7 +279,8 @@ def _title(src: Dict[str, Any]) -> str:
     return "%s - %s" % (src["page_title"], heading)
 
 
-async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = ""
+async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = "",
+                          extra_allowed_urls: Optional[List[str]] = None,
                           ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, Any]]:
     """Turn [S#] markers into [1], [2].. with one numbering across the whole
     draft, add a References block to the reply and a Sources line to the
@@ -289,7 +290,7 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str 
     returned with markers stripped, so a raw "[S3]" never reaches a researcher.
     """
     with tracing.run("rc_kg.cite", "tool", metadata={"style": "numbered", "check_support": True}) as crun:
-        draft, references, trace = await _apply_citations(draft, kg, request_id)
+        draft, references, trace = await _apply_citations(draft, kg, request_id, extra_allowed_urls or [])
         if crun is not None:
             crun.inputs = {"refs": {x["ref"]: x["url"] for x in kg.sources}}
             crun.end({k: trace.get(k) for k in ("references", "removed_urls", "unknown_refs",
@@ -298,7 +299,8 @@ async def apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str 
     return draft, references, trace
 
 
-async def _apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = ""
+async def _apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str = "",
+                           extra_allowed_urls: Optional[List[str]] = None,
                            ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, Any]]:
     """Send every draft field to rc_kg's /cite in one call and rebuild the draft
     from its answer: numbered markers, References block, Sources step, and
@@ -312,7 +314,7 @@ async def _apply_citations(draft: Dict[str, Any], kg: KGContext, request_id: str
     refs = {src["ref"]: src["url"] for src in kg.sources}
     try:
         out = await _acall("/cite", {"texts": texts, "refs": refs,
-                                     "allowed_urls": kg.allowed_urls,
+                                     "allowed_urls": list(dict.fromkeys(kg.allowed_urls + list(extra_allowed_urls or []))),
                                      "style": "numbered", "check_support": True},
                            request_id=request_id)
     except Exception as exc:                       # noqa: BLE001

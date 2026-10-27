@@ -75,6 +75,27 @@ _STALE_FACTOR = 0.6
 # where it is used for the measurement.
 LOW_CONFIDENCE_BELOW = 0.83
 
+# Problems no page covers, recognised by what the ticket says rather than by
+# score: one node down or drained, the cluster being slow. On 8 such real
+# tickets (2026-10-26/27) the best vector score was 0.833-0.882 -- inside the
+# range of covered tickets and of the eval questions -- so no threshold, nor
+# vector/fulltext agreement, separates them. These patterns flag 6/6 of the
+# node and slowdown tickets and none of the 45 eval questions.
+_NODE_NAME = re.compile(r"(?<![\w./-])[a-z]{1,2}\d{4}(?![\w-])")
+_NODE_FAULT = re.compile(r"(?i)\b(down|drain(ed|ing)?|not responding|unresponsive|ReqNodeNotAvail|unavailable|"
+                         r"instability|unstable|kill task failed|keeps? going down)\b")
+_SLOWNESS = re.compile(r"(?i)\b(slow(ness|down|ly)?|sluggish|laggy|hangs? for minutes)\b")
+_CLUSTER_WORDS = re.compile(r"(?i)\b(cluster|explorer|login|directories|files?|navigat\w+|ood|open ondemand)\b")
+
+
+def known_gap(query: str) -> Optional[str]:
+    """Why no page will cover this query, or None."""
+    if _NODE_NAME.search(query) and _NODE_FAULT.search(query):
+        return "a node fault"
+    if _SLOWNESS.search(query) and _CLUSTER_WORDS.search(query):
+        return "cluster slowness"
+    return None
+
 # Tickets are long and full of log noise. Fulltext gets the distinctive words,
 # capped so the Lucene query stays small.
 _MAX_FULLTEXT_TERMS = 40
@@ -387,7 +408,8 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
     # (parking, Canvas, Outlook, payroll) at most 0.801, and the node-down
     # ticket INC09000010 0.815.
     best_vec = max((x.vector_score or 0.0 for x in sources), default=0.0)
-    low = best_vec < LOW_CONFIDENCE_BELOW
+    gap = known_gap(query)
+    low = best_vec < LOW_CONFIDENCE_BELOW or gap is not None
 
     allowed = []
     for src in sources:
@@ -413,6 +435,7 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
                          "embedding_model": emb.model},
             "best_vector_score": round(best_vec, 4),
             "low_confidence_threshold": LOW_CONFIDENCE_BELOW,
+            "known_gap": gap,
             "context_chars": len(context),
         },
     )

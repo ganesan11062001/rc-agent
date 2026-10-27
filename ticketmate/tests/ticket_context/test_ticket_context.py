@@ -222,5 +222,39 @@ check(not re.search(r"Hope all|Thanks|Best|Grace|617\.555|reply from|Office Hour
 check(prepare("My job 123456 failed with OOM.\n\nThanks,\nAda").query == "My job 123456 failed with OOM.",
       "pasted text: the query is the text without its sign-off")
 
+print("forwarded requests")
+FWD = """Ticket: INC0000099
+
+Short description: Re: Adding RA in my directory
+
+Description:
+Copying rchelp.
+
+On Thu, Oct 22, 2026 at 6:27 PM, Pat Doe <pat@example.edu<mailto:pat@example.edu>> wrote:
+Hello Research Computing Team,
+
+My project path is /projects/doelab/. Could you please add my RA, lee.k, to this project?
+
+Best,
+Pat
+
+__________________________________________________
+PAT DOE, PhD | Professor of Things
+
+Work notes / activity:
+RS
+Rivera, Sam
+Work notes•10/22/2026 10:00:00 AM
+looking
+"""
+fw = prepare(FWD)
+check("Could you please add my RA, lee.k" in fw.text and fw.stats.get("forwarded_message_kept") == 1,
+      "a forwarded email with no words of its own keeps the quoted request")
+check("add my RA, lee.k" in fw.query, "and retrieval searches it")
+check("Professor of Things" not in fw.text, "the quoted message's signature still goes")
+ordinary = prepare(TICKET)
+check("forwarded_message_kept" not in ordinary.stats and "> my job died" not in ordinary.text,
+      "a reply with its own words still drops the quoted chain")
+
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)

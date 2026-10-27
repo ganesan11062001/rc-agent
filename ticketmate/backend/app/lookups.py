@@ -11,8 +11,12 @@ wrote. So the rules are strict, and enforced here rather than trusted to the
 model, which never chooses a command:
 
 - Lookups only. The only programs ever run are `id`, `getent group`, `sacct`,
-  `scontrol show node` and `sinfo`, each with a fixed argument list. Nothing
+  `scontrol show node`, `sinfo`, `squeue`, `sshare`, `stat` and `ldconfig -p`,
+  each with a fixed argument list (plus reading the group.xtra file). Nothing
   that changes, updates or deletes anything is reachable from this module.
+  Those that only matter for some tickets run only then: queue position and
+  FairShare when the researcher says a job is waiting, recent failures when
+  they say jobs fail.
 - No shell. Commands are exec'd with an argv list, so `;`, `$( )`, backticks
   or quotes in a ticket are just characters.
 - Every argument taken from the ticket must fully match a strict pattern
@@ -38,7 +42,14 @@ MAX_JOBS = 3
 MAX_GROUPS = 2
 MAX_NODES = 3
 MAX_PARTITIONS = 2
+MAX_PROJECTS = 2
+MAX_LIBRARIES = 3
+MAX_ACTIVITY_USERS = 2     # users whose queue, FairShare and recent jobs are looked up
+MAX_SCRIPTS = 2            # job scripts shown (sacct --batch-script)
+MAX_SCRIPT_CHARS = 1200
 MAX_OUTPUT_CHARS = 2000
+# Groups not in /etc/group (RC-managed): "name:x:gid:member1,member2".
+GROUP_XTRA = os.environ.get("RC_GROUP_XTRA", "/shared/admin/ROOT/etc/group.xtra")
 
 # What an argument must look like, in full, before it is passed to a command.
 # Explorer usernames are `<last>.<initial>` or `<initial>.<last>`.
@@ -48,6 +59,8 @@ GROUP = re.compile(r"[a-z][a-z0-9_-]{2,31}")
 # Explorer's compute nodes: c0602, d4043.
 NODE = re.compile(r"[a-z]{1,2}[0-9]{4}")
 PARTITION = re.compile(r"[a-z][a-z0-9_-]{1,31}")
+PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+LIBRARY = re.compile(r"lib[A-Za-z0-9_+-]{1,60}\.so(?:\.[0-9]{1,5}){0,4}")
 
 # Tokens shaped like a username that are really file names or abbreviations.
 _NOT_USER_SUFFIXES = {
@@ -80,6 +93,15 @@ _PARTITION_CANDIDATES = [
     # "the nodes on ce-mri and ai-jumpstart are down"
     re.compile(r"\bnodes\s+(?:on|in)\s+(?:the\s+)?([a-z][a-z0-9_-]{1,31})(?:\s*(?:,|and|&)\s*([a-z][a-z0-9_-]{1,31}))?"),
 ]
+_PROJECT_CANDIDATE = re.compile(r"(?<![\w.])/projects/([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![\w-])")
+# "error while loading shared libraries: libcudnn.so.8"
+_LIBRARY_CANDIDATE = re.compile(r"(?<![\w/.+-])(lib[A-Za-z0-9_+-]{1,60}\.so(?:\.[0-9]{1,5}){0,4})(?![\w+-])")
+# What the researcher says decides which per-user lookups are worth running.
+_WAITING = re.compile(r"(?i)\b(pending|in (the )?queue|queued|waiting|wait(ed|ing)? (for|so long|days|hours)|"
+                      r"not (yet )?start(ed|ing)|hasn'?t started|start time|fair ?share|priority|"
+                      r"\(Priority\)|\(Resources\)|PD)\b")
+_FAILING = re.compile(r"(?i)\b(fail(ed|s|ing|ure)?|crash(ed|es|ing)?|killed|died|OUT_OF_MEMORY|OOM|"
+                      r"NODE_FAIL|TIMEOUT|cancel+ed|exit code|segfault|error)\b")
 _NOT_PARTITIONS = _NOT_GROUPS | {"this", "that", "which", "each", "every", "specific", "default", "any",
                                  "slurm", "settings", "name", "names", "list", "is", "was", "nodes", "node", "jobid",
                                  "having", "has", "have", "are", "were", "with", "for", "and", "to", "on",
@@ -111,6 +133,10 @@ class Candidates:
     groups: List[str] = field(default_factory=list)
     nodes: List[str] = field(default_factory=list)
     partitions: List[str] = field(default_factory=list)
+    projects: List[str] = field(default_factory=list)
+    libraries: List[str] = field(default_factory=list)
+    waiting: bool = False         # the researcher says a job is pending / not starting
+    failing: bool = False         # ... that jobs fail, crash or are killed
 
 
 def _first(seen: List[str], value: str, pattern: "re.Pattern[str]", limit: int) -> None:
@@ -143,6 +169,12 @@ def find_candidates(ticket_text: str) -> Candidates:
     for _, name in found:
         if name not in _NOT_PARTITIONS and not NODE.fullmatch(name):
             _first(c.partitions, name, PARTITION, MAX_PARTITIONS)
+    for m in _PROJECT_CANDIDATE.finditer(ticket_text):
+        _first(c.projects, m.group(1), PROJECT, MAX_PROJECTS)
+    for m in _LIBRARY_CANDIDATE.finditer(ticket_text):
+        _first(c.libraries, m.group(1), LIBRARY, MAX_LIBRARIES)
+    c.waiting = bool(_WAITING.search(ticket_text))
+    c.failing = bool(_FAILING.search(ticket_text))
     return c
 
 
@@ -191,7 +223,7 @@ async def _user(name: str, timeout: float) -> Lookup:
     return Lookup("user", name, " ".join(argv), False, summary, out, ms)
 
 
-_SACCT_FIELDS = "JobID,JobName%30,User,Account,Partition,State,ExitCode,Elapsed,Timelimit,ReqMem,MaxRSS,AllocCPUS,NodeList,Start,End"
+_SACCT_FIELDS = "JobID,JobName%30,User,Account,Partition,State,ExitCode,Elapsed,Timelimit,ReqMem,MaxRSS,AllocCPUS,NodeList,Start,End,WorkDir"
 
 
 async def _job(job_id: str, timeout: float) -> Lookup:
@@ -238,9 +270,13 @@ async def _group(name: str, users: List[str], timeout: float) -> Lookup:
     """
     argv = ["getent", "group", name]
     rc, out, ms = await _run(argv, timeout)
-    if rc != 0 or not out:
+    members = [m for m in out.split(":")[-1].split(",") if m] if rc == 0 and out else []
+    # RC-managed groups are also listed in group.xtra; a file read, not a command.
+    xtra = _xtra_members(name)
+    if xtra is not None:
+        members += [m for m in xtra if m not in members]
+    if (rc != 0 or not out) and xtra is None:
         return Lookup("group", name, " ".join(argv), False, "no group named %s" % name, "", ms)
-    members = [m for m in out.split(":")[-1].split(",") if m]
     # The member list itself can run to hundreds of names; the prompt only
     # needs its size and whether the ticket's users are in it.
     inside = [u for u in users if u in members]
@@ -251,6 +287,177 @@ async def _group(name: str, users: List[str], timeout: float) -> Lookup:
     if outside:
         summary += "; does not list " + ", ".join(outside)
     return Lookup("group", name, " ".join(argv), True, summary, summary, ms)
+
+
+def _xtra_members(name: str) -> Optional[List[str]]:
+    """Members of `name` in GROUP_XTRA, or None if it is not listed there."""
+    try:
+        with open(GROUP_XTRA, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(name + ":"):
+                    return [m for m in line.rstrip("\n").split(":")[-1].split(",") if m]
+    except OSError:
+        pass
+    return None
+
+
+async def _job_script(job_id: str, timeout: float) -> Lookup:
+    """`sacct -j <id> --batch-script`: the #SBATCH lines and the commands the job ran."""
+    argv = ["sacct", "-j", job_id, "--batch-script"]
+    rc, out, ms = await _run(argv, timeout)
+    if rc != 0 or "#!" not in out and "#SBATCH" not in out:
+        return Lookup("script", job_id, " ".join(argv), False, "no batch script stored for job %s" % job_id, "", ms)
+    text = out if len(out) <= MAX_SCRIPT_CHARS else out[:MAX_SCRIPT_CHARS] + "\n... (truncated)"
+    sbatch = [l.strip() for l in out.splitlines() if l.strip().startswith("#SBATCH")]
+    return Lookup("script", job_id, " ".join(argv), True, "%d #SBATCH lines" % len(sbatch), text, ms)
+
+
+async def _job_queue(job_id: str, state: str, timeout: float) -> Optional[Lookup]:
+    """For a pending job, Slurm's expected start and reason; for a running one, time left."""
+    if state.startswith("PENDING"):
+        argv = ["squeue", "-h", "-j", job_id, "--start", "-o", "%i|%S|%r"]
+        rc, out, ms = await _run(argv, timeout)
+        parts = out.split("|") if rc == 0 and out.count("|") >= 2 else None
+        if not parts:
+            return None
+        start, reason = parts[1].strip(), parts[2].strip()
+        summary = ("no start time estimated yet" if start in ("N/A", "", "Unknown") else "expected start " + start) \
+            + " (reason: %s)" % reason
+        return Lookup("queue", job_id, "squeue -j %s --start" % job_id, True, summary, summary, ms)
+    if state.startswith("RUNNING"):
+        argv = ["squeue", "-h", "-j", job_id, "-O", "TimeLeft"]
+        rc, out, ms = await _run(argv, timeout)
+        if rc != 0 or not out.strip():
+            return None
+        summary = "time left " + out.strip()
+        return Lookup("queue", job_id, "squeue -j %s -O TimeLeft" % job_id, True, summary, summary, ms)
+    return None
+
+
+async def _user_queue(user: str, timeout: float) -> Lookup:
+    """`squeue -u <user>`: their jobs now, with expected start (pending) and time left (running)."""
+    argv = ["squeue", "-h", "-u", user, "-o", "%i|%P|%j|%T|%S|%L|%r"]
+    rc, out, ms = await _run(argv, timeout)
+    shown = "squeue -u %s --start" % user
+    rows = [l.split("|") for l in out.splitlines() if l.count("|") >= 6]
+    if rc != 0:
+        return Lookup("queue", user, shown, False, out or "squeue failed", "", ms)
+    if not rows:
+        return Lookup("queue", user, shown, True, "no jobs in the queue", "no jobs in the queue", ms)
+    counts: Dict[str, int] = {}
+    for r in rows:
+        counts[r[3]] = counts.get(r[3], 0) + 1
+    summary = "%d jobs: %s" % (len(rows), ", ".join("%d %s" % (n, st) for st, n in sorted(counts.items())))
+    lines = [summary, "JOBID|PARTITION|NAME|STATE|START_TIME|TIME_LEFT|REASON"] + ["|".join(r) for r in rows[:12]]
+    if len(rows) > 12:
+        lines.append("... and %d more" % (len(rows) - 12))
+    return Lookup("queue", user, shown, True, summary, "\n".join(lines), ms)
+
+
+async def _fairshare(user: str, timeout: float) -> Lookup:
+    """`sshare`: the user's FairShare, and how their PI group's usage is spread.
+    FairShare is per group, so one member's heavy use slows everyone in it.
+    Other members are counted, never named."""
+    argv = ["sshare", "-a", "-P", "-u", user]
+    rc, out, ms = await _run(argv, timeout)
+    shown = "sshare -a -u %s" % user
+    rows = [l.split("|") for l in out.splitlines() if "|" in l]
+    if rc != 0 or len(rows) < 2:
+        return Lookup("fairshare", user, shown, False, out or "no FairShare record", "", ms)
+    head = [h.strip() for h in rows[0]]
+    mine = [dict(zip(head, r)) for r in rows[1:] if len(r) == len(head) and r[head.index("User")].strip() == user] \
+        if "User" in head else []
+    if not mine:
+        return Lookup("fairshare", user, shown, False, "no FairShare record for %s" % user, "", ms)
+    me = mine[0]
+    account = me.get("Account", "").strip()
+    fs = me.get("FairShare", "").strip()
+    try:
+        low = float(fs) < 0.5
+    except ValueError:
+        low = False
+    summary = "FairShare %s%s, group %s" % (fs, " (below 0.5: expect long waits)" if low else "", account or "?")
+    lines = [summary]
+    if account and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", account):
+        rc2, out2, ms2 = await _run(["sshare", "-a", "-P", "-A", account], timeout)
+        ms += ms2
+        grows = [dict(zip(head, r.split("|"))) for r in out2.splitlines()[1:] if r.count("|") == len(head) - 1]
+        members = [g for g in grows if g.get("User", "").strip()]
+        try:
+            usage = sorted((float(g.get("EffectvUsage") or 0) for g in members), reverse=True)
+        except ValueError:
+            usage = []
+        if members:
+            lines.append("group %s: %d users" % (account, len(members)))
+        if usage and usage[0] > 0:
+            top = usage[0] / (sum(usage) or 1)
+            lines.append("the heaviest user accounts for %.0f%% of the group's usage%s" % (
+                100 * top, "" if float(me.get("EffectvUsage") or 0) < usage[0] else " (this user)"))
+    return Lookup("fairshare", user, shown, True, summary, "\n".join(lines), ms)
+
+
+async def _history(user: str, timeout: float) -> Lookup:
+    """`sacct -u <user>` over the last 7 days: counts by state and the jobs that did not complete."""
+    argv = ["sacct", "-u", user, "-S", "now-7days", "-X", "-P", "-o",
+            "JobID,JobName%30,Partition,State,ExitCode,NodeList,End"]
+    rc, out, ms = await _run(argv, timeout)
+    shown = "sacct -u %s -S now-7days -X" % user
+    lines = [l for l in out.splitlines() if l.count("|") >= 6]
+    if rc != 0 or not lines:
+        return Lookup("history", user, shown, False, out or "sacct failed", "", ms)
+    rows = [l.split("|") for l in lines[1:]]
+    if not rows:
+        return Lookup("history", user, shown, True, "no jobs in the last 7 days", "no jobs in the last 7 days", ms)
+    counts: Dict[str, int] = {}
+    for r in rows:
+        st = r[3].split()[0] if r[3] else "?"
+        counts[st] = counts.get(st, 0) + 1
+    summary = "last 7 days, %d jobs: %s" % (len(rows), ", ".join("%d %s" % (n, st) for st, n in sorted(counts.items())))
+    bad = [r for r in rows if not r[3].startswith(("COMPLETED", "RUNNING", "PENDING"))]
+    out_lines = [summary] + (["not completed (newest last):", lines[0]] + ["|".join(r) for r in bad[-10:]] if bad else [])
+    return Lookup("history", user, shown, True, summary, "\n".join(out_lines), ms)
+
+
+async def _project_owner(name: str, timeout: float) -> Lookup:
+    """`stat /projects/<name>`: who owns the project directory (the PI, usually)."""
+    path = "/projects/" + name
+    argv = ["stat", "-c", "%U|%G", path]
+    rc, out, ms = await _run(argv, timeout)
+    if rc != 0 or "|" not in out:
+        return Lookup("project", name, " ".join(argv), False, "no directory %s" % path, "", ms)
+    owner, group = out.strip().split("|", 1)
+    if owner in ("nobody", "UNKNOWN") or owner.isdigit():
+        # NFS without id mapping on this node: the name is not the real owner.
+        return Lookup("project", name, " ".join(argv), False, "owner of %s not visible from this node" % path, "", ms)
+    summary = "%s is owned by %s, group %s" % (path, owner, group)
+    return Lookup("project", name, " ".join(argv), True, summary, summary, ms)
+
+
+_LDCONFIG = os.environ.get("RC_LDCONFIG", "/sbin/ldconfig")
+
+
+async def _libraries(names: List[str], timeout: float) -> List[Lookup]:
+    """`ldconfig -p`, once, filtered here for the libraries the ticket names.
+    Only says what this node has; compute nodes share its image."""
+    argv = [_LDCONFIG, "-p"]
+    rc, out, ms = await _run(argv, timeout)
+    if rc != 0:
+        return []
+    found = []
+    for lib in names:
+        stem = lib.split(".so")[0] + ".so"
+        hits = [l.strip() for l in out.splitlines() if l.strip().startswith(stem)]
+        exact = [h for h in hits if h.startswith(lib + " ") or h.startswith(lib + "\t")]
+        if exact:
+            summary = "%s is in the system library cache" % lib
+        elif hits:
+            summary = "%s is not, but other versions are: %s" % (
+                lib, ", ".join(sorted({h.split()[0] for h in hits})[:5]))
+        else:
+            summary = "%s is not in the system library cache (it may come from a module)" % lib
+        found.append(Lookup("library", lib, "ldconfig -p | grep %s" % stem, True, summary,
+                            "\n".join([summary] + hits[:6]), ms))
+    return found
 
 
 # What the draft needs from `scontrol show node`; the rest (sockets, kernel,
@@ -306,7 +513,7 @@ async def run(ticket_text: str, timeout: float = 5.0) -> List[Lookup]:
     """Every lookup the ticket calls for, run concurrently. Never raises: a
     command that is missing, fails or times out becomes a Lookup saying so."""
     c = find_candidates(ticket_text)
-    if not (c.users or c.jobs or c.groups or c.nodes or c.partitions):
+    if not (c.users or c.jobs or c.groups or c.nodes or c.partitions or c.projects or c.libraries):
         return []
     try:
         # Users first, so group membership is only reported for accounts that
@@ -323,9 +530,30 @@ async def run(ticket_text: str, timeout: float = 5.0) -> List[Lookup]:
             rest += [_node(n, timeout) for n in c.nodes]
         if c.partitions and shutil.which("sinfo"):
             rest += [_partition(p, timeout) for p in c.partitions]
+        if c.projects and shutil.which("stat"):
+            rest += [_project_owner(p, timeout) for p in c.projects]
+        # Per-user activity only when the ticket is about it, for accounts that exist.
+        active = known[:MAX_ACTIVITY_USERS]
+        if c.waiting and active and shutil.which("squeue"):
+            rest += [_user_queue(u, timeout) for u in active]
+        if c.waiting and active and shutil.which("sshare"):
+            rest += [_fairshare(u, timeout) for u in active]
+        if c.failing and active and shutil.which("sacct"):
+            rest += [_history(u, timeout) for u in active]
         found = users + list(await asyncio.gather(*rest))
-        # A word that only looked like a partition name is not worth a line.
-        return [lk for lk in found if lk.ok or lk.kind != "partition"]
+        # Follow-ups that need a job's state: its script, and its place in the queue.
+        jobs = [lk for lk in found if lk.kind == "job" and lk.ok]
+        more = [_job_script(j.target, timeout) for j in jobs[:MAX_SCRIPTS]]
+        if shutil.which("squeue"):
+            more += [_job_queue(j.target, j.summary.split(",")[0], timeout) for j in jobs]
+        if c.libraries and os.path.exists(_LDCONFIG):
+            libs = await _libraries(c.libraries, timeout)
+        else:
+            libs = []
+        found += [lk for lk in await asyncio.gather(*more) if lk is not None] + libs
+        # A word that only looked like a partition or project name is not worth
+        # a line, nor is a job with no stored script.
+        return [lk for lk in found if lk.ok or lk.kind not in ("partition", "project", "script")]
     except Exception as exc:          # never let a lookup break a draft
         logger.warning("cluster lookups failed: %s", exc)
         return []

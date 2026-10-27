@@ -3,3 +3,5 @@
 /.cache/
 # Published OOD releases: a deploy target written by ticketmate/ood-apps/publish.sh.
 /rc-copilot/
+/.cache
+/.uv
