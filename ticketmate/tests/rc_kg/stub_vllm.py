@@ -32,6 +32,29 @@ class H(BaseHTTPRequestHandler):
             self.send_response(400); self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out)
             return
+        if body.get("tools"):
+            # rc-agent's investigation step. STUB_NO_TOOLS=1: refuse like vLLM
+            # started without --enable-auto-tool-choice.
+            if os.environ.get("STUB_NO_TOOLS"):
+                out = json.dumps({"object": "error", "type": "BadRequestError", "code": 400,
+                                  "message": '"auto" tool choice requires --enable-auto-tool-choice '
+                                             'and --tool-call-parser to be set'}).encode()
+                self.send_response(400); self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out)
+                return
+            if not any(m.get("role") == "tool" for m in body["messages"]):
+                # First turn: one search in its own words, and a hostile call
+                # the backend must refuse without running anything.
+                calls = [{"id": "call_1", "type": "function", "function": {
+                              "name": "search_rc_docs", "arguments": json.dumps({"query": "check job memory usage seff"})}},
+                         {"id": "call_2", "type": "function", "function": {
+                              "name": "lookup_job", "arguments": json.dumps({"job_id": "1; touch /tmp/stub_pwned"})}}]
+                msg, finish = {"role": "assistant", "content": "", "tool_calls": calls}, "tool_calls"
+            else:
+                msg, finish = {"role": "assistant", "content": "done: found the seff page"}, "stop"
+            return self._send({"id": "a", "object": "chat.completion", "model": "stub-model",
+                               "choices": [{"index": 0, "finish_reason": finish, "message": msg}],
+                               "usage": {"prompt_tokens": 300, "completion_tokens": 20, "total_tokens": 320}})
         user = body["messages"][1]["content"]
         prompt_tokens = sum(len(m["content"]) for m in body["messages"]) // 4 + 12
         if "strict evaluator" in body["messages"][0]["content"]:

@@ -165,6 +165,72 @@ def _is_unsupported_param_error(exc: openai.APIStatusError) -> bool:
     )
 
 
+class ToolsUnsupported(LLMError):
+    """The model server does not do tool calls (vLLM started without
+    --enable-auto-tool-choice / a --tool-call-parser). The caller falls back
+    to drafting without an agent."""
+
+
+def _tools_unsupported(exc: openai.APIStatusError) -> bool:
+    blob = (str(getattr(exc, "body", "") or "") + " " + str(exc)).lower()
+    return exc.status_code in (400, 404, 422, 500) and any(
+        k in blob for k in ("tool", "auto-tool-choice", "auto tool choice", "tool_choice", "function"))
+
+
+async def chat(messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None,
+               max_tokens: int = 600, name: str = "llm.chat") -> Dict[str, Any]:
+    """One chat turn, optionally with tools: the building block of an agent loop.
+
+    Returns {"content", "tool_calls": [{"id", "name", "arguments" (dict)}],
+    "finish_reason", "usage", "model"}. Arguments that are not valid JSON come
+    back as {"_unparsed": <text>} so the caller can answer the model with an
+    error instead of failing. Raises ToolsUnsupported when the server refuses
+    tools, LLMError on other failures. Traced as an `llm` run.
+    """
+    settings = get_settings()
+    client = get_client(settings)
+    kwargs: Dict[str, Any] = {"model": settings.vllm_model_name, "messages": messages,
+                              "temperature": settings.temperature, "max_tokens": max_tokens}
+    if tools:
+        kwargs.update(tools=tools, tool_choice="auto")
+    try:
+        with tracing.run(name, "llm", inputs={"messages": messages},
+                         metadata={"tools": [t["function"]["name"] for t in tools or []],
+                                   "ls_provider": "vllm", "ls_model_name": settings.vllm_model_name}) as run:
+            t0 = time.perf_counter()
+            try:
+                completion = await client.chat.completions.create(**kwargs)
+            except openai.APIStatusError as exc:
+                if tools and _tools_unsupported(exc):
+                    raise ToolsUnsupported("The model server does not support tool calls.",
+                                           _truncate(str(exc), 300)) from None
+                raise LLMError("The model server rejected the request.", _truncate(str(exc), 300)) from None
+            except openai.APIError as exc:
+                raise LLMError("Could not reach the model server.", _truncate(str(exc), 300)) from None
+            if not completion.choices:
+                raise LLMError("The model returned no completions.")
+            choice = completion.choices[0]
+            calls = []
+            for tc in choice.message.tool_calls or []:
+                raw_args = tc.function.arguments or "{}"
+                try:
+                    args = json.loads(raw_args)
+                    if not isinstance(args, dict):
+                        args = {"_unparsed": raw_args}
+                except json.JSONDecodeError:
+                    args = {"_unparsed": raw_args}
+                calls.append({"id": tc.id, "name": tc.function.name, "arguments": args})
+            out = {"content": choice.message.content or "", "tool_calls": calls,
+                   "finish_reason": choice.finish_reason, "usage": _usage(completion),
+                   "model": completion.model, "latency_ms": int((time.perf_counter() - t0) * 1000)}
+            if run is not None:
+                run.usage = out["usage"]
+                run.end({"content": out["content"], "tool_calls": calls, "finish_reason": choice.finish_reason})
+            return out
+    finally:
+        await client.close()
+
+
 async def generate_draft(ticket_text: str,
                          extra_instructions: str = "",
                          trace: Optional[Dict[str, Any]] = None,

@@ -733,6 +733,10 @@
     if (c.entries_omitted) line += " · " + n(c.entries_omitted) + " middle entries left out to fit the model";
     // RC workflow runbooks the draft followed (backend/app/playbooks).
     if (Array.isArray(c.playbooks) && c.playbooks.length) line += " · workflow: " + c.playbooks.join(", ");
+    // rc-agent: what the agent looked up beyond the rules (backend/app/agent.py).
+    if (c.agent && Array.isArray(c.agent.tool_calls) && c.agent.tool_calls.length) {
+      line += " · agent: " + c.agent.tool_calls.length + " lookups/searches";
+    }
     return '<p class="rc-meta rc-context">' + escapeHtml(line) + "</p>";
   }
 

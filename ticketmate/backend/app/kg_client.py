@@ -80,6 +80,45 @@ class KGContext:
     trace: Dict[str, Any] = field(default_factory=dict)
 
 
+_BLOCK_SEP = "\n\n---\n\n"          # how rc_kg's format_context joins source blocks
+
+
+def merge(base: KGContext, extra: KGContext, max_sources: int = 10) -> KGContext:
+    """`base` plus the sources of `extra` it does not already have, renumbered
+    after base's (S1..Sn), at most `max_sources` in all. For an agent that
+    searches more than once; the citation step then sees one numbered list.
+    `low_confidence` stays base's unless base had no sources."""
+    if extra.status != "ok" or not extra.sources:
+        return base
+    if base.status != "ok" or not base.sources:
+        return extra
+    have = {src.get("url") for src in base.sources}
+    blocks = extra.context.split(_BLOCK_SEP) if extra.context else []
+    by_ref = {}
+    for b in blocks:
+        m = re.match(r"\[(S\d+)\]", b)
+        if m:
+            by_ref[m.group(1)] = b
+    sources, context = list(base.sources), base.context
+    n = len(sources)
+    for src in extra.sources:
+        if src.get("url") in have or len(sources) >= max_sources:
+            continue
+        n += 1
+        new_ref = "S%d" % n
+        block = by_ref.get(src.get("ref"), "")
+        block = re.sub(r"^\[S\d+\]", "[%s]" % new_ref, block, count=1)
+        sources.append(dict(src, ref=new_ref))
+        have.add(src.get("url"))
+        if block:
+            context = context + _BLOCK_SEP + block if context else block
+    allowed = list(dict.fromkeys(base.allowed_urls + extra.allowed_urls))
+    trace = dict(base.trace, merged_searches=(base.trace.get("merged_searches") or 1) + 1,
+                 sources=[_source_summary(x) for x in sources])
+    return KGContext(status="ok", context=context, low_confidence=base.low_confidence,
+                     sources=sources, allowed_urls=allowed, detail=base.detail, trace=trace)
+
+
 def _call(path: str, body: Optional[Dict] = None, timeout: float = 10.0,
           request_id: str = "") -> Dict:
     """Blocking JSON request to rc_kg at `path`: POST `body` if given, else GET.

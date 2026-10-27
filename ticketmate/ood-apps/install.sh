@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Install RC Copilot into your Open OnDemand sandbox -- one symlink, no copy.
 #
-#   /projects/rc/projects/ticketmate/rc-copilot/install.sh             install
-#   /projects/rc/projects/ticketmate/rc-copilot/install.sh --uninstall remove the link
+#   /projects/rc/projects/rc-agent/rc-copilot/install.sh             install
+#   /projects/rc/projects/rc-agent/rc-copilot/install.sh --uninstall remove the link
 #
-# ~/ondemand/dev/rc-copilot becomes a symlink to the shared release, so you
+# ~/ondemand/dev/rc-agent becomes a symlink to the shared release, so you
 # always launch the current version and there is nothing in /scratch to be
-# purged. An existing ~/ondemand/dev/rc-copilot is moved aside, never deleted.
+# purged. An existing ~/ondemand/dev/rc-agent is moved aside, never deleted.
+# (rc-agent installs under its own name, so TicketMate's rc-copilot app is untouched.)
 
 set -euo pipefail
 
@@ -14,7 +15,7 @@ set -euo pipefail
 SHARED="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="$SHARED/current/rc-copilot"
 DEV="$HOME/ondemand/dev"
-LINK="$DEV/rc-copilot"
+LINK="$DEV/rc-agent"
 
 case "${1:-}" in
   --uninstall)

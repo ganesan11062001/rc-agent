@@ -6,7 +6,7 @@
 #   ood-apps/publish.sh --rollback switch back to the previous release
 #
 # Members install once with <monorepo>/rc-copilot/install.sh,
-# which symlinks ~/ondemand/dev/rc-copilot to the live release. Publishing
+# which symlinks ~/ondemand/dev/rc-agent to the live release. Publishing
 # therefore changes everyone's app at once, so it is done in two steps that
 # cannot leave anyone with a half-copied app:
 #

@@ -1,3 +1,14 @@
+# rc-agent (TicketMate as an agent)
+
+**This is rc-agent**, a copy of TicketMate (`/projects/rc/projects/ticketmate`)
+in which the model, before drafting, calls read-only tools -- cluster
+lookups, a docs search, RC's playbooks -- for whatever else the reply needs.
+It can only add to what TicketMate gathers; without tool calls it drafts
+exactly as TicketMate. See [ticketmate/AGENT.md](ticketmate/AGENT.md). The
+rest of this README is TicketMate's and applies unchanged.
+
+---
+
 # TicketMate (RC Copilot)
 
 Drafts replies to Research Computing ServiceNow tickets with a model served in
@@ -14,7 +25,7 @@ writes the draft into it, unsaved, for a person to review and send.
 | maintaining or developing it | this page, then the READMEs below |
 
 ```
-/projects/rc/projects/ticketmate/     this repository
+/projects/rc/projects/rc-agent/     this repository
 ├── ticketmate/    the app: FastAPI backend, Chrome extension, OOD app, Slurm scripts, tests
 ├── rc-kg/         the knowledge graph: builds the Neo4j snapshot, serves retrieval over HTTP
 ├── rc-copilot/    published OOD releases + the extension zip (not in git; written by publish.sh)
@@ -36,7 +47,7 @@ it when published.
 The full guide is [MEMBERS.md](ticketmate/ood-apps/MEMBERS.md). In short:
 
 ```bash
-/projects/rc/projects/ticketmate/rc-copilot/install.sh     # once: symlinks the app into ~/ondemand/dev
+/projects/rc/projects/rc-agent/rc-copilot/install.sh     # once: symlinks the app into ~/ondemand/dev
 ```
 
 1. **Extension, once:** unzip `rc-copilot/rc-copilot-extension.zip` on your

@@ -9,6 +9,9 @@
 # B. an rc_kg claiming API v2.0: refused, draft ungrounded with the reason.
 # C. rc_kg unreachable: draft still produced, with a caveat.
 # D. the website-only graph variant: grounded in rc.northeastern.edu only.
+# F. rc-agent: the model calls tools first; they are in the trace, a hostile
+#    argument is refused and runs nothing.
+# G. rc-agent on a server without tool calls: the pipeline's draft, unchanged.
 # E. a model server that rejects json_schema: the fallback attempt and the
 #    rejected one are both in the trace, and only real usage is counted.
 # Needs no GPU. ~1-2 min, almost all of it rc_kg starting.
@@ -45,6 +48,8 @@ backend() {   # backend <kg_url> [run_log_dir] [vllm_port] -> prints port
 
 VP="$(free)"; $PY "$HERE/stub_vllm.py" "$VP" & PIDS+=($!)
 VRP="$(free)"; STUB_REJECT_SCHEMA=1 $PY "$HERE/stub_vllm.py" "$VRP" & PIDS+=($!)
+VNP="$(free)"; STUB_NO_TOOLS=1 $PY "$HERE/stub_vllm.py" "$VNP" & PIDS+=($!)
+rm -f /tmp/stub_pwned
 export RC_KG_API_TOKEN="contract-$$"
 KGP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KGP" >"$WORK/kg.log" 2>&1 & PIDS+=($!)
 KWP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KWP" --variant website >"$WORK/kg-website.log" 2>&1 & PIDS+=($!)
@@ -54,11 +59,12 @@ B="$(backend "http://127.0.0.1:$FKP")"
 C="$(backend "http://127.0.0.1:$(free)")"      # nothing listens there
 W="$(backend "http://127.0.0.1:$KWP")"
 E="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-e" "$VRP")"
+N="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-n" "$VNP")"
 
-$PY - "$A" "$B" "$C" "$W" "$WORK/runs" "$E" "$WORK/runs-e" <<'PY'
+$PY - "$A" "$B" "$C" "$W" "$WORK/runs" "$E" "$WORK/runs-e" "$N" "$WORK/runs-n" <<'PY'
 import json, sys, time, urllib.request, urllib.error
 op = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
-A, B, C, W, RUNS, E, RUNS_E = sys.argv[1:]
+A, B, C, W, RUNS, E, RUNS_E, N, RUNS_N = sys.argv[1:]
 fails = []
 def check(cond, what):
     print(("  ok    " if cond else "  FAIL  ") + what)
@@ -253,9 +259,36 @@ check(tok.get("model_calls") == 2 and tok.get("calls_with_usage") == 1
       and tok.get("total_tokens") == (att[-1].get("usage") or {}).get("total_tokens"),
       "tokens counted from the call that returned usage")
 check(d["kg_status"] == "ok" and d["references"], "draft still grounded after the fallback")
-lr = [x for x in ((tr.get("run_tree") or {}).get("runs") or []) if x["run_type"] == "llm"]
+lr = [x for x in ((tr.get("run_tree") or {}).get("runs") or []) if x["run_type"] == "llm" and x["name"] == "llm"]
 check([x["status"] for x in lr] == ["error", "success"] and "unsupported" in (lr[0].get("error") or ""),
       "run tree: rejected call is an error run, the fallback a success run")
+
+import os
+print("F. rc-agent: the model calls tools before the draft")
+d = draft(A, OOM)
+logs = sorted(glob.glob(os.path.join(RUNS, "*", "*.json")))
+tr = (json.load(open(logs[-1])).get("trace") or {}) if logs else {}
+ag = tr.get("agent") or {}
+check(ag.get("stopped") == "done" and ag.get("steps") == 2, "agent ran two turns and stopped (%s)" % ag.get("stopped"))
+names = [c.get("tool") for c in ag.get("tool_calls") or []]
+check(names == ["search_rc_docs", "lookup_job"], "its tool calls are in the run log: %s" % names)
+refused = [c for c in ag.get("tool_calls") or [] if c.get("tool") == "lookup_job"]
+check(refused and refused[0].get("ok") is False and not os.path.exists("/tmp/stub_pwned"),
+      "a hostile job id was refused and nothing ran")
+runs = (tr.get("run_tree") or {}).get("runs") or []
+check(any(r["name"] == "agent" for r in runs) and any(r["name"] == "tool.search_rc_docs" for r in runs)
+      and any(r["name"] == "agent.step" and r["run_type"] == "llm" for r in runs),
+      "agent, its model turns and each tool are runs in the trace")
+check(d["kg_status"] == "ok" and d["references"] and "[S" not in all_text(d), "draft grounded, no raw markers")
+check((d.get("context") or {}).get("agent", {}).get("tool_calls") == names, "the panel gets what the agent did")
+
+print("G. rc-agent on a server without tool calls: the pipeline's draft")
+check(wait(N, "ok") is not None, "health ok")
+d = draft(N, OOM)
+logs = sorted(glob.glob(os.path.join(RUNS_N, "*", "*.json")))
+tr = (json.load(open(logs[-1])).get("trace") or {}) if logs else {}
+check((tr.get("agent") or {}).get("stopped") == "tools unsupported", "the agent says why it did nothing")
+check(d["kg_status"] == "ok" and d["references"] and d["draft_response"], "the draft is still produced and grounded")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)

@@ -178,6 +178,16 @@ def find_candidates(ticket_text: str) -> Candidates:
     return c
 
 
+def _invalid(kind: str, value: object, pattern: "re.Pattern[str]") -> Optional[Lookup]:
+    """A refusal if `value` does not fully match `pattern`, else None. Every
+    lookup checks its own argument, so a caller that skipped find_candidates
+    (an agent's tool call) still cannot pass anything else to a command."""
+    if isinstance(value, str) and pattern.fullmatch(value):
+        return None
+    shown = str(value)[:40]
+    return Lookup(kind, shown, "(not run)", False, "refused: %r is not a valid %s argument" % (shown, kind))
+
+
 def _env() -> Dict[str, str]:
     """A minimal environment: the commands need PATH and the Slurm config, not
     the backend's tokens."""
@@ -211,6 +221,9 @@ async def _run(argv: List[str], timeout: float) -> "tuple[Optional[int], str, in
 
 async def _user(name: str, timeout: float) -> Lookup:
     """`id <name>`: whether the account exists and which groups it is in."""
+    bad = _invalid("user", name, USERNAME)
+    if bad:
+        return bad
     argv = ["id", name]
     rc, out, ms = await _run(argv, timeout)
     if rc == 0:
@@ -228,6 +241,9 @@ _SACCT_FIELDS = "JobID,JobName%30,User,Account,Partition,State,ExitCode,Elapsed,
 
 async def _job(job_id: str, timeout: float) -> Lookup:
     """`sacct -j <id>`: the job's state, exit code, run time, memory and nodes."""
+    bad = _invalid("job", job_id, JOB_ID)
+    if bad:
+        return bad
     argv = ["sacct", "-j", job_id, "--parsable2", "--format=" + _SACCT_FIELDS]
     rc, out, ms = await _run(argv, timeout)
     shown = "sacct -j %s" % job_id
@@ -268,6 +284,9 @@ async def _group(name: str, users: List[str], timeout: float) -> Lookup:
     """`getent group <name>`: member count, and which of the ticket's known users
     are or are not listed in it.
     """
+    bad = _invalid("group", name, GROUP)
+    if bad:
+        return bad
     argv = ["getent", "group", name]
     rc, out, ms = await _run(argv, timeout)
     members = [m for m in out.split(":")[-1].split(",") if m] if rc == 0 and out else []
@@ -303,6 +322,9 @@ def _xtra_members(name: str) -> Optional[List[str]]:
 
 async def _job_script(job_id: str, timeout: float) -> Lookup:
     """`sacct -j <id> --batch-script`: the #SBATCH lines and the commands the job ran."""
+    bad = _invalid("script", job_id, JOB_ID)
+    if bad:
+        return bad
     argv = ["sacct", "-j", job_id, "--batch-script"]
     rc, out, ms = await _run(argv, timeout)
     if rc != 0 or "#!" not in out and "#SBATCH" not in out:
@@ -314,6 +336,8 @@ async def _job_script(job_id: str, timeout: float) -> Lookup:
 
 async def _job_queue(job_id: str, state: str, timeout: float) -> Optional[Lookup]:
     """For a pending job, Slurm's expected start and reason; for a running one, time left."""
+    if _invalid("queue", job_id, JOB_ID):
+        return None
     if state.startswith("PENDING"):
         argv = ["squeue", "-h", "-j", job_id, "--start", "-o", "%i|%S|%r"]
         rc, out, ms = await _run(argv, timeout)
@@ -336,6 +360,9 @@ async def _job_queue(job_id: str, state: str, timeout: float) -> Optional[Lookup
 
 async def _user_queue(user: str, timeout: float) -> Lookup:
     """`squeue -u <user>`: their jobs now, with expected start (pending) and time left (running)."""
+    bad = _invalid("queue", user, USERNAME)
+    if bad:
+        return bad
     argv = ["squeue", "-h", "-u", user, "-o", "%i|%P|%j|%T|%S|%L|%r"]
     rc, out, ms = await _run(argv, timeout)
     shown = "squeue -u %s --start" % user
@@ -358,6 +385,9 @@ async def _fairshare(user: str, timeout: float) -> Lookup:
     """`sshare`: the user's FairShare, and how their PI group's usage is spread.
     FairShare is per group, so one member's heavy use slows everyone in it.
     Other members are counted, never named."""
+    bad = _invalid("fairshare", user, USERNAME)
+    if bad:
+        return bad
     argv = ["sshare", "-a", "-P", "-u", user]
     rc, out, ms = await _run(argv, timeout)
     shown = "sshare -a -u %s" % user
@@ -398,6 +428,9 @@ async def _fairshare(user: str, timeout: float) -> Lookup:
 
 async def _history(user: str, timeout: float) -> Lookup:
     """`sacct -u <user>` over the last 7 days: counts by state and the jobs that did not complete."""
+    bad = _invalid("history", user, USERNAME)
+    if bad:
+        return bad
     argv = ["sacct", "-u", user, "-S", "now-7days", "-X", "-P", "-o",
             "JobID,JobName%30,Partition,State,ExitCode,NodeList,End"]
     rc, out, ms = await _run(argv, timeout)
@@ -420,6 +453,9 @@ async def _history(user: str, timeout: float) -> Lookup:
 
 async def _project_owner(name: str, timeout: float) -> Lookup:
     """`stat /projects/<name>`: who owns the project directory (the PI, usually)."""
+    bad = _invalid("project", name, PROJECT)
+    if bad:
+        return bad
     path = "/projects/" + name
     argv = ["stat", "-c", "%U|%G", path]
     rc, out, ms = await _run(argv, timeout)
@@ -445,6 +481,9 @@ async def _libraries(names: List[str], timeout: float) -> List[Lookup]:
         return []
     found = []
     for lib in names:
+        if _invalid("library", lib, LIBRARY):
+            found.append(_invalid("library", lib, LIBRARY))
+            continue
         stem = lib.split(".so")[0] + ".so"
         hits = [l.strip() for l in out.splitlines() if l.strip().startswith(stem)]
         exact = [h for h in hits if h.startswith(lib + " ") or h.startswith(lib + "\t")]
@@ -468,6 +507,9 @@ _NODE_FIELDS = ("NodeName", "State", "Partitions", "Gres", "CPUAlloc", "CPUTot",
 
 async def _node(name: str, timeout: float) -> Lookup:
     """`scontrol show node <name>`: state, partitions and reason, trimmed to _NODE_FIELDS."""
+    bad = _invalid("node", name, NODE)
+    if bad:
+        return bad
     argv = ["scontrol", "show", "node", name]
     rc, out, ms = await _run(argv, timeout)
     if rc != 0 or "NodeName=" not in out:
@@ -487,6 +529,9 @@ async def _partition(name: str, timeout: float) -> Lookup:
     """`sinfo -N -p <name>`: node counts by state, plus the nodes that are down or
     draining with Slurm's reason.
     """
+    bad = _invalid("partition", name, PARTITION)
+    if bad:
+        return bad
     argv = ["sinfo", "-h", "-N", "-p", name, "-o", "%N|%T|%E"]
     rc, out, ms = await _run(argv, timeout)
     shown = "sinfo -N -p %s" % name

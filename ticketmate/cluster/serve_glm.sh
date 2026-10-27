@@ -144,4 +144,11 @@ if [ "$GLM_PARSERS" = "1" ]; then
   ARGS+=(--tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice)
 fi
 
+# rc-agent: Qwen2.5 writes tool calls in the Hermes format. Without these the
+# server answers a request with `tools` by refusing it, and the backend drafts
+# without the agent. QWEN_TOOLS=0 to opt out.
+if [ "$GLM_PARSERS" != "1" ] && [ "${QWEN_TOOLS:-1}" = "1" ] && [[ "$MODEL_ID" == Qwen/* ]]; then
+  ARGS+=(--enable-auto-tool-choice --tool-call-parser hermes)
+fi
+
 exec vllm serve "$MODEL_ID" "${ARGS[@]}"

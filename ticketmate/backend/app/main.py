@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, evaluators, kg_client, lookups, playbooks, runlog, ticket_context, tracing
+from . import agent, auth, evaluators, kg_client, lookups, playbooks, runlog, ticket_context, tracing
 from .config import get_settings
 from .llm_client import LLMError, check_health, context_window, generate_draft, token_breakdown
 from .prompts import SYSTEM_PROMPT, instruction_wants_sources
@@ -288,6 +288,27 @@ async def draft(request: DraftRequest):
                                          instructions=request.extra_instructions) if settings.playbooks else []
         if prun is not None:
             prun.end({"playbooks": [m.to_dict() for m in found_playbooks]})
+    # rc-agent: the model reads the ticket and what the rules above gathered,
+    # and calls read-only tools for anything else the reply needs. It can only
+    # add: without tool calls (or on any failure) everything stays as gathered.
+    agent_result = None
+    if settings.agent_mode:
+        t = time.perf_counter()
+        agent_result = await agent.gather(
+            ticket, request.extra_instructions, found_lookups, kg, found_playbooks,
+            request_id=request_id, max_steps=settings.agent_max_steps,
+            max_tool_calls=settings.agent_max_tool_calls,
+            timeout=settings.cluster_lookup_timeout_seconds)
+        timings["agent"] = int((time.perf_counter() - t) * 1000)
+        found_lookups = agent_result.lookups
+        found_playbooks = agent_result.playbooks
+        if agent_result.kg is not None:
+            kg = agent_result.kg
+        lookups_context = lookups.prompt_text(found_lookups)
+        tr.root.tags.append("agent:" + agent_result.stopped.replace(" ", "_"))
+        if agent_result.calls:
+            tr.root.tags.append("agent_calls:%d" % len(agent_result.calls))
+
     playbook_context = playbooks.prompt_text(found_playbooks)
     playbook_missing = tuple(playbooks.missing_text(found_playbooks))
     if playbook_missing:
@@ -316,7 +337,10 @@ async def draft(request: DraftRequest):
     context_info = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(ticket),
                         context_window=window, budget_tokens=budget_tokens,
                         retrieval_query_chars=len(prepared.query),
-                        playbooks=[m.playbook.name for m in found_playbooks])
+                        playbooks=[m.playbook.name for m in found_playbooks],
+                        agent=({"stopped": agent_result.stopped, "steps": agent_result.steps,
+                                "tool_calls": [c["tool"] for c in agent_result.calls]}
+                               if agent_result else None))
     if fitted.stats.get("entries_omitted") or fitted.stats.get("truncated_chars"):
         tr.root.tags.append("ticket_trimmed")
     tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
@@ -352,6 +376,7 @@ async def draft(request: DraftRequest):
                 "retrieval": kg.trace,
                 "cluster_lookups": [lk.to_dict() for lk in found_lookups],
                 "playbooks": [m.to_dict() for m in found_playbooks],
+                "agent": agent_result.to_dict() if agent_result else None,
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,

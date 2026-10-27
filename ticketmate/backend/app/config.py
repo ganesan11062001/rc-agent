@@ -79,6 +79,15 @@ class Settings(BaseSettings):
     # is run; the steps are for the RC engineer.
     playbooks: bool = True
 
+    # --- Agent (rc-agent) ----------------------------------------------------
+    # After the rules above gather what they can, the model reads the ticket
+    # and calls read-only tools (app/tools.py) for anything else the reply
+    # needs; then the usual writer drafts. Off: exactly TicketMate's pipeline.
+    # A server without tool calls falls back to that automatically.
+    agent_mode: bool = True
+    agent_max_steps: int = 4           # model turns
+    agent_max_tool_calls: int = 8      # tool calls in all
+
     # --- Ticket context ----------------------------------------------------
     # Clean the scraped ticket before anything reads it: drop notification
     # emails, CC/To address lists, signatures and quoted chains; order the
