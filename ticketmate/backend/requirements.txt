@@ -6,3 +6,4 @@ pydantic-settings>=2.2
 langgraph>=1.0
 opentelemetry-sdk>=1.25
 opentelemetry-exporter-otlp-proto-http>=1.25
+pyyaml>=6

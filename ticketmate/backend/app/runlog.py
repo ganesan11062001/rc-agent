@@ -1,4 +1,4 @@
-"""Record every drafting run to scratch, so a draft can be explained later.
+"""Record every drafting run, so a draft can be explained later.
 
 Motivation: a draft that lands in a ticket is otherwise unaccountable. If an RC
 member asks "why did it say that?", or a reviewer asks what the model was
@@ -7,11 +7,10 @@ containing the exact prompt sent, the raw text that came back, what the parsed
 draft was, and how long it took.
 
 Storage notes:
-  * Default is /scratch/$USER/rc_copilot_runs, which is the right filesystem
-    for bulky, regenerable data.
-  * /scratch is mode 770 -- group-accessible, unlike $HOME -- so the subtree is
-    forced to 0700 and every file to 0600. Ticket text can contain researcher
-    PII.
+  * Default (rc-agent) is rc-agent/traces/$USER/runs, with the other
+    traces, metrics and evals (app/ops_store.py); RUN_LOG_DIR overrides it.
+  * The subtree is forced to 0700 and every file to 0600: ticket text can
+    contain researcher PII.
   * Files are grouped per ticket number, so every run against one ticket
     collects in one directory.
   * Failures here never break a request: recording is best-effort.
@@ -31,7 +30,9 @@ _TICKET_RE = re.compile(
 
 
 def _default_dir() -> Path:
-    return Path("/scratch") / os.environ.get("USER", "unknown") / "rc_copilot_runs"
+    # rc-agent: traces/$USER/runs beside the code (app/ops_store.py), not /scratch.
+    from . import ops_store
+    return ops_store.root() / "runs"
 
 
 def run_dir() -> Optional[Path]:

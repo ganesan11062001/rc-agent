@@ -115,6 +115,7 @@ class Prepared:
     raw_chars: int
     stats: Dict[str, int] = field(default_factory=dict)
     query: str = ""                 # what retrieval searches; see the module docstring
+    expansion: str = ""             # the docs' words for the symptoms in `query` (a second search)
 
 
 def _strip_addresses(lines: List[str], stats: Dict[str, int]) -> List[str]:
@@ -310,6 +311,31 @@ def _field(head: str, name: str) -> str:
     return rest.strip()
 
 
+# Query expansion (RAG optimization): researchers describe symptoms, RC's
+# pages use the system's words. "My jobs have been pending for days" put
+# "Understanding the Queuing System" 13th; with "queue priority fairshare"
+# added it is 1st (probe, 2026-10-28). Appended to the query the extra words
+# were drowned out by the rest of the ticket, so they are a second search
+# (kg_client.retrieve_multi), merged after the first. The model reads only
+# the researcher's words. Each entry: symptom pattern -> the docs' vocabulary.
+EXPANSIONS = [
+    (re.compile(r"(?i)\b(pending|waiting|queued|not (yet )?start(ed|ing)|hasn'?t started|stuck in (the )?queue)\b"),
+     "queue priority fairshare scheduling"),
+    (re.compile(r"(?i)\b(killed|out of memory|oom|out_of_memory|oom-kill)\b"), "memory request --mem out of memory"),
+    (re.compile(r"(?i)\bdisk quota exceeded\b|\bquota\b"), "storage quota usage"),
+    (re.compile(r"(?i)\b(can'?t|cannot|unable to) (log ?in|ssh|connect)\b|\bconnection (refused|timed out)\b"),
+     "ssh login connect"),
+    (re.compile(r"(?i)\b(module|command) not found\b|\bno module named\b"), "module load software environment"),
+    (re.compile(r"(?i)\b(idle|idlebot|gpu (utili[sz]ation|usage) (is )?low)\b"), "idlebot gpu utilization"),
+]
+
+
+def expand(query: str) -> str:
+    """The documentation vocabulary for the symptoms in `query` ("" if none)."""
+    terms = [t for pat, t in EXPANSIONS if pat.search(query)]
+    return " ".join(dict.fromkeys(terms))
+
+
 def build_query(head: str, latest_from_researcher: str = "") -> str:
     """Short description + description + the researcher's latest message."""
     subject = _SUBJECT_PREFIX.sub("", _field(head, "Short description"))
@@ -342,7 +368,8 @@ def prepare(ticket_text: str) -> Prepared:
         text = _clean_text(ticket_text, stats)
         if forwarded:
             text += "\n\n(forwarded message, quoted in the email)\n" + forwarded
-        return Prepared(text, len(ticket_text), stats, build_query(text))
+        q = build_query(text)
+        return Prepared(text, len(ticket_text), stats, q, expand(q))
 
     forwarded = _forwarded_message(head, stats)
     head = _clean_text(head, stats)
@@ -385,7 +412,8 @@ def prepare(ticket_text: str) -> Prepared:
         rendered.append(e.render())
     stats["entries_kept"] = len(rendered)
     text = head + "\n\n" + ACTIVITY_LABEL + " (oldest first)\n\n" + "\n\n".join(rendered)
-    return Prepared(text.strip(), len(ticket_text), stats, build_query(head, latest))
+    q = build_query(head, latest)
+    return Prepared(text.strip(), len(ticket_text), stats, q, expand(q))
 
 
 def fit(prepared: Prepared, max_chars: int) -> Prepared:
@@ -394,14 +422,14 @@ def fit(prepared: Prepared, max_chars: int) -> Prepared:
     text = prepared.text
     stats = dict(prepared.stats, budget_chars=max_chars, entries_omitted=0)
     if len(text) <= max_chars:
-        return Prepared(text, prepared.raw_chars, stats, prepared.query)
+        return Prepared(text, prepared.raw_chars, stats, prepared.query, prepared.expansion)
     marker = ACTIVITY_LABEL + " (oldest first)\n\n"
     head, sep, rest = text.partition(marker)
     if not sep:
         # No thread to thin out: keep the beginning, which holds the request.
         stats["truncated_chars"] = len(text) - max_chars
         return Prepared(text[:max_chars] + "\n[... truncated to fit the model's context ...]",
-                        prepared.raw_chars, stats, prepared.query)
+                        prepared.raw_chars, stats, prepared.query, prepared.expansion)
     entries = re.split(r"\n\n(?=\[(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}|\?)\] )", rest)
     head_part = head + sep
     keep_first = entries[:1]
@@ -420,4 +448,4 @@ def fit(prepared: Prepared, max_chars: int) -> Prepared:
     if len(out) > max_chars:             # one entry alone is too long
         out = out[:max_chars] + "\n[... truncated to fit the model's context ...]"
         stats["truncated_chars"] = len(text) - max_chars
-    return Prepared(out, prepared.raw_chars, stats, prepared.query)
+    return Prepared(out, prepared.raw_chars, stats, prepared.query, prepared.expansion)

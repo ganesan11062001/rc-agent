@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, evaluators, kg_client, lookups, otel, playbooks, runlog, ticket_context, tracing
+from . import auth, context_pack, evaluators, guardrails, kg_client, lookups, ops_store, otel, playbooks, runlog, ticket_context, tracing
 from .agents import graph as agent_graph, state as agent_state
 from .config import get_settings
 from .llm_client import LLMError, check_health, context_window, generate_draft, token_breakdown
@@ -260,6 +260,17 @@ async def draft(request: DraftRequest):
                     else ticket_context.Prepared(request.ticket_text.strip(), len(request.ticket_text), {}))
         if crun is not None:
             crun.end({"chars": len(prepared.text), "stats": prepared.stats})
+    # Guardrails, input side (app/guardrails.py): chat-template control tokens
+    # out; text worded as instructions to an AI is flagged, and every model
+    # that reads the ticket is told it is data, not instructions.
+    with tracing.run("guardrails.input", "tool", inputs={"chars": len(prepared.text)}) as girun:
+        guarded, input_findings = guardrails.check_input(prepared.text)
+        if input_findings:
+            prepared.text, prepared.query = guarded, guardrails.strip_control(prepared.query)
+            tr.root.tags += ["guardrail:" + f.rule for f in input_findings]
+        if girun is not None:
+            girun.end({"findings": [f.to_dict() for f in input_findings]})
+    guardrail_findings = list(input_findings)
     ticket = prepared.text
 
     async def cluster_lookups():
@@ -280,7 +291,9 @@ async def draft(request: DraftRequest):
     # the thread: RC's replies and signatures matched staff bios and the
     # status page instead of the question.
     t = time.perf_counter()
-    kg = await kg_client.retrieve(prepared.query or ticket, request_id=request_id)
+    subject = (prepared.query or "").split("\n", 1)[0]
+    kg = await kg_client.retrieve_multi(prepared.query or ticket, prepared.expansion, subject,
+                                        request_id=request_id)
     timings["retrieve"] = int((time.perf_counter() - t) * 1000)
     found_lookups = await lookups_task if lookups_task else []
     lookups_context = lookups.prompt_text(found_lookups)
@@ -310,6 +323,8 @@ async def draft(request: DraftRequest):
         playbook_missing = tuple(playbooks.missing_text(books))
         # A follow-up or closure needs no website page: its ~2k tokens go to the thread.
         kg_prompt_context = kg_.context if instruction_wants_sources(request.extra_instructions) else ""
+        # Context engineering: sources fitted to a budget by rank (app/context_pack.py).
+        kg_prompt_context, pack_stats = context_pack.pack(kg_prompt_context, settings.kg_context_max_chars)
         window = await context_window()
         est = lambda s: int(len(s or "") / ticket_context.CHARS_PER_TOKEN)
         reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg_prompt_context) + est(lookups_context)
@@ -324,6 +339,7 @@ async def draft(request: DraftRequest):
                                   context_window=window, budget_tokens=budget_tokens,
                                   retrieval_query_chars=len(prepared.query),
                                   playbooks=[m.playbook.name for m in books], route=route,
+                                  sources_packed=pack_stats,
                                   revision=bool(revision_notes))
         with tracing.run("generate_draft", "chain",
                          inputs={"ticket_chars": len(fitted.text), "kg_context_chars": len(kg_prompt_context),
@@ -368,6 +384,7 @@ async def draft(request: DraftRequest):
                 "cluster_lookups": [lk.to_dict() for lk in ws["lookups"]],
                 "playbooks": [m.to_dict() for m in ws["skills"]],
                 "agent": ws["agent"],
+                "guardrails": [f.to_dict() for f in guardrail_findings],
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,
@@ -404,7 +421,7 @@ async def draft(request: DraftRequest):
                 "route": final.get("route"), "stopped": final.get("agent_stopped"),
                 "tool_calls": [r.tool for r in final.get("tool_calls") or []],
                 "revisions": final.get("revisions", 0),
-                "reviews_ok": all(r.ok for r in (final.get("reviews") or [])[-2:])}
+                "reviews_ok": all(r.ok for r in (final.get("reviews") or [])[-3:])}
         else:
             draft_dict, model_name = await write_with(evidence)
         llm_draft = LLMDraft(**draft_dict)
@@ -479,6 +496,25 @@ async def draft(request: DraftRequest):
             "checked against the RC website and has no links." % kg.detail)
     timings["citations"] = int((time.perf_counter() - t) * 1000)
 
+    # Guardrails, output side, on exactly what will be shown: credentials are
+    # redacted; what the agents' revision did not fix is a caveat for the RC
+    # engineer. Every finding goes to the trace and traces/$USER/guardrails/.
+    with tracing.run("guardrails.output", "tool") as gorun:
+        guarded_draft, output_findings = guardrails.check_output(
+            llm_draft.model_dump(), ticket, playbooks.prompt_text(found_playbooks) + "\n" + lookups_context)
+        llm_draft = LLMDraft(**guarded_draft)
+        for f in output_findings:
+            if f.severity in ("revise", "warn"):
+                llm_draft.caveats.append("Guardrail: " + f.detail)
+        if gorun is not None:
+            gorun.end({"findings": [f.to_dict() for f in output_findings]},
+                      error="credential redacted" if any(f.severity == "block" for f in output_findings) else None)
+    guardrail_findings += output_findings
+    tr.root.tags += ["guardrail:" + f.rule for f in output_findings]
+    for f in guardrail_findings:
+        ops_store.append("guardrails", dict(f.to_dict(), request_id=request_id, ticket=thread))
+    tr.add_feedback("guardrail_findings", len(guardrail_findings), source="guardrail")
+
     response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
     response.references = references
     response.lookups = [ClusterLookup(**lk.to_dict()) for lk in found_lookups]
@@ -545,6 +581,29 @@ async def draft(request: DraftRequest):
         logger.info("run recorded | id=%s -> %s", request_id, saved)
         # LLM-as-judge in the background; it appends its grades beside the run.
         evaluators.schedule_judge(request_id, ticket, ws["kg_prompt_context"], response.model_dump())
+
+    # LLMOps: one metrics row per draft in traces/$USER/metrics/ (app/ops_store.py),
+    # for dashboards and ops/ops_report.py; no ticket text.
+    ag = ws["agent"] or {}
+    ops_store.append("metrics", {
+        "ts": started_at, "request_id": request_id, "ticket": thread, "model": model_name,
+        "mode": "agent" if settings.agent_mode else "pipeline", "route": ag.get("route"),
+        "route_reason": (ag.get("route_reason") or "")[:80], "agent_stopped": ag.get("stopped"),
+        "tool_calls": [c.get("tool") for c in ag.get("tool_calls") or []],
+        "tool_refusals": sum(1 for c in ag.get("tool_calls") or [] if not c.get("ok")),
+        "reflections": len(ag.get("reflections") or []), "revisions": ag.get("revisions", 0),
+        "reviews": {r.get("reviewer"): r.get("ok") for r in (ag.get("reviews") or [])[-3:]},
+        "reviewer_supported_share": next((r.get("score") for r in reversed(ag.get("reviews") or [])
+                                          if r.get("reviewer") == "reviewer"), None),
+        "guardrails": [f.rule for f in guardrail_findings],
+        "kg_status": kg.status, "sources": len(kg.sources), "low_confidence": kg.low_confidence,
+        "references": len(references), "urls_removed": len((cite_trace or {}).get("removed_urls") or []),
+        "playbooks": [m.playbook.name for m in found_playbooks],
+        "lookups": len(found_lookups), "assertions_failed": failed, "confidence": response.confidence,
+        "latency_ms": elapsed_ms, "timings_ms": timings, "tokens": tokens,
+        "prompt_version": _PROMPT_VERSION.get("version"),
+        "manifest": {k: len(v) for k, v in (ag.get("manifest") or {}).items()},
+    })
 
     if settings.debug:
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())

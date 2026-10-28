@@ -287,6 +287,22 @@ async def _retrieve(ticket_text: str, request_id: str = "") -> KGContext:
                      sources=res["sources"], allowed_urls=res["allowed_urls"], trace=trace)
 
 
+async def retrieve_multi(query: str, expansion: str = "", subject: str = "", request_id: str = "",
+                         max_sources: int = 8) -> KGContext:
+    """Multi-query retrieval: the researcher's words, then -- when the ticket's
+    symptoms have documentation vocabulary (ticket_context.expand) -- a second
+    search in those words, its new pages merged after the first's. The first
+    search decides low_confidence. One function for the backend and the evals."""
+    first = await retrieve(query, request_id=request_id)
+    if not expansion or first.status != "ok":
+        return first
+    with tracing.run("rc_kg.retrieve_expansion", "retriever", inputs={"query": (subject + " " + expansion).strip()}):
+        second = await retrieve((subject + " " + expansion).strip(), request_id=request_id)
+    merged = merge(first, second, max_sources=max_sources)
+    merged.trace = dict(merged.trace, expansion=expansion)
+    return merged
+
+
 async def health() -> Tuple[str, Optional[str]]:
     """("ok"|"loading"|"unreachable"|"incompatible"|"disabled", detail)."""
     s = get_settings()

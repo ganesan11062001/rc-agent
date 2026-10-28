@@ -247,8 +247,8 @@ check("8 h" not in final["draft"]["draft_response"] and final["revisions"] == 1,
 check(any("sacct -j 4812345" in c for c in writes[0][2]), "the writer drafted from the agent's evidence")
 prov = graph.provenance(final)
 check(prov["route_reason"].startswith("model") and prov["plan"] and len(prov["tool_calls"]) == 2
-      and len(prov["reviews"]) == 4 and prov["usage"]["total_tokens"] > 0 and set(prov["manifest"]) ==
-      {"prompts", "skills", "tools"}, "provenance: route, plan, calls, 4 reviews, usage, versions")
+      and len(prov["reviews"]) == 6 and prov["usage"]["total_tokens"] > 0 and set(prov["manifest"]) ==
+      {"prompts", "skills", "tools"}, "provenance: route, plan, calls, 2 rounds x (critic, guardrails, reviewer), usage, versions")
 
 writes.clear()
 llm_client.chat = Model({"agent.reviewer": [{"content": json.dumps({"unsupported_claims": ["x"], "problems": [],

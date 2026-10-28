@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # which call read-only tools for anything else the reply needs; the usual
     # writer drafts; a critic and a reviewer agent check it. Off: exactly
     # TicketMate's pipeline. Without tool calls the agents gather nothing more.
+    # Context engineering: the knowledge-graph sources the writer reads are
+    # fitted to this many characters, by rank (app/context_pack.py).
+    kg_context_max_chars: int = 7000
+
     agent_mode: bool = True
     agent_max_steps: int = 4           # model turns per specialist, after its plan
     agent_max_tool_calls: int = 8      # tool calls in all

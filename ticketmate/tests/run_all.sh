@@ -22,9 +22,13 @@ step "cluster lookups"       "$PY" "$TM/tests/lookups/test_lookups.py"
 step "skills (playbooks)"    "$PY" "$TM/tests/playbooks/test_playbooks.py"
 step "agent graph"           "$PY" "$TM/tests/agent/test_agent.py"
 step "OpenTelemetry export"  "$PY" "$TM/tests/agent/test_otel.py"
+step "guardrails"            "$PY" "$TM/tests/agent/test_guardrails.py"
+step "prompt lint"           "$PY" "$TM/tests/agent/test_prompts.py"
+step "eval: routing+guardrails" "$PY" "$TM/evals/run.py" --suite routing --suite guardrails --gate
 step "rc-kg unit tests"      "$KG/.venv/bin/python" -m pytest -q "$KG/tests"
 if [ "${1:-}" != "--quick" ]; then
   step "rc-kg ticket regressions" bash -c "cd '$KG' && scripts/with_kg.sh -m eval.ticket_cases"
+  step "eval: RAG on ground truth" "$PY" "$TM/evals/run.py" --suite rag --gate
   step "end-to-end contract (A-G)" "$TM/tests/rc_kg/run_contract.sh"
 fi
 echo; [ $rc = 0 ] && echo "ALL PASS" || echo "SOME FAILED"

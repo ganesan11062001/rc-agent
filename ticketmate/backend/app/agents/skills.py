@@ -28,17 +28,18 @@ class SkillInfo:
     name: str
     title: str
     kind: str                 # "procedure" | "reply"
+    route: str                # "incident" | "request": the agent it belongs to
     triggers: Dict[str, List[str]]
     requires: List[str]
 
     def to_dict(self) -> Dict:
-        return {"name": self.name, "title": self.title, "kind": self.kind,
+        return {"name": self.name, "title": self.title, "kind": self.kind, "route": self.route,
                 "triggers": self.triggers, "requires": self.requires}
 
 
 def _info(b: Playbook) -> SkillInfo:
     return SkillInfo(
-        name=b.name, title=b.title, kind="reply" if b.on == "instructions" else "procedure",
+        name=b.name, title=b.title, kind="reply" if b.on == "instructions" else "procedure", route=b.route,
         triggers={"reads": ["engineer instructions" if b.on == "instructions" else "researcher's words"],
                   "match": [p.pattern for p in b.match], "unless": [p.pattern for p in b.unless]},
         requires=[ask for _, ask in b.requires])

@@ -222,6 +222,13 @@ check(not re.search(r"Hope all|Thanks|Best|Grace|617\.555|reply from|Office Hour
 check(prepare("My job 123456 failed with OOM.\n\nThanks,\nAda").query == "My job 123456 failed with OOM.",
       "pasted text: the query is the text without its sign-off")
 
+print("query expansion (a second search in the docs' words)")
+from app.ticket_context import expand  # noqa: E402
+check("queue priority fairshare" in expand("My jobs have been pending for 3 days"), "pending -> queue words")
+check("memory" in expand("job was OOM killed"), "killed / OOM -> memory words")
+check(expand("How do I install a package in my conda env?") == "", "no symptom -> no expansion")
+check(prepare(TICKET).query.find("fairshare") == -1, "the expansion never enters the query the model reads")
+
 print("forwarded requests")
 FWD = """Ticket: INC0000099
 

@@ -1,4 +1,5 @@
-"""Export each draft's run tree as OpenTelemetry spans.
+"""Export each draft's run tree as OpenTelemetry spans -- always to
+traces/$USER/spans/<date>.jsonl, and to a collector when one is configured.
 
 The run log (runlog.py) keeps the full trace of every draft on /scratch. For
 production monitoring the same tree also goes to any OpenTelemetry
@@ -36,7 +37,30 @@ MAX_CONTENT = 4000
 
 
 def enabled() -> bool:
+    """A collector is configured (the standard OTLP variables)."""
     return bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+
+
+def local_enabled() -> bool:
+    """Spans are also kept in traces/$USER/spans/ (app/ops_store.py) unless RC_TRACES_SPANS=off."""
+    return os.environ.get("RC_TRACES_SPANS", "on").lower() not in ("0", "off", "false", "no")
+
+
+def _file_exporter():
+    """An exporter appending each span, as OTLP-style JSON, to traces/$USER/spans/<date>.jsonl."""
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+    from . import ops_store
+
+    class FileSpanExporter(SpanExporter):
+        def export(self, spans):
+            for sp in spans:
+                ops_store.append("spans", json.loads(sp.to_json()))
+            return SpanExportResult.SUCCESS
+
+        def shutdown(self):
+            return None
+
+    return FileSpanExporter()
 
 
 def _content() -> bool:
@@ -56,8 +80,11 @@ def configure(exporter=None):
     if exporter is not None:
         _provider.add_span_processor(SimpleSpanProcessor(exporter))
     else:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        if local_enabled():
+            _provider.add_span_processor(SimpleSpanProcessor(_file_exporter()))
+        if enabled():
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     _tracer = _provider.get_tracer("rc-agent.drafts")
     return _provider
 
@@ -116,7 +143,7 @@ def _attributes(run: Dict[str, Any], root_meta: Dict[str, Any]) -> Dict[str, Any
 def export(trace: Dict[str, Any]) -> int:
     """Send one trace (tracing.Trace.to_dict()); returns the number of spans. Never raises."""
     if _tracer is None:
-        if not enabled():
+        if not (enabled() or local_enabled()):
             return 0
         try:
             configure()

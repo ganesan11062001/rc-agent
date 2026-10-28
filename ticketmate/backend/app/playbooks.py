@@ -63,6 +63,7 @@ class Playbook:
     # (fields any one of which satisfies it, what to ask for when none was found)
     requires: List["tuple[List[str], str]"] = field(default_factory=list)
     on: str = "researcher"          # "researcher" | "instructions": which text `match` reads
+    route: str = "request"          # rc-agent: the agent a triggered skill sends the ticket to
     path: str = ""
 
     def missing(self, values: Dict[str, List[str]]) -> List[str]:
@@ -107,6 +108,10 @@ def parse(text: str, path: str = "") -> Playbook:
                 pb.name = value
             elif key == "title":
                 pb.title = value
+            elif key == "route":
+                if value not in ("incident", "request"):
+                    raise ValueError("%s:%d: 'route' is 'incident' or 'request'" % (path, n))
+                pb.route = value
             elif key == "on":
                 if value not in ("researcher", "instructions"):
                     raise ValueError("%s:%d: 'on' is 'researcher' or 'instructions'" % (path, n))

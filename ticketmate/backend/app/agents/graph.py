@@ -32,7 +32,7 @@ from typing import Any, Awaitable, Callable, Dict, Tuple
 
 from langgraph.graph import END, START, StateGraph
 
-from .. import llm_client, lookups, tracing
+from .. import guardrails, llm_client, lookups, playbooks as playbooks_mod, tracing
 from ..llm_client import extract_json
 from ..prompts import instruction_wants_sources
 from . import critic, prompt_registry as prompts, react, reviewer, skills, tools as tools_mod
@@ -64,8 +64,9 @@ async def _route(s: GraphState) -> Dict[str, Any]:
                               or not instruction_wants_sources(instr)):
             route, reason = "followup", "rules: the engineer asked for a follow-up or closing message"
         elif any(m.playbook.on == "researcher" for m in ev.skills):
-            route, reason = "request", "rules: skill %s triggered" % next(
-                m.playbook.name for m in ev.skills if m.playbook.on == "researcher")
+            # The skill says which agent it belongs to (playbook header `route:`).
+            first = next(m.playbook for m in ev.skills if m.playbook.on == "researcher")
+            route, reason = first.route, "rules: skill %s triggered (a %s)" % (first.name, first.route)
         elif re.match(r"(?i)(TASK|RITM|REQ)\d", s.get("ticket_number") or "") or \
                 re.search(r"(?m)^Ticket:\s*(TASK|RITM|REQ)\d", s["ticket"]):
             route, reason = "request", "rules: a ServiceNow request (TASK/RITM)"
@@ -118,7 +119,7 @@ def build(writer: Writer, max_steps: int = 4, max_tool_calls: int = 8, max_revis
         notes = ""
         last = [r for r in s.get("reviews") or [] if not r.ok]
         if last and s.get("draft"):
-            notes = "\n".join("- " + p for r in last[-2:] for p in r.problems)
+            notes = "\n".join("- " + p for r in last[-3:] for p in r.problems)
         with tracing.run("graph.write", "chain", inputs={"revision": s.get("revisions", 0), "notes": notes}) as run:
             draft, model = await writer(s["evidence"], notes, s.get("route", "incident"))
             if run is not None:
@@ -133,7 +134,10 @@ def build(writer: Writer, max_steps: int = 4, max_tool_calls: int = 8, max_revis
         with tracing.run("graph.review", "chain", inputs={"revision": s.get("revisions", 0)}) as run:
             rules = Review("critic", critic.review(s["draft"], s["ticket"], lookups.prompt_text(ev.lookups),
                                                    missing, closing=closing))
-            found = [rules]
+            _, gfind = guardrails.check_output(s["draft"], s["ticket"],
+                                               playbooks_mod.prompt_text(ev.skills) + "\n" + lookups.prompt_text(ev.lookups))
+            found = [rules, Review("guardrails", guardrails.revision_notes(gfind),
+                                   detail="; ".join(f.rule for f in gfind))]
             if reviewer_on and not closing:
                 found.append(await reviewer.review(s["draft"], s["ticket"], ev))
             if run is not None:
@@ -144,7 +148,7 @@ def build(writer: Writer, max_steps: int = 4, max_tool_calls: int = 8, max_revis
         return {"incident": "incident", "request": "request"}.get(s["route"], "write")
 
     def after_review(s: GraphState) -> str:
-        latest = [r for r in (s.get("reviews") or [])[-2:]]
+        latest = [r for r in (s.get("reviews") or [])[-3:]]
         bad = any(not r.ok for r in latest)
         return "write" if bad and s.get("revisions", 0) < max_revisions else END
 

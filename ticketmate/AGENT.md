@@ -1,101 +1,78 @@
-# rc-agent: TicketMate as an agent
+# rc-agent: TicketMate as a multi-agent system
 
-rc-agent is TicketMate with one step added before the draft is written: the
-model decides what else to look up. Everything else -- the extension, the
-panel, the backend's API, the run logs, rc-kg -- is TicketMate's.
+rc-agent keeps everything TicketMate has -- the extension, the panel, the
+backend API, rc-kg, the cleaning, lookups, skills and the writer -- and puts
+a LangGraph agent graph between gathering and the reply. Operations
+(traces, evaluation, guardrails, optimization) are in [LLMOPS.md](LLMOPS.md).
 
-## What changes in a draft
+## The graph (`backend/app/agents/`)
 
 ```
-TicketMate                          rc-agent
-----------                          --------
-clean the ticket                    clean the ticket
-rules pick lookups, run them        rules pick lookups, run them
-retrieve on the researcher's words  retrieve on the researcher's words
-patterns pick a playbook            patterns pick a playbook
-                                    AGENT: the model reads the ticket and all of the
-                                    above, and calls read-only tools for anything else
-                                    the reply needs (2-4 turns, at most 8 calls)
-write the draft (one model call)    write the draft (the same call, from everything gathered)
-citations, checks, run log          citations, checks, run log
+START -> orchestrator --+-- incident agent --+
+                        +-- request agent ---+--> write --> review --+--> END
+                        +-- (follow-up) -----+       ^               |
+                                                     +--(problems)---+   at most AGENT_MAX_REVISIONS (1)
+
+each agent (react.py), a ReAct subgraph:
+  plan --> reason <--> act (tool calls -> observations) --> reflect --(gaps, once)--> reason --> END
 ```
 
-The rules still run first, so the agent starts from what TicketMate would
-have had. **It can only add.** If the model calls no tool, if the model
-server has no tool calls, or if anything in the agent fails, the draft is
-exactly TicketMate's; the run log says which (`agent:done`,
-`agent:tools_unsupported`, `agent:error`).
+| node | what it does | file |
+|---|---|---|
+| gather (before the graph) | TicketMate's rules: clean the ticket, run the lookups it names, retrieve on the researcher's words, trigger skills | `main.py` |
+| orchestrator | routes: rules first (follow-up instruction -> followup; a triggered skill -> its `route:`; TASK/RITM -> request), else the model (guided JSON, few-shot), else incident | `graph.py`, `prompts/orchestrator.md` |
+| incident agent | diagnoses: jobs, nodes, partitions, queue, FairShare, recent failures, libraries, the knowledge graph | `prompts/incident.md` |
+| request agent | procedures: skills, accounts, groups, project owners, the knowledge graph | `prompts/request.md` |
+| plan / reason / act / reflect | ReAct with an explicit plan turn (no tools), concurrent tool calls, and a deterministic reflection (a job/node/user the researcher named and nobody looked up; no skill for a request; no doc search for an incident) | `react.py`, `prompts/react_*.md` |
+| write | TicketMate's writer: one call, JSON draft, from the evidence; revision notes on the second pass | `main.py` (`write_with`) |
+| review | critic (rules from the team's reviews), guardrails (destructive commands, leaked work notes), reviewer agent (every claim checked against the evidence) | `critic.py`, `../guardrails.py`, `reviewer.py` |
 
-Examples of what the rules miss and the agent can fetch:
+The agents start from what the rules gathered and **can only add**: no
+tool call, a server without tool calls, or any failure leaves TicketMate's
+draft. `AGENT_MODE=false` is exactly TicketMate.
 
-- a node or job named only in pasted output, or in a later message;
-- a search in its own words when the researcher's wording misses the page
-  ("my thing dies after an hour" -> "job time limit");
-- the queue and FairShare for a user whose jobs "aren't starting", when the
-  ticket never says "pending";
-- the playbook for a request the patterns did not recognise.
+## State, tools, skills, prompts
 
-## The tools (`backend/app/tools.py`)
+- **State** (`state.py`): one typed `GraphState` per draft -- inputs, route
+  and reason, `Evidence` (lookups, knowledge-graph sources, skills), plan,
+  every `ToolCallRecord`, reflections, every `Review`, revisions, the path
+  through the graph, token usage. The run log's `trace.agent` is this state.
+- **Tools** (`tools.py`): 12, all read-only. Each has a pydantic argument
+  model; the function-calling schema is generated from it (anchored
+  patterns, closed objects, a `Literal` of skill names), and arguments are
+  validated before the handler runs -- then again by the lookup itself.
+  Scoped per agent (the request agent has no job/node tools). Nothing that
+  changes anything is a tool.
+- **Skills** (`skills.py` over `app/playbooks/*.md`): RC's procedures with
+  their triggers (`match`/`unless`, read from the researcher's words or the
+  engineer's instructions), their `route`, what they `require`. Reach a draft
+  by trigger or by an agent's `load_skill`; the trace says which.
+- **Prompts** (`prompt_registry.py`, `prompts/*.md`): one file each, a
+  version hash each, recorded in every trace's manifest with the skills' and
+  tools'. `RC_AGENT_PROMPTS=<dir>` overrides same-named files (A/B tests).
 
-| tool | what it does |
-|---|---|
-| `lookup_user` | `id`: account exists, groups |
-| `lookup_job` | `sacct` + `#SBATCH` script + expected start / time left |
-| `lookup_group` | `getent group` (+ group.xtra): size, membership |
-| `lookup_node` | `scontrol show node`: state, partitions, GPUs, reason |
-| `lookup_partition` | `sinfo -N -p`: node states, down/drained nodes with reasons |
-| `lookup_queue` | `squeue -u`: jobs, expected starts, pending reasons |
-| `lookup_fairshare` | `sshare`: FairShare, group usage spread (other members never named) |
-| `lookup_job_history` | `sacct -u`, 7 days: counts by state, jobs that did not complete |
-| `lookup_project_owner` | `stat /projects/<name>`: owner |
-| `lookup_library` | `ldconfig -p`: library present, or other versions |
-| `search_rc_docs` | rc-kg `/retrieve`; new pages are added to the sources (at most 8 in all) |
-| `load_playbook` | one of RC's procedures, for the writer |
-
-**All read-only, all already in TicketMate.** Each tool wraps a function the
-pipeline uses. Every lookup validates its own argument against the same
-strict pattern as before and runs one allowlisted program with a fixed argv,
-no shell -- so a hostile or hallucinated argument (`d4043; rm -rf`) is
-refused and nothing runs (tested). Nothing that changes anything is a tool:
-`aicr-access.bash`, reservations, `project ... add members`, node
-drain/resume stay steps for the RC engineer.
-
-The agent's model turns and every tool call are runs in the draft's trace
-(`agent`, `agent.step`, `tool.<name>`); the run log's `trace.agent` has the
-calls, whether each was refused, and the token use. The panel's context line
-says `agent: N lookups/searches`.
-
-## Running it
-
-The agent needs a model server that does tool calls. `cluster/serve_glm.sh`
-now starts Qwen2.5 with `--enable-auto-tool-choice --tool-call-parser hermes`
-(GLM already had its parsers); `QWEN_TOOLS=0` turns that off. Without it the
-backend logs once and drafts exactly as TicketMate.
+## Settings
 
 | setting | default | |
 |---|---|---|
-| `AGENT_MODE` | `true` | `false` = TicketMate's pipeline, nothing else changes |
-| `AGENT_MAX_STEPS` | `4` | model turns |
-| `AGENT_MAX_TOOL_CALLS` | `8` | tool calls in all; a repeated call is answered from cache |
+| `AGENT_MODE` | `true` | `false`: TicketMate's pipeline |
+| `AGENT_MAX_STEPS` | `4` | model turns per agent after its plan |
+| `AGENT_MAX_TOOL_CALLS` | `8` | in all; a repeat is served from cache |
+| `AGENT_MAX_REVISIONS` | `1` | times review may send a draft back |
+| `AGENT_REVIEWER` | `true` | the reviewer agent (one model call) |
+| `KG_CONTEXT_MAX_CHARS` | `7000` | sources fitted by rank for the writer |
 
-The Open OnDemand app is "RC Agent", installed as `~/ondemand/dev/rc-agent`,
-so it sits next to TicketMate's "RC Copilot" without replacing it.
+The model server needs tool calls: `cluster/serve_glm.sh` starts Qwen2.5
+with `--enable-auto-tool-choice --tool-call-parser hermes` (`QWEN_TOOLS=0`
+off). The OOD app is "RC Agent" at `~/ondemand/dev/rc-agent`, beside
+TicketMate's "RC Copilot".
 
-## Adding a tool
+## Adding things
 
-1. Write the function (read-only; validate its argument inside it).
-2. Add a `Tool(name, description, parameters, handler)` to `tools.registry()`;
-   the handler returns a short text for the model and records what it found
-   in the `ToolContext` (lookups, sources or playbooks) for the writer.
-3. Add a case to `tests/agent/test_agent.py`, including a hostile argument.
-
-## Tests
-
-| | |
-|---|---|
-| `tests/agent/test_agent.py` | the loop, merging, refusals, budgets, fallbacks (scripted model, fake binaries) |
-| `tests/rc_kg/run_contract.sh` F, G | end to end with real rc-kg: a tool-calling stub model, and one without tool calls |
-
-Not tested yet: a real Qwen/GLM deciding which tools to call (no GPU in the
-session that built this). Try it on tickets and compare `agent:*` tags and
-drafts with TicketMate's.
+- a **tool**: a read-only function that validates its argument; an argument
+  model; a `Tool(...)` in `tools.registry()` with the agents allowed; a case in
+  `tests/agent/test_agent.py` with a hostile argument.
+- a **skill**: a file in `app/playbooks/` (format in `app/playbooks.py`, incl.
+  `route:` and `require.*`); a routing case in `tests/playbooks/test_playbooks.py`
+  and a ground-truth case in `evals/groundtruth.yaml`.
+- a **prompt change**: a variant directory, `evals/prompt_ab.py`, then copy it in.

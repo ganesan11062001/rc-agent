@@ -8,6 +8,7 @@ silently ship an unfilled prompt.
 """
 
 import hashlib
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -32,11 +33,16 @@ class Prompt:
 
 
 @lru_cache
-def load_all(directory: str = str(PROMPT_DIR)) -> Dict[str, Prompt]:
+def load_all(directory: str = str(PROMPT_DIR), override: str = "") -> Dict[str, Prompt]:
+    """Every prompt; files in `override` (default: $RC_AGENT_PROMPTS) replace
+    same-named ones -- how a prompt variant is A/B-tested (evals/prompt_ab.py)
+    without touching the baseline."""
+    override = override or os.environ.get("RC_AGENT_PROMPTS", "")
     out = {}
-    for p in sorted(Path(directory).glob("*.md")):
-        text = p.read_text(encoding="utf-8").strip() + "\n"
-        out[p.stem] = Prompt(p.stem, text, hashlib.sha256(text.encode()).hexdigest()[:8])
+    for d in [directory] + ([override] if override else []):
+        for p in sorted(Path(d).glob("*.md")):
+            text = p.read_text(encoding="utf-8").strip() + "\n"
+            out[p.stem] = Prompt(p.stem, text, hashlib.sha256(text.encode()).hexdigest()[:8])
     return out
 
 

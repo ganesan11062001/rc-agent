@@ -51,6 +51,7 @@ VRP="$(free)"; STUB_REJECT_SCHEMA=1 $PY "$HERE/stub_vllm.py" "$VRP" & PIDS+=($!)
 VNP="$(free)"; STUB_NO_TOOLS=1 $PY "$HERE/stub_vllm.py" "$VNP" & PIDS+=($!)
 rm -f /tmp/stub_pwned
 export RC_KG_API_TOKEN="contract-$$"
+export RC_TRACES_DIR="$WORK/traces"     # metrics, spans, guardrails: not the real traces/
 KGP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KGP" >"$WORK/kg.log" 2>&1 & PIDS+=($!)
 KWP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KWP" --variant website >"$WORK/kg-website.log" 2>&1 & PIDS+=($!)
 FKP="$(free)"; $PY "$HERE/fake_kg_v2.py" "$FKP" & PIDS+=($!)

@@ -80,7 +80,19 @@ del os.environ["OTEL_EXPORT_CONTENT"]
 
 otel._tracer = None
 os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
-check(otel.export(a_draft()) == 0, "no collector configured: nothing exported, nothing raised")
+os.environ["RC_TRACES_SPANS"] = "off"
+check(otel.export(a_draft()) == 0, "no collector and local spans off: nothing exported, nothing raised")
+
+import tempfile, json as _json  # noqa: E401,E402
+os.environ["RC_TRACES_DIR"] = tempfile.mkdtemp()
+os.environ["RC_TRACES_SPANS"] = "on"
+otel._tracer = None
+n = otel.export(a_draft())
+files = list(Path(os.environ["RC_TRACES_DIR"], "spans").glob("*.jsonl"))
+lines = [_json.loads(l) for f in files for l in f.read_text().splitlines()]
+check(n == 5 and len(lines) == 5 and {l["name"] for l in lines} >= {"draft", "tool.lookup_node"},
+      "by default every span is also kept in traces/$USER/spans/ (%d lines)" % len(lines))
+check(oct(os.stat(files[0]).st_mode & 0o777) == "0o600", "span files are 0600")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)
