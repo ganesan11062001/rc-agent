@@ -178,7 +178,8 @@ def _tools_unsupported(exc: openai.APIStatusError) -> bool:
 
 
 async def chat(messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None,
-               max_tokens: int = 600, name: str = "llm.chat") -> Dict[str, Any]:
+               max_tokens: int = 600, name: str = "llm.chat",
+               json_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One chat turn, optionally with tools: the building block of an agent loop.
 
     Returns {"content", "tool_calls": [{"id", "name", "arguments" (dict)}],
@@ -193,6 +194,10 @@ async def chat(messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, An
                               "temperature": settings.temperature, "max_tokens": max_tokens}
     if tools:
         kwargs.update(tools=tools, tool_choice="auto")
+    if json_schema is not None:
+        # Guided decoding where the server has it; callers still parse leniently.
+        kwargs["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": name.replace(".", "_"), "strict": True, "schema": json_schema}}
     try:
         with tracing.run(name, "llm", inputs={"messages": messages},
                          metadata={"tools": [t["function"]["name"] for t in tools or []],
@@ -201,10 +206,19 @@ async def chat(messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, An
             try:
                 completion = await client.chat.completions.create(**kwargs)
             except openai.APIStatusError as exc:
-                if tools and _tools_unsupported(exc):
+                if json_schema is not None and _is_unsupported_param_error(exc):
+                    # No guided decoding: ask again without it, the prompt says "only JSON".
+                    kwargs.pop("response_format", None)
+                    completion = None
+                    try:
+                        completion = await client.chat.completions.create(**kwargs)
+                    except openai.APIStatusError as exc2:
+                        raise LLMError("The model server rejected the request.", _truncate(str(exc2), 300)) from None
+                elif tools and _tools_unsupported(exc):
                     raise ToolsUnsupported("The model server does not support tool calls.",
                                            _truncate(str(exc), 300)) from None
-                raise LLMError("The model server rejected the request.", _truncate(str(exc), 300)) from None
+                else:
+                    raise LLMError("The model server rejected the request.", _truncate(str(exc), 300)) from None
             except openai.APIError as exc:
                 raise LLMError("Could not reach the model server.", _truncate(str(exc), 300)) from None
             if not completion.choices:
@@ -239,6 +253,7 @@ async def generate_draft(ticket_text: str,
                          lookups_context: str = "",
                          playbook_context: str = "",
                          playbook_missing: Tuple[str, ...] = (),
+                         revision_notes: str = "",
                          ) -> Tuple[LLMDraft, str]:
     """Send one ticket to the model and return (validated draft, model name).
 
@@ -277,6 +292,7 @@ async def generate_draft(ticket_text: str,
                 lookups_context=lookups_context,
                 playbook_context=playbook_context,
                 playbook_missing=playbook_missing,
+                revision_notes=revision_notes,
             )
             kwargs: Dict[str, Any] = {
                 "model": settings.vllm_model_name,

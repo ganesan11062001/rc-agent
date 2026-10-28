@@ -169,7 +169,7 @@ check(llm_run.get("run_type") == "llm" and llm_run.get("inputs", {}).get("messag
       and (llm_run.get("metadata") or {}).get("invocation_params", {}).get("temperature") is not None,
       "llm run: messages, completion, invocation params, same usage as the attempt")
 m = roots[0].get("metadata") or {}
-check(m.get("project") == "rc-copilot/full" and m.get("thread_id") and m.get("session_id")
+check(m.get("project") == "rc-agent/full" and m.get("thread_id") and m.get("session_id")
       and (m.get("prompt_version") or {}).get("version"), "project, thread, session, prompt version on the root")
 fbk = {f["key"] for f in rt.get("feedback") or []}
 check({"grounded", "references", "citations_flagged", "urls_removed"} <= fbk, "automatic feedback attached")
@@ -264,30 +264,40 @@ check([x["status"] for x in lr] == ["error", "success"] and "unsupported" in (lr
       "run tree: rejected call is an error run, the fallback a success run")
 
 import os
-print("F. rc-agent: the model calls tools before the draft")
+print("F. rc-agent: orchestrator -> incident agent (ReAct) -> writer -> critic + reviewer")
 d = draft(A, OOM)
 logs = sorted(glob.glob(os.path.join(RUNS, "*", "*.json")))
 tr = (json.load(open(logs[-1])).get("trace") or {}) if logs else {}
 ag = tr.get("agent") or {}
-check(ag.get("stopped") == "done" and ag.get("steps") == 2, "agent ran two turns and stopped (%s)" % ag.get("stopped"))
-names = [c.get("tool") for c in ag.get("tool_calls") or []]
-check(names == ["search_rc_docs", "lookup_job"], "its tool calls are in the run log: %s" % names)
-refused = [c for c in ag.get("tool_calls") or [] if c.get("tool") == "lookup_job"]
-check(refused and refused[0].get("ok") is False and not os.path.exists("/tmp/stub_pwned"),
-      "a hostile job id was refused and nothing ran")
+check(ag.get("route") == "incident" and (ag.get("route_reason") or "").startswith("model"),
+      "the orchestrator routed it, and says why (%s)" % ag.get("route_reason"))
+check((ag.get("plan") or "").startswith("1.") and ag.get("stopped") == "done", "the agent planned, then finished")
+calls = ag.get("tool_calls") or []
+names = [c.get("tool") for c in calls]
+check(names == ["search_knowledge_graph", "lookup_job"], "its tool calls are in the run log: %s" % names)
+check(calls and calls[1].get("ok") is False and calls[1].get("result", "").startswith("refused")
+      and not os.path.exists("/tmp/stub_pwned"), "a hostile job id was refused by the schema; nothing ran")
+check(any(r.get("reviewer") == "reviewer" for r in ag.get("reviews") or [])
+      and any(r.get("reviewer") == "critic" for r in ag.get("reviews") or []), "critic and reviewer both reviewed it")
+check(ag.get("path", [])[:2] == ["orchestrator", "incident_agent"] and "review" in ag.get("path", []),
+      "the path through the graph is recorded: %s" % ag.get("path"))
+check(set((ag.get("manifest") or {})) == {"prompts", "skills", "tools"}, "with the versions of every prompt, skill, tool")
 runs = (tr.get("run_tree") or {}).get("runs") or []
-check(any(r["name"] == "agent" for r in runs) and any(r["name"] == "tool.search_rc_docs" for r in runs)
-      and any(r["name"] == "agent.step" and r["run_type"] == "llm" for r in runs),
-      "agent, its model turns and each tool are runs in the trace")
+rn = {r["name"] for r in runs}
+check({"graph", "graph.orchestrator", "agent.incident", "react.incident.plan", "tool.search_knowledge_graph",
+       "graph.write", "graph.review", "review.reviewer", "generate_draft"} <= rn,
+      "every node, tool and review is a run in the trace (missing: %s)" % sorted(
+          {"graph", "graph.orchestrator", "agent.incident", "react.incident.plan", "tool.search_knowledge_graph",
+           "graph.write", "graph.review", "review.reviewer", "generate_draft"} - rn))
 check(d["kg_status"] == "ok" and d["references"] and "[S" not in all_text(d), "draft grounded, no raw markers")
-check((d.get("context") or {}).get("agent", {}).get("tool_calls") == names, "the panel gets what the agent did")
+check(((d.get("context") or {}).get("agent") or {}).get("tool_calls") == names, "the panel gets what the agent did")
 
 print("G. rc-agent on a server without tool calls: the pipeline's draft")
 check(wait(N, "ok") is not None, "health ok")
 d = draft(N, OOM)
 logs = sorted(glob.glob(os.path.join(RUNS_N, "*", "*.json")))
 tr = (json.load(open(logs[-1])).get("trace") or {}) if logs else {}
-check((tr.get("agent") or {}).get("stopped") == "tools unsupported", "the agent says why it did nothing")
+check((tr.get("agent") or {}).get("stopped") == "tools unsupported", "the agent says why it gathered nothing more")
 check(d["kg_status"] == "ok" and d["references"] and d["draft_response"], "the draft is still produced and grounded")
 
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))

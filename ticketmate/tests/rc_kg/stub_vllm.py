@@ -32,6 +32,19 @@ class H(BaseHTTPRequestHandler):
             self.send_response(400); self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out)
             return
+        sysmsg = body["messages"][0]["content"]
+        last = body["messages"][-1].get("content") or ""
+        def reply(text):
+            return self._send({"id": "o", "object": "chat.completion", "model": "stub-model",
+                               "choices": [{"index": 0, "finish_reason": "stop",
+                                            "message": {"role": "assistant", "content": text}}],
+                               "usage": {"prompt_tokens": 200, "completion_tokens": 10, "total_tokens": 210}})
+        if sysmsg.startswith("You are the orchestrator"):
+            return reply(json.dumps({"route": "incident", "reason": "a job was killed"}))
+        if sysmsg.startswith("You are the Reviewer"):
+            return reply(json.dumps({"unsupported_claims": [], "problems": [], "supported_share": 1.0}))
+        if last.startswith("First, plan"):
+            return reply("1. find the page on checking memory use (search_knowledge_graph)")
         if body.get("tools"):
             # rc-agent's investigation step. STUB_NO_TOOLS=1: refuse like vLLM
             # started without --enable-auto-tool-choice.
@@ -46,7 +59,7 @@ class H(BaseHTTPRequestHandler):
                 # First turn: one search in its own words, and a hostile call
                 # the backend must refuse without running anything.
                 calls = [{"id": "call_1", "type": "function", "function": {
-                              "name": "search_rc_docs", "arguments": json.dumps({"query": "check job memory usage seff"})}},
+                              "name": "search_knowledge_graph", "arguments": json.dumps({"query": "check job memory usage seff"})}},
                          {"id": "call_2", "type": "function", "function": {
                               "name": "lookup_job", "arguments": json.dumps({"job_id": "1; touch /tmp/stub_pwned"})}}]
                 msg, finish = {"role": "assistant", "content": "", "tool_calls": calls}, "tool_calls"

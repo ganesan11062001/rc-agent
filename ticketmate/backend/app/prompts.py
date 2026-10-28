@@ -174,6 +174,16 @@ CHECKLIST_PLAYBOOK = (
 CHECKLIST_MISSING = (
     "- The reply asks the researcher for what the RC WORKFLOW still needs, unless the ticket gives it\n"
     "  another way: {items}.\n")
+# The critic's findings on the previous draft (app/agents/critic.py), when
+# the writer is asked to revise. Last before the JSON reminder.
+REVISION_TEMPLATE = """\
+
+--- REVISION ---
+A review of your previous draft found these problems. Write the draft again,
+fixing every one; keep everything that was right:
+{notes}
+--- END REVISION ---
+"""
 CHECKLIST_INSTRUCTIONS = "- \"draft_response\" is the message the RC engineer asked for, nothing more.\n"
 
 # Used instead of USER_PROMPT_TEMPLATE when the RC member typed guidance: the
@@ -335,7 +345,7 @@ def instruction_wants_sources(extra_instructions: str) -> bool:
 def build_messages(ticket_text: str, json_reminder: bool = False,
                    extra_instructions: str = "", kg_context: str = "",
                    kg_low_confidence: bool = False, lookups_context: str = "",
-                   playbook_context: str = "", playbook_missing=()):
+                   playbook_context: str = "", playbook_missing=(), revision_notes: str = ""):
     """Build the chat messages for one drafting request."""
     instructions = (extra_instructions or "").strip()
     if instructions:
@@ -353,6 +363,8 @@ def build_messages(ticket_text: str, json_reminder: bool = False,
         user_content += PLAYBOOK_TEMPLATE.format(playbooks=playbook_context.strip())
     if instructions:
         user_content += EXTRA_INSTRUCTIONS_TEMPLATE.format(extra_instructions=instructions)
+    if revision_notes:
+        user_content += REVISION_TEMPLATE.format(notes=revision_notes.strip())
     checks = [CHECKLIST_ALWAYS] + \
              ([CHECKLIST_SOURCES] if kg_context and not kg_low_confidence else []) + \
              ([CHECKLIST_LOOKUPS] if lookups_context else []) + \

@@ -80,13 +80,16 @@ class Settings(BaseSettings):
     playbooks: bool = True
 
     # --- Agent (rc-agent) ----------------------------------------------------
-    # After the rules above gather what they can, the model reads the ticket
-    # and calls read-only tools (app/tools.py) for anything else the reply
-    # needs; then the usual writer drafts. Off: exactly TicketMate's pipeline.
-    # A server without tool calls falls back to that automatically.
+    # After the rules above gather what they can, the agent graph
+    # (app/agents/graph.py) routes the ticket to the incident or request agent,
+    # which call read-only tools for anything else the reply needs; the usual
+    # writer drafts; a critic and a reviewer agent check it. Off: exactly
+    # TicketMate's pipeline. Without tool calls the agents gather nothing more.
     agent_mode: bool = True
-    agent_max_steps: int = 4           # model turns
+    agent_max_steps: int = 4           # model turns per specialist, after its plan
     agent_max_tool_calls: int = 8      # tool calls in all
+    agent_max_revisions: int = 1       # times the critic/reviewer may send a draft back
+    agent_reviewer: bool = True        # the reviewer agent (one extra model call per draft)
 
     # --- Ticket context ----------------------------------------------------
     # Clean the scraped ticket before anything reads it: drop notification

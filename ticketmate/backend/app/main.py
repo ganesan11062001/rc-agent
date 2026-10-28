@@ -15,7 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agent, auth, evaluators, kg_client, lookups, playbooks, runlog, ticket_context, tracing
+from . import auth, evaluators, kg_client, lookups, otel, playbooks, runlog, ticket_context, tracing
+from .agents import graph as agent_graph, state as agent_state
 from .config import get_settings
 from .llm_client import LLMError, check_health, context_window, generate_draft, token_breakdown
 from .prompts import SYSTEM_PROMPT, instruction_wants_sources
@@ -239,9 +240,14 @@ async def draft(request: DraftRequest):
                 "ticket_number": request.ticket_number},
         metadata={"request_id": request_id, "thread_id": thread,
                   "session_id": os.environ.get("SLURM_JOB_ID") or "local",
-                  "project": "rc-copilot",
+                  "project": "rc-agent",
                   "node": os.uname().nodename, "gpu": _GPU, "model": settings.vllm_model_name,
-                  "prompt_version": _PROMPT_VERSION, "versions": {"ticket_mate": _TM_VERSION}},
+                  "prompt_version": _PROMPT_VERSION, "versions": {"ticket_mate": _TM_VERSION},
+                  # What shaped this draft besides the prompts (no secrets).
+                  "config": {k: getattr(settings, k) for k in (
+                      "agent_mode", "agent_max_steps", "agent_max_tool_calls", "agent_max_revisions",
+                      "agent_reviewer", "playbooks", "cluster_lookups", "ticket_context_cleaning",
+                      "temperature", "max_tokens", "ticket_max_tokens", "rc_kg_k") if hasattr(settings, k)}},
         tags=["rc-copilot"],
     )
 
@@ -288,66 +294,50 @@ async def draft(request: DraftRequest):
                                          instructions=request.extra_instructions) if settings.playbooks else []
         if prun is not None:
             prun.end({"playbooks": [m.to_dict() for m in found_playbooks]})
-    # rc-agent: the model reads the ticket and what the rules above gathered,
-    # and calls read-only tools for anything else the reply needs. It can only
-    # add: without tool calls (or on any failure) everything stays as gathered.
-    agent_result = None
-    if settings.agent_mode:
-        t = time.perf_counter()
-        agent_result = await agent.gather(
-            ticket, request.extra_instructions, found_lookups, kg, found_playbooks,
-            request_id=request_id, max_steps=settings.agent_max_steps,
-            max_tool_calls=settings.agent_max_tool_calls,
-            timeout=settings.cluster_lookup_timeout_seconds)
-        timings["agent"] = int((time.perf_counter() - t) * 1000)
-        found_lookups = agent_result.lookups
-        found_playbooks = agent_result.playbooks
-        if agent_result.kg is not None:
-            kg = agent_result.kg
-        lookups_context = lookups.prompt_text(found_lookups)
-        tr.root.tags.append("agent:" + agent_result.stopped.replace(" ", "_"))
-        if agent_result.calls:
-            tr.root.tags.append("agent_calls:%d" % len(agent_result.calls))
+    # The writer: TicketMate's one model call, JSON draft, from whatever
+    # evidence it is given. The fixed pipeline calls it once; the agent graph
+    # (app/agents) calls it after its specialists, and again to revise. `ws`
+    # keeps what the last call used, for the citations, the run log and the panel.
+    ws = {"lookups": found_lookups, "kg": kg, "skills": found_playbooks, "ticket": ticket,
+          "lookups_context": lookups.prompt_text(found_lookups), "kg_prompt_context": "",
+          "playbook_context": "", "context_info": {}, "agent": None}
 
-    playbook_context = playbooks.prompt_text(found_playbooks)
-    playbook_missing = tuple(playbooks.missing_text(found_playbooks))
-    if playbook_missing:
-        tr.root.tags.append("playbook:missing_info")
-    for m in found_playbooks:
-        tr.root.tags.append("playbook:" + m.playbook.name)
-
-    # Fit the ticket to what the model's context window leaves once everything
-    # else in the prompt, and the reply itself, are accounted for; a long
-    # thread keeps its description, first entry and newest entries.
-    # A follow-up or closure the engineer asked for needs no website page;
-    # leaving the sources out gives their ~2k tokens to the thread. They are
-    # still retrieved, and in the trace.
-    kg_prompt_context = kg.context if instruction_wants_sources(request.extra_instructions) else ""
-    if kg.context and not kg_prompt_context:
-        tr.root.tags.append("kg:sources_not_needed")
-    window = await context_window()
-    est = lambda s: int(len(s or "") / ticket_context.CHARS_PER_TOKEN)
-    reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg_prompt_context) + est(lookups_context)
-                + est(playbook_context)
-                + 2 * est(request.extra_instructions) + 700)   # instructions appear twice; templates
-    budget_tokens = settings.ticket_max_tokens if window is None else \
-        max(800, min(settings.ticket_max_tokens, window - reserved))
-    fitted = ticket_context.fit(prepared, int(budget_tokens * ticket_context.CHARS_PER_TOKEN))
-    ticket = fitted.text
-    context_info = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(ticket),
-                        context_window=window, budget_tokens=budget_tokens,
-                        retrieval_query_chars=len(prepared.query),
-                        playbooks=[m.playbook.name for m in found_playbooks],
-                        agent=({"stopped": agent_result.stopped, "steps": agent_result.steps,
-                                "tool_calls": [c["tool"] for c in agent_result.calls]}
-                               if agent_result else None))
-    if fitted.stats.get("entries_omitted") or fitted.stats.get("truncated_chars"):
-        tr.root.tags.append("ticket_trimmed")
-    tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
-    # The project is the deployment: which graph this draft was grounded in.
-    variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
-    tr.root.metadata["project"] = "rc-copilot/" + (variant or "no-kg")
-    tr.root.tags.append("kg:" + kg.status)
+    async def write_with(evidence, revision_notes: str = "", route: str = "pipeline"):
+        """Draft from `evidence`; returns (LLMDraft dict, model name). Raises LLMError."""
+        lks, kg_, books = evidence.lookups, evidence.kg or kg, evidence.skills
+        lookups_context = lookups.prompt_text(lks)
+        playbook_context = playbooks.prompt_text(books)
+        playbook_missing = tuple(playbooks.missing_text(books))
+        # A follow-up or closure needs no website page: its ~2k tokens go to the thread.
+        kg_prompt_context = kg_.context if instruction_wants_sources(request.extra_instructions) else ""
+        window = await context_window()
+        est = lambda s: int(len(s or "") / ticket_context.CHARS_PER_TOKEN)
+        reserved = (settings.max_tokens + est(SYSTEM_PROMPT) + est(kg_prompt_context) + est(lookups_context)
+                    + est(playbook_context) + est(revision_notes)
+                    + 2 * est(request.extra_instructions) + 700)   # instructions appear twice; templates
+        budget_tokens = settings.ticket_max_tokens if window is None else \
+            max(800, min(settings.ticket_max_tokens, window - reserved))
+        fitted = ticket_context.fit(prepared, int(budget_tokens * ticket_context.CHARS_PER_TOKEN))
+        ws.update(lookups=lks, kg=kg_, skills=books, ticket=fitted.text, lookups_context=lookups_context,
+                  kg_prompt_context=kg_prompt_context, playbook_context=playbook_context)
+        ws["context_info"] = dict(fitted.stats, raw_chars=len(request.ticket_text), chars=len(fitted.text),
+                                  context_window=window, budget_tokens=budget_tokens,
+                                  retrieval_query_chars=len(prepared.query),
+                                  playbooks=[m.playbook.name for m in books], route=route,
+                                  revision=bool(revision_notes))
+        with tracing.run("generate_draft", "chain",
+                         inputs={"ticket_chars": len(fitted.text), "kg_context_chars": len(kg_prompt_context),
+                                 "kg_low_confidence": kg_.low_confidence, "lookups_chars": len(lookups_context),
+                                 "playbook_chars": len(playbook_context), "revision_notes": revision_notes},
+                         metadata={"prompt_version": _PROMPT_VERSION["version"], "route": route}) as grun:
+            draft_, model_ = await generate_draft(
+                fitted.text, request.extra_instructions, trace,
+                kg_context=kg_prompt_context, kg_low_confidence=kg_.low_confidence,
+                lookups_context=lookups_context, playbook_context=playbook_context,
+                playbook_missing=playbook_missing, revision_notes=revision_notes)
+            if grun is not None:
+                grun.end({"draft": draft_.model_dump(), "strategy": trace.get("strategy")})
+        return draft_.model_dump(), model_
 
     def record(draft_out, error, model, before_citations=None, cite_trace=None, tokens=None):
         """Finish the trace and write this draft's run log; returns the path written or None."""
@@ -356,6 +346,7 @@ async def draft(request: DraftRequest):
         tr.root.usage = {k: tokens.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
         tr.root.tags.append("model:" + (model or "?"))
         tr.finish({"draft": draft_out} if draft_out else None, error=error)
+        otel.export(tr.to_dict())             # OpenTelemetry collector, when configured
         return runlog.record(
             request_id=request_id,
             ticket_number=request.ticket_number,
@@ -371,12 +362,12 @@ async def draft(request: DraftRequest):
             trace={
                 "request_id": request_id,
                 "started_at": started_at,
-                "versions": {"ticket_mate": _TM_VERSION, "rc_kg": kg.trace.get("rc_kg")},
-                "ticket_context": context_info,
-                "retrieval": kg.trace,
-                "cluster_lookups": [lk.to_dict() for lk in found_lookups],
-                "playbooks": [m.to_dict() for m in found_playbooks],
-                "agent": agent_result.to_dict() if agent_result else None,
+                "versions": {"ticket_mate": _TM_VERSION, "rc_kg": ws["kg"].trace.get("rc_kg")},
+                "ticket_context": ws["context_info"],
+                "retrieval": ws["kg"].trace,
+                "cluster_lookups": [lk.to_dict() for lk in ws["lookups"]],
+                "playbooks": [m.to_dict() for m in ws["skills"]],
+                "agent": ws["agent"],
                 "llm": {"params": trace.get("params"), "final_strategy": trace.get("strategy"),
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,
@@ -392,20 +383,31 @@ async def draft(request: DraftRequest):
 
     t = time.perf_counter()
     try:
-        with tracing.run("generate_draft", "chain",
-                         inputs={"ticket_chars": len(ticket), "kg_context_chars": len(kg_prompt_context),
-                                 "kg_low_confidence": kg.low_confidence,
-                                 "lookups_chars": len(lookups_context),
-                                 "playbook_chars": len(playbook_context)},
-                         metadata={"prompt_version": _PROMPT_VERSION["version"]}) as grun:
-            llm_draft, model_name = await generate_draft(
-                ticket, request.extra_instructions, trace,
-                kg_context=kg_prompt_context, kg_low_confidence=kg.low_confidence,
-                lookups_context=lookups_context, playbook_context=playbook_context,
-                playbook_missing=playbook_missing,
-            )
-            if grun is not None:
-                grun.end({"draft": llm_draft.model_dump(), "strategy": trace.get("strategy")})
+        evidence = agent_state.Evidence(lookups=list(found_lookups), kg=kg, skills=list(found_playbooks))
+        if settings.agent_mode:
+            # rc-agent: orchestrator -> incident/request agent -> writer -> critic + reviewer.
+            final = await agent_graph.run(
+                write_with, request_id=request_id, ticket=ticket, query=prepared.query,
+                instructions=request.extra_instructions, ticket_number=request.ticket_number,
+                evidence=evidence, max_steps=settings.agent_max_steps,
+                max_tool_calls=settings.agent_max_tool_calls, max_revisions=settings.agent_max_revisions,
+                timeout=settings.cluster_lookup_timeout_seconds, reviewer_on=settings.agent_reviewer)
+            draft_dict, model_name = final["draft"], final["model"]
+            ws["agent"] = agent_graph.provenance(final)
+            tr.root.tags += ["route:" + (final.get("route") or "?"),
+                             "agent:" + (final.get("agent_stopped") or "skipped").replace(" ", "_")]
+            if final.get("tool_calls"):
+                tr.root.tags.append("agent_calls:%d" % len(final["tool_calls"]))
+            if final.get("revisions"):
+                tr.root.tags.append("revised")
+            ws["context_info"]["agent"] = {
+                "route": final.get("route"), "stopped": final.get("agent_stopped"),
+                "tool_calls": [r.tool for r in final.get("tool_calls") or []],
+                "revisions": final.get("revisions", 0),
+                "reviews_ok": all(r.ok for r in (final.get("reviews") or [])[-2:])}
+        else:
+            draft_dict, model_name = await write_with(evidence)
+        llm_draft = LLMDraft(**draft_dict)
     except LLMError as exc:
         timings["llm"] = int((time.perf_counter() - t) * 1000)
         logger.error(
@@ -423,6 +425,22 @@ async def draft(request: DraftRequest):
             content={"error": exc.message, "detail": exc.detail, "request_id": request_id},
         )
     timings["llm"] = int((time.perf_counter() - t) * 1000)
+    # What the writer last used; the rest of the draft (citations, checks, log) reads these.
+    found_lookups, kg, found_playbooks, ticket = ws["lookups"], ws["kg"], ws["skills"], ws["ticket"]
+    lookups_context, context_info = ws["lookups_context"], ws["context_info"]
+    for m in found_playbooks:
+        tr.root.tags.append("playbook:" + m.playbook.name)
+    if any(m.missing for m in found_playbooks):
+        tr.root.tags.append("playbook:missing_info")
+    if context_info.get("entries_omitted") or context_info.get("truncated_chars"):
+        tr.root.tags.append("ticket_trimmed")
+    if kg.context and not ws["kg_prompt_context"]:
+        tr.root.tags.append("kg:sources_not_needed")
+    tr.root.metadata["versions"]["rc_kg"] = kg.trace.get("rc_kg")
+    # The project is the deployment: which graph this draft was grounded in.
+    variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
+    tr.root.metadata["project"] = "rc-agent/" + (variant or "no-kg")
+    tr.root.tags.append("kg:" + kg.status)
     before_citations = llm_draft.model_dump()
 
     # Where the prompt's tokens went, by the model's own tokenizer.
@@ -526,7 +544,7 @@ async def draft(request: DraftRequest):
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
         # LLM-as-judge in the background; it appends its grades beside the run.
-        evaluators.schedule_judge(request_id, ticket, kg_prompt_context, response.model_dump())
+        evaluators.schedule_judge(request_id, ticket, ws["kg_prompt_context"], response.model_dump())
 
     if settings.debug:
         logger.debug("draft response | id=%s %s", request_id, response.model_dump())
