@@ -59,3 +59,8 @@ if [ -d /shared/EL9/explorer/cuda/12.8.0 ]; then
   export PATH="$CUDA_HOME/bin:$PATH"
   export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 fi
+
+# RC's playbooks (internal procedures) are kept outside the repository.
+if [ -z "${PLAYBOOK_DIR:-}" ] && [ -d /projects/rc/projects/rc-playbooks ]; then
+  export PLAYBOOK_DIR=/projects/rc/projects/rc-playbooks
+fi

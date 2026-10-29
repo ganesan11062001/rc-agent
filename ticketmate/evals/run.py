@@ -46,6 +46,15 @@ HERE = Path(__file__).resolve().parent
 TM = HERE.parent
 sys.path.insert(0, str(TM / "backend"))
 
+# RC's playbooks are internal and live outside the repository (cluster/env.sh sets PLAYBOOK_DIR).
+import os as _os  # noqa: E402
+_PRIVATE = "/projects/rc/projects/rc-playbooks"
+if not _os.environ.get("PLAYBOOK_DIR") and _os.path.isdir(_PRIVATE):
+    _os.environ["PLAYBOOK_DIR"] = _PRIVATE
+if not _os.environ.get("PLAYBOOK_DIR"):
+    print("SKIP: RC's playbooks are not available here (set PLAYBOOK_DIR)")
+    raise SystemExit(0)
+
 from app import guardrails, kg_client, ops_store, ticket_context  # noqa: E402
 from app.agents import skills as skills_mod  # noqa: E402
 
