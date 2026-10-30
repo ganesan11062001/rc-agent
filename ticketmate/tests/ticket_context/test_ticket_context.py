@@ -229,6 +229,28 @@ check("memory" in expand("job was OOM killed"), "killed / OOM -> memory words")
 check(expand("How do I install a package in my conda env?") == "", "no symptom -> no expansion")
 check(prepare(TICKET).query.find("fairshare") == -1, "the expansion never enters the query the model reads")
 
+print("catalog items: the request form")
+FORM = """Ticket: TASK0100001
+
+Short description: Multi-GPU Partition Access
+
+Request form:
+- Requested partition: multigpu
+- Describe your benchmarking calculation in detail: I train with PyTorch DDP and want to scale to 4 GPUs.
+- Username: doe.l
+
+Work notes / activity:
+Rivera, Sam
+Work notes•10/21/2026 09:00:00 AM
+looking"""
+fp = prepare(FORM)
+check("Request form:" in fp.text and "scale to 4 GPUs" in fp.text, "the form stays in what the model reads")
+check("Requested partition: multigpu" in fp.query and "benchmarking calculation" in fp.query,
+      "the form's answers are searched, as the researcher's words: %r" % fp.query[:80])
+fd = prepare(FORM.replace("Request form:", "Description:\nSee the form.\n\nRequest form:"))
+check(fd.query.count("Requested partition") == 1 and "See the form." in fd.query,
+      "with a description too: both, the form once")
+
 print("forwarded requests")
 FWD = """Ticket: INC0000099
 

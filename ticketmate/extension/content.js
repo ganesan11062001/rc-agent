@@ -142,6 +142,113 @@
     return "";
   }
 
+  /* ---------- the request form of a catalog item ---------- */
+
+  /* Catalog tasks and requested items (multi-GPU, long partition, Explorer
+     access, classroom use...) carry their substance in the request form's
+     answers -- "Describe your benchmarking calculation in detail", the
+     partition, the PI, the course -- not in the description, which is often
+     empty. Read every question and answer in the form, including read-only
+     ones (on a task they always are). Markup differs between the three UIs,
+     so the form is found by its known containers or by a section headed
+     "Variables" / "Request details", and an answer by the field's own
+     label, its aria label, or the label of the row it sits in. */
+  const FORM_CONTAINERS = [
+    "#variable_map", ".variable_editor", "table.variable_editor", ".sc_variable_editor",
+    "[id^='variable_editor']", ".catalog_variables", "sn-catalog-variable-editor",
+    "now-record-catalog-variable-editor", "sp-variable-editor", ".sp-variable-editor",
+    "[data-type='variable_editor']"
+  ];
+  const FORM_HEADINGS = /^(variables|request details|catalog variables|item variables|request form|options)$/;
+  const MAX_FORM_CHARS = 6000;
+
+  function formContainers() {
+    let found = [];
+    for (const sel of FORM_CONTAINERS) found = found.concat(deepQueryAll(sel));
+    for (const h of deepQueryAll("h1, h2, h3, h4, legend, .section-header, .sn-widget-header, " +
+                                 ".tab_caption_text, [role='heading'], [role='tab'], caption")) {
+      const t = (h.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (FORM_HEADINGS.test(t)) {
+        const sec = h.closest("section, fieldset, .section, .tabs2_section, [role='region'], [role='tabpanel'], " +
+                              ".panel, .form-section, table") || h.parentElement;
+        if (sec) found.push(sec);
+      }
+    }
+    // The outermost of each, once.
+    return found.filter((n, i) => found.indexOf(n) === i && !found.some((o) => o !== n && o.contains(n)));
+  }
+
+  function squash(text) {
+    return (text || "").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+  }
+
+  function questionLabel(node) {
+    if (node.labels && node.labels.length) return squash(node.labels[0].textContent);
+    const aria = node.getAttribute("aria-label");
+    if (aria) return squash(aria);
+    const by = node.getAttribute("aria-labelledby");
+    if (by) {
+      const el = (node.getRootNode && node.getRootNode().getElementById)
+        ? node.getRootNode().getElementById(by.split(" ")[0]) : document.getElementById(by.split(" ")[0]);
+      if (el) return squash(el.textContent);
+    }
+    const row = node.closest(".question_spacer, .form-group, .sc-row, tr, li, [class*='question']");
+    if (row) {
+      const l = row.querySelector("label, legend, .question_text, .control-label, .sn-tooltip-basic, th");
+      if (l) return squash(l.textContent);
+    }
+    return "";
+  }
+
+  function questionValue(node) {
+    if (node.tagName === "SELECT") {
+      const o = node.options[node.selectedIndex];
+      return o && o.value !== "" ? squash(o.text) : "";
+    }
+    if (node.type === "checkbox") return node.checked ? "yes" : "no";
+    if (node.isContentEditable) return squash(node.innerText);
+    return squash(node.value);
+  }
+
+  /* [{q, a}] for the request form on this page; [] if there is none. */
+  function readRequestForm() {
+    const own = new Set(["ticket_number", "short_description", "description", "work_notes", "comments"]
+      .map(findField).filter(Boolean));
+    const pairs = [];
+    const seen = new Set();
+    for (const box of formContainers()) {
+      const fields = box.querySelectorAll("input, select, textarea, [contenteditable='true']");
+      for (const node of fields) {
+        if (own.has(node) || node.type === "hidden" || node.type === "button" || node.type === "submit") continue;
+        if (node.type === "radio") {
+          if (!node.checked) continue;
+          const group = node.closest("fieldset, .question_spacer, .form-group, tr, [role='radiogroup']");
+          const legend = group && group.querySelector("legend, .question_text, label.control-label, th");
+          const q = legend ? squash(legend.textContent) : node.name;
+          const a = node.labels && node.labels.length ? squash(node.labels[0].textContent) : node.value;
+          if (q && a && !seen.has(q)) { seen.add(q); pairs.push({ q: q, a: a }); }
+          continue;
+        }
+        const q = questionLabel(node).replace(/[:*\s]+$/, "");
+        const a = questionValue(node);
+        if (!q || !a || seen.has(q)) continue;
+        seen.add(q);
+        pairs.push({ q: q, a: a });
+      }
+      if (!fields.length && box.innerText && box.innerText.trim()) {
+        // Read-only forms rendered as text: keep the section's own words.
+        pairs.push({ q: "", a: squash(box.innerText).slice(0, MAX_FORM_CHARS) });
+      }
+    }
+    return pairs.slice(0, 40);
+  }
+
+  function formText(pairs) {
+    const lines = pairs.map((p) => p.q ? "- " + p.q + ": " + p.a.replace(/\n/g, "\n  ") : p.a);
+    const text = lines.join("\n");
+    return text.length > MAX_FORM_CHARS ? text.slice(0, MAX_FORM_CHARS) + "\n[...]" : text;
+  }
+
   /* Northeastern runs ServiceNow on a custom domain (service.northeastern.edu),
      so the hostname tells us nothing about which UI we're in. Detect from the
      DOM instead. Three are possible:
@@ -610,16 +717,19 @@
     const short = readValue(findField("short_description"));
     const description = readValue(findField("description"));
     const activity = readActivity();
+    const form = readRequestForm();
 
-    if (!short && !description) return null;
+    if (!short && !description && !form.length) return null;
 
     return {
       number: number,
-      has: { number: !!number, short: !!short, description: !!description, activity: !!activity },
+      has: { number: !!number, short: !!short, description: !!description, activity: !!activity,
+             form: form.length },
       text: [
         number ? "Ticket: " + number : "",
         short ? "Short description: " + short : "",
         description ? "Description:\n" + description : "",
+        form.length ? "Request form:\n" + formText(form) : "",
         activity ? "Work notes / activity:\n" + activity : ""
       ].filter(Boolean).join("\n\n")
     };
@@ -655,6 +765,10 @@
       '<ul class="rc-checks">' +
         row(lastTicket.has.short, "short description") +
         row(lastTicket.has.description, "description") +
+        // Catalog items (TASK/RITM): their answers are the request. Say so when none were found.
+        ((lastTicket.has.form || /^(SCTASK|TASK|RITM|REQ)\d/i.test(lastTicket.number || ""))
+          ? row(lastTicket.has.form, lastTicket.has.form ? "request form (" + lastTicket.has.form + " answers)" : "no request form found")
+          : "") +
         row(lastTicket.has.activity, lastTicket.has.activity ? "comments & work notes" : "no comments yet") +
       "</ul>";
   }

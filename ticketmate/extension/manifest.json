@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RC Copilot for ServiceNow",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "Drafts a reply to the open ServiceNow ticket using a private LLM in your own Slurm job, reached through Open OnDemand.",
   "permissions": [
     "storage"

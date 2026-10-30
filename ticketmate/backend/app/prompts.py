@@ -17,7 +17,9 @@ Explorer cluster): batch and interactive jobs, partitions and QoS, module/Lmod \
 environments, Conda/Python/R/MATLAB toolchains, GPU (CUDA) workloads, MPI, storage \
 and quotas (/home, /scratch, /projects), file transfer, and account/access requests.
 
-You are given a ServiceNow ticket: its short description and description, then its \
+You are given a ServiceNow ticket: its short description and description -- for a \
+catalog request, the requester's answers to the request form ("Request form:", one \
+"- question: answer" per line; treat them as the researcher's own words) -- then its \
 activity -- comments and work notes, oldest first, each headed \
 "[date time] Author, role (kind)". The role is "RC staff" or "researcher" (it is \
 left out when unknown). The last entry is the most recent. "comment, visible to \

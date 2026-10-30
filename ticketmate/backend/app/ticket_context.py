@@ -306,8 +306,10 @@ def _field(head: str, name: str) -> str:
     if not m:
         return ""
     rest = head[m.end():]
-    if name != "Description":
-        rest = re.split(r"\n\s*\n|^Description:", rest, maxsplit=1, flags=re.M)[0]
+    if name == "Description":
+        rest = rest.split("\nRequest form:", 1)[0]
+    elif name != "Request form":
+        rest = re.split(r"\n\s*\n|^Description:|^Request form:", rest, maxsplit=1, flags=re.M)[0]
     return rest.strip()
 
 
@@ -340,11 +342,15 @@ def build_query(head: str, latest_from_researcher: str = "") -> str:
     """Short description + description + the researcher's latest message."""
     subject = _SUBJECT_PREFIX.sub("", _field(head, "Short description"))
     description = _field(head, "Description")
-    if not subject and not description:
+    # A catalog item's request form (the extension sends it as "Request form:")
+    # is the researcher's own answers: the partition, the PI, "describe your
+    # benchmarking calculation" -- often all there is, the description being empty.
+    form = _field(head, "Request form")
+    if not subject and not description and not form:
         description = re.sub(r"^Ticket:.*$", "", head, flags=re.M)
-    parts = [subject, _researcher_words(description)]
+    parts = [subject, _researcher_words(description), form]
     latest = _researcher_words(latest_from_researcher)
-    if latest and latest not in parts[1]:
+    if latest and latest not in parts[1] and latest not in (form or ""):
         parts.append(latest)
     query = "\n\n".join(p for p in parts if p)
     return query[:QUERY_MAX_CHARS].strip()

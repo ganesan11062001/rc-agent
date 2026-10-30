@@ -23,7 +23,8 @@ ever submitted automatically** — you review, edit and click Update.
 ## What happens when you click Draft reply
 
 1. The extension reads the ticket from the page — short description,
-   description, comments and work notes — plus any instructions you typed.
+   description, a catalog request's form answers (multi-GPU, long partition,
+   access, classroom), comments and work notes — plus any instructions you typed.
 2. It sends them, through Open OnDemand's SSO proxy, to the backend in your
    Slurm job.
 3. The backend **cleans the ticket** (no notification emails, CC lists,

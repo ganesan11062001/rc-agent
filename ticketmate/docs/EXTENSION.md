@@ -118,6 +118,18 @@ these nodes set `http_proxy`, which 403s internal traffic).
   unsaved-changes tracker never notice.
 - `description` must never match `short description`; `check.py` and the
   matcher both guard it.
+- **Catalog requests** (multi-GPU, long partition, access, classroom — `TASK`,
+  `SCTASK`, `RITM`, `REQ`) carry their substance in the request form's answers,
+  not the description. `readRequestForm()` reads the variable editor (Classic
+  `#variable_map` / `.sc_variable_editor`, Service Portal `sp-variable-editor`,
+  Next Experience catalog-variable editors, or a read-only "Variables" section
+  as text): one `question: answer` per field — a drop-down's selected text, a
+  checkbox as yes/no, a reference field's display value (never its hidden
+  sys_id), a radio group's chosen option. The answers are sent under
+  `Request form:`; the backend searches them as the researcher's own words and
+  playbooks match on them. The panel's "read from page" list says
+  `request form (N answers)`, or `no request form found` on a catalog ticket.
+  `tests/ui/extension_form_test.py` covers the four page shapes.
 
 ---
 
