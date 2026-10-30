@@ -1,4 +1,4 @@
-"""AIOps / LLMOps report: how rc-agent has been doing, from traces/$USER/metrics/.
+"""AIOps / LLMOps report: how the app has been doing, from traces/$USER/metrics/.
 
     backend/.venv/bin/python ops/ops_report.py              the last 7 days
     backend/.venv/bin/python ops/ops_report.py --days 30 --user all

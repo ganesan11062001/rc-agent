@@ -11,6 +11,9 @@
 #   RC_KG_TMP          node-local parent dir    default $TMPDIR, else /tmp
 #   RC_KG_THREADS      CPU threads for query embedding, default 2
 #   RC_KG_PROGRESS_DIR startup checklist, one <step>.json per step (see _kg_instance.sh)
+#   RC_KG_REFRESH_LOOP on (default) | off -- keep the graph current while serving (refresh_kg.sh)
+#   RC_KG_REFRESH, RC_KG_REFRESH_MAX_AGE_H, RC_KG_REFRESH_CHECK_MIN   see refresh_kg.sh
+#   RC_KG_DATA_ROOT    where snapshots are published; default /projects/rc/projects/rc-kg-data
 #
 # Cleanup: a normal stop (SIGTERM, Ctrl-C, the job ending) removes everything.
 # If this script is killed outright, a watchdog stops Neo4j and the API and
@@ -58,6 +61,7 @@ INST="$(kg_new_dir "${SLURM_JOB_ID:-local}")" || exit 1
 
 API_PID=""
 WD_PID=""
+REFRESH_PID=""
 # On exit (including SIGTERM from the session ending): stop the API and Neo4j
 # and remove the instance dir, keeping Neo4j's logs first if startup failed.
 cleanup() {
@@ -70,6 +74,8 @@ cleanup() {
       && kg_log "kept Neo4j's logs in $RC_KG_PROGRESS_DIR/neo4j-logs"
   fi
   [ -n "$WD_PID" ] && kill "$WD_PID" 2>/dev/null
+  # The refresh loop stops (and removes) any Neo4j it started for a newer snapshot.
+  [ -n "$REFRESH_PID" ] && kill "$REFRESH_PID" 2>/dev/null && wait "$REFRESH_PID" 2>/dev/null
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null && wait "$API_PID" 2>/dev/null
   kg_instance_stop
   rm -rf "$INST"
@@ -121,6 +127,15 @@ else
   kg_progress neo4j_load done "built from the live sites"
 fi
 kg_log "neo4j up on $NEO4J_URI"
+# Keep the graph current without stopping: switch to newer published snapshots,
+# and rebuild from the live sites when the snapshot is stale (one build at a
+# time across every session; scripts/refresh_kg.sh). RC_KG_REFRESH_LOOP=off: never.
+if [ -f "$SNAP/manifest.json" ] && [ "${RC_KG_REFRESH_LOOP:-on}" != off ]; then
+  served="$("$RC_KG_PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get('built_at',''))" "$SNAP/manifest.json")"
+  "$RC_KG_ROOT/scripts/refresh_kg.sh" "$PORT" "$VARIANT" "$INST" "$served" &
+  REFRESH_PID=$!
+  kg_log "graph refresh: switches to newer snapshots, rebuilds after ${RC_KG_REFRESH_MAX_AGE_H:-24} h (log: ${RC_KG_PROGRESS_DIR:-$INST}/refresh.log)"
+fi
 wait "$API_PID"
 rc=$?
 [ "$rc" = 0 ] || kg_progress api_start failed "the rc-kg API exited with status $rc"

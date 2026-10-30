@@ -1,4 +1,5 @@
-"""Where every trace, metric and evaluation is kept: rc-agent/traces/$USER/.
+"""Where every trace, metric and evaluation is kept: <repo>/traces/$USER/
+(ticketmate/traces/$USER/ or rc-agent/traces/$USER/).
 
     traces/$USER/
       runs/<ticket>/<time>-<id>.json      the full run log of each draft (+ .feedback.jsonl)
@@ -23,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[3]          # rc-agent/
+REPO_ROOT = Path(__file__).resolve().parents[3]          # the repository root (ticketmate/ or rc-agent/)
 
 
 def root() -> Path:

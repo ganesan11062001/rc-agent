@@ -390,6 +390,46 @@ graph without polluting results), and a `section_search` fulltext index over
 
 ---
 
+## Keeping the graph current
+
+One published graph serves every session of both apps (TicketMate and
+rc-agent run identical rc-kg code):
+
+```
+/projects/rc/projects/rc-kg-data/          RC_KG_DATA_ROOT; a checkout without it uses its own data/
+  graph/            neo4j.dump, manifest.json, eval reports, previous/   the full graph
+  graph-website/    the same for the website-only variant
+  .build-<variant>.lock                    while a rebuild runs (one at a time, across all sessions)
+```
+
+**A session never waits for the website.** `serve_kg.sh` loads the
+published snapshot and serves it at once; then `scripts/refresh_kg.sh` runs
+in the background for the whole session and, every 20 minutes:
+
+1. **Switches to a newer snapshot** if one has been published (by another
+   session, either app, or `rebuild.sbatch`): it loads it into a second private
+   Neo4j and calls `POST /admin/swap`; the API checks the new graph and moves
+   every later query to it, the old driver closes after 60 s so queries in
+   flight finish, and the old Neo4j is stopped. Measured: 45 queries during a
+   switch, none failed.
+2. **Rebuilds** when the published snapshot is older than 24 hours and no
+   other session holds the build lock: `build_graph.sh` crawls both sites,
+   embeds, runs the eval gate and publishes atomically -- then step 1. A build
+   that fails the gate publishes nothing; the old graph keeps serving.
+
+| variable | default | |
+|---|---|---|
+| `RC_KG_REFRESH_LOOP` | `on` | `off`: serve the snapshot the session started with, nothing else (tests set this) |
+| `RC_KG_REFRESH` | `on` | `off`: never rebuild, still switch to newer snapshots |
+| `RC_KG_REFRESH_MAX_AGE_H` | `24` | rebuild when the snapshot is older |
+| `RC_KG_REFRESH_CHECK_MIN` | `20` | how often to check |
+| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-kg-data` | where snapshots are read and published |
+
+The session's log: `refresh.log` (and `refresh.log.build`) in its progress
+directory. `/health` reports the snapshot being served and the last switches
+(`swaps`). A lock left by a killed build on the same node is freed at once;
+one from another node after 4 hours.
+
 ## How retrieval works (GraphRAG)
 
 `retrieval/graphrag.py`, one call per ticket or question:

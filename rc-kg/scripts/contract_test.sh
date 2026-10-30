@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_kg_instance.sh"
 [ "${1:-}" = "--variant" ] && export RC_KG_VARIANT="$2"
 PORT="$(kg_free_port)"
 export RC_KG_API_TOKEN="contract-$$"
-SLURM_JOB_ID=contract "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$PORT" >"${TMPDIR:-/tmp}/rc_kg_contract_$$.log" 2>&1 &
+RC_KG_REFRESH_LOOP=off SLURM_JOB_ID=contract "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$PORT" >"${TMPDIR:-/tmp}/rc_kg_contract_$$.log" 2>&1 &
 S=$!
 trap 'kill $S 2>/dev/null; wait $S 2>/dev/null; rm -f "${TMPDIR:-/tmp}/rc_kg_contract_$$.log"' EXIT
 for _ in $(seq 1 120); do

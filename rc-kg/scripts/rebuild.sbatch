@@ -11,10 +11,10 @@
 # integrity checks pass; otherwise the graph TicketMate sessions load stays
 # as it was and this job exits non-zero.
 #
-# One-off:      sbatch /projects/rc/projects/rc-agent/rc-kg/scripts/rebuild.sbatch
+# One-off:      sbatch /projects/rc/projects/ticketmate/rc-kg/scripts/rebuild.sbatch
 # Weekly (Slurm's per-user cron; `scrontab -e` and add this line):
 #   #SCRON --partition=short --time=01:30:00 --cpus-per-task=4 --mem=16G
-#   0 3 * * 1 /projects/rc/projects/rc-agent/rc-kg/scripts/rebuild.sbatch
+#   0 3 * * 1 /projects/rc/projects/ticketmate/rc-kg/scripts/rebuild.sbatch
 #
 # Logs: /scratch/$USER/rc_kg_rebuild/<jobid>.out (create the directory once:
 # mkdir -p /scratch/$USER/rc_kg_rebuild).

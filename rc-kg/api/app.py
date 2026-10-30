@@ -20,6 +20,7 @@ Run:  scripts/serve_kg.sh            (per-job Neo4j from the snapshot + this)
 
 import hmac
 import json
+import re
 import logging
 import os
 import threading
@@ -33,6 +34,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from config import get_settings
+from graph import connection
 from graph.connection import driver
 from retrieval import citations, http, support
 from retrieval.embeddings import get_embedder
@@ -151,7 +153,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.4"
+API_VERSION = "1.5"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
@@ -223,9 +225,11 @@ Northeastern's partitions, paths and limits are only what the sources say.
 
 
 def _snapshot() -> Optional[Dict]:
-    """Build info from the snapshot manifest (RC_KG_MANIFEST) -- build time,
-    commit, eval, variant, sites -- or None if unset or unreadable."""
-    path = get_settings().rc_kg_manifest
+    """Build info from the manifest of the snapshot being served -- the one the
+    session started with (RC_KG_MANIFEST), or the one it switched to since
+    (POST /admin/swap) -- build time, commit, eval, variant, sites; None if
+    unset or unreadable."""
+    path = connection.current.get("manifest") or get_settings().rc_kg_manifest
     if not path:
         return None
     try:
@@ -237,6 +241,35 @@ def _snapshot() -> Optional[Dict]:
     out["variant"] = m.get("variant", "full")
     out["sites"] = m.get("sites") or ["rc.northeastern.edu", "rc-docs.northeastern.edu"]
     return out
+
+
+class SwapRequest(BaseModel):
+    uri: str
+    user: str = "neo4j"
+    password: str
+    manifest: Optional[str] = None
+
+
+_SWAPS: List[Dict] = []
+
+
+@app.post("/admin/swap", dependencies=[Depends(require_token)])
+def swap_endpoint(req: SwapRequest) -> Dict:
+    """POST /admin/swap (1.5): switch to a newer graph without stopping. Called by
+    scripts/refresh_kg.sh once it has loaded a newly published snapshot into a
+    second private Neo4j. Only a Neo4j on this host's loopback is accepted; the
+    new graph is checked before the switch, and the old driver closes after a
+    grace period, so no query fails. 409 if the new graph is not usable."""
+    if not re.fullmatch(r"bolt://127\.0\.0\.1:\d{2,5}", req.uri):
+        raise HTTPException(status_code=400, detail="only bolt://127.0.0.1:<port> is accepted")
+    try:
+        out = connection.swap(req.uri, req.user, req.password, req.manifest)
+    except Exception as exc:                       # noqa: BLE001
+        raise HTTPException(status_code=409, detail="not switched: %s" % str(exc)[:300])
+    _SWAPS.append({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "uri": req.uri, "sections": out["sections"],
+                   "snapshot": (_snapshot() or {}).get("built_at")})
+    reqlog.info("swap -> %s (%s sections, snapshot %s)", req.uri, out["sections"], _SWAPS[-1]["snapshot"])
+    return {"status": "ok", **out, "snapshot": _snapshot()}
 
 
 @app.get("/health")
@@ -257,7 +290,8 @@ def health() -> Dict:
         ).single()
     return {"status": "ok", "api_version": API_VERSION, **dict(rec),
             "embedding_model": s.embedding_model,
-            "snapshot": _snapshot(), "llm_configured": bool(s.llm_base_url)}
+            "snapshot": _snapshot(), "llm_configured": bool(s.llm_base_url),
+            "swaps": _SWAPS[-5:]}
 
 
 @app.post("/retrieve", dependencies=[Depends(require_token), Depends(require_ready)])

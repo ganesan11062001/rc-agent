@@ -72,7 +72,11 @@ cd "$WORK" || exit 1          # keep the repo's dev .env out of this build
 # The only step that needs the Hub: make sure the embedding model is cached
 # under vendor/hf, where serve_kg.sh will look for it offline.
 MODEL="$("$RC_KG_PY" -c 'from config import get_settings; print(get_settings().embedding_model)')"
-HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -c \
+# Offline first: a session's background rebuild (refresh_kg.sh) runs on a
+# compute node, which reaches the Hub only through a flaky proxy.
+HF_HUB_OFFLINE=1 "$RC_KG_PY" -c \
+  "from huggingface_hub import snapshot_download; snapshot_download('$MODEL', local_files_only=True)" >/dev/null 2>&1 \
+|| HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -c \
   "from huggingface_hub import snapshot_download; snapshot_download('$MODEL')" >/dev/null \
   || kg_die "could not download $MODEL into $HF_HOME"
 

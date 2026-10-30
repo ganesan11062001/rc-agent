@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1 (current: 1.4)
+# rc-kg HTTP API contract — v1 (current: 1.5)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -78,6 +78,7 @@ never the query text.
 ## Changes
 
 - **1.4** (2026-10-24): `POST /similarity`.
+- **1.5** (2026-10-30): `POST /admin/swap` (switch to a newer graph without stopping); `/health` adds `swaps` and reports the snapshot being served.
 - **1.3** (2026-10-24): `trace` on `/retrieve` and `/cite`; `X-Request-ID` is
   echoed and logged.
 - **1.2** (2026-10-23): `snapshot.variant` and `snapshot.sites` — which
@@ -98,3 +99,17 @@ scores are in [-1, 1].
 
 Optional (needs `LLM_BASE_URL` on the server, else `503`). Not used by
 TicketMate; not covered by this contract beyond existing.
+
+## `POST /admin/swap` (1.5)
+
+Used by `scripts/refresh_kg.sh`, not by clients. Bearer token required.
+
+Request: `{"uri": "bolt://127.0.0.1:<port>", "user": "neo4j", "password": "...", "manifest": "<path to the snapshot's manifest.json>"}`
+
+The API connects to the given Neo4j (loopback only; anything else is 400),
+checks that it has embedded sections, then switches every later query to it;
+the previous driver closes after 60 s, so queries in flight finish. 409 with
+the reason if the new graph is not usable -- the old one keeps serving.
+
+Response: `{"status": "ok", "sections": n, "uri": "...", "snapshot": {built_at, git_commit, eval, variant, sites}}`
+

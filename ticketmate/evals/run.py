@@ -124,6 +124,7 @@ def ensure_kg() -> Optional[subprocess.Popen]:
         return None
     port = _free_port()
     os.environ.setdefault("RC_KG_API_TOKEN", "eval-%d" % os.getpid())
+    os.environ["RC_KG_REFRESH_LOOP"] = "off"          # an eval never rebuilds or switches the graph
     proc = subprocess.Popen([str(TM.parent / "rc-kg" / "scripts" / "serve_kg.sh"), "--port", str(port)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.environ["RC_KG_URL"] = "http://127.0.0.1:%d" % port
