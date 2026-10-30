@@ -88,6 +88,15 @@
     renderTargetWarning();
   }
 
+  /* The engineer's sign-off: a local preference under its own key, so saving
+     the connection never touches it. content.js sends it with each draft;
+     the backend puts it, exactly as written, where the reply signs off. */
+  const SIGNOFF_KEY = "rcSignoff";
+  chrome.storage.local.get(SIGNOFF_KEY).then((s) => { el("signoff").value = s[SIGNOFF_KEY] || ""; }, () => {});
+  el("signoff").addEventListener("input", () => {
+    chrome.storage.local.set({ [SIGNOFF_KEY]: el("signoff").value.slice(0, 300) });
+  });
+
   /* Target field is a local preference; save it without disturbing the rest. */
   el("target-field").addEventListener("change", async () => {
     renderTargetWarning();

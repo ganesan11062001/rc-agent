@@ -6,6 +6,8 @@ menu: The pipeline
 
 # 3. The Chrome extension
 
+> **New:** The popup's *Sign the reply with* setting and the panel's *LLM judge* section: chapter 19.
+
 The extension is the only integration with ServiceNow. It reads the open
 ticket from the page, sends it to the backend in the engineer's Slurm job,
 and writes the draft back into a field of the form, unsaved. It never

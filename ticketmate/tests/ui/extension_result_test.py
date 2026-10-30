@@ -25,7 +25,7 @@ DRAFT = {
                         "Point to the interactive jobs page [1]"],
     "confidence": 0.8, "confidence_label": "high",
     "caveats": ["Confirm the partition the researcher has access to."],
-    "draft_response": "Hi Nate,\n\nYour job 10945531 reached its 1-hour time limit, which is why it stopped.\n\n"
+    "draft_response": "Hi Ada,\n\nYour job 10945531 reached its 1-hour time limit, which is why it stopped.\n\n"
                       "Best regards,\nResearch Computing",
     "model": "qwen2.5-7b-instruct-awq", "latency_ms": 2400, "request_id": "abcd1234",
     "usage": {"prompt_tokens": 5100, "completion_tokens": 300, "total_tokens": 5400},
@@ -38,6 +38,15 @@ DRAFT = {
     "evaluations": {"assertions": {"assert_signoff": True, "assert_has_steps": True,
                                    "assert_cites_when_grounded": False},
                     "metrics": {"reply_words": 23, "conciseness": 1.0, "answer_relevance_embedding": 0.85}},
+    "judge": {"mode": "gate", "verdict": "ok", "rewritten": True,
+              "first": {"verdict": "low", "reasons": ["may not resolve the request: no time limit given"]},
+              "scores": {"hallucination": {"score": 0.0, "comment": ""},
+                         "correctness": {"score": 0.9, "comment": "raises the limit as the page says"},
+                         "conciseness": {"score": 1.0, "comment": ""},
+                         "answer_relevance": {"score": 1.0, "comment": ""}},
+              "rubric": [{"item": "It says access was granted only if an RC staff entry shows it.", "met": True,
+                          "reason": "no grant claimed"},
+                         {"item": "A stage the ticket is not at.", "met": None, "reason": ""}]},
 }
 
 PAGE = """<!doctype html><html><body style="font-family:sans-serif;margin:0">
@@ -58,7 +67,7 @@ window.chrome = { runtime: {
       const all = JSON.parse(sessionStorage.getItem("__store") || "{}");
       return { ok: true, data: { targetField: (all.oodConfig || {}).targetField || "work_notes" } };
     }
-    if (m.type === "DRAFT") return { ok: true, data: %s };
+    if (m.type === "DRAFT") { window.__draftMsg = m; return { ok: true, data: %s }; }
     return { ok: false, error: "not mocked" };
   },
   getURL: (p) => p, onMessage: { addListener() {} } },
@@ -141,9 +150,14 @@ with sync_playwright() as p:
     pg.select_option(panel + " .rc-target", "work_notes"); pg.wait_for_timeout(200)
     pg.fill("textarea[name=comments]", "")
 
+    pg.evaluate("""() => { const all = JSON.parse(sessionStorage.getItem("__store") || "{}");
+                           all.rcSignoff = "Thanks,\\nSam Rivera\\nResearch Computing";
+                           sessionStorage.setItem("__store", JSON.stringify(all)); }""")
     pg.click(panel + " .rc-go")
     pg.wait_for_selector(panel + " .rc-draft", timeout=10000)
     pg.wait_for_timeout(300)
+    check(pg.evaluate("() => window.__draftMsg && window.__draftMsg.signoff") == "Thanks,\nSam Rivera\nResearch Computing",
+          "the popup's sign-off is sent with the draft")
 
     check(pg.is_visible(panel + " .rc-caveat-box") and "Confirm the partition" in pg.inner_text(panel + " .rc-caveat-box"),
           "'Check before sending' is shown at once")
@@ -154,7 +168,7 @@ with sync_playwright() as p:
     titles = pg.eval_on_selector_all(panel + " details.rc-more > summary", "els => els.map(e => e.textContent)")
     print("  sections:", titles)
     want = ["steps for you (3)", "Cluster lookups (1 ran)", "RC pages cited (1)", "Quality checks: 2 of 3 passed",
-            "Ticket & model details", "Rate this draft"]
+            "LLM judge: looks right (rewritten once)", "Ticket & model details", "Rate this draft"]
     check(all(any(w in t for t in titles) for w in want), "every section's title says what is inside")
     check(pg.eval_on_selector_all(panel + " details.rc-more[open]", "els => els.length") == 0,
           "sections start closed")
@@ -177,6 +191,9 @@ with sync_playwright() as p:
     check(sorted(opened) == ["lookups", "refs"], "sections you opened stay open on the next draft (%s)" % opened)
     pg.click(panel + ' details[data-sec="feedback"] > summary')
     check(pg.is_visible(panel + " .rc-fb-send"), "feedback form works inside its section")
+    judge = pg.eval_on_selector(panel + ' details[data-sec="judge"]', "e => e.textContent")
+    check("resolves the request 90%" in judge and "granted only if" in judge and "stage the ticket is not at" not in judge
+          and "rewritten once" in judge, "judge section: scores, the rubric items that apply, the rewrite")
     check(not errors, "no JavaScript errors (%s)" % errors)
     b.close()
 

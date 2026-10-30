@@ -27,6 +27,21 @@ File format -- a header between `---` lines, then the runbook:
     ---
     ...the runbook...
 
+Two more kinds of line, both optional:
+
+    form.username: (?i)\buser ?name\b     a request-form question -> a field
+    rubric: The reply asks for a benchmark showing the job scales.
+
+`form.<field>` reads a catalog item's request form ("Request form:", one
+"- question: answer" per line, from the extension): the answer to the first
+question the pattern matches is that field's value -- taken before the
+`field.*` pattern, which then only picks the value out of the answer (a
+username out of "doe.l (Lee Doe)"). Each request type names its own
+questions, so a multi-GPU form and an access form fill their fields from the
+answers RC asked for, not from guesses over the whole text. `rubric` lines
+are what a reply to this request type must do; the LLM judge grades the
+draft against them (app/evaluators.py), beside the generic checks.
+
 `match`/`unless` are tested against what the researcher wrote (subject,
 description, latest message: ticket_context's query), so RC's own replies
 cannot trigger a playbook -- or, with `on: instructions`, against what the
@@ -71,6 +86,9 @@ class Playbook:
     fields: Dict[str, "re.Pattern[str]"] = field(default_factory=dict)
     # (fields any one of which satisfies it, what to ask for when none was found)
     requires: List["tuple[List[str], str]"] = field(default_factory=list)
+    # field -> the request-form question it is read from (form.<field> lines)
+    form: Dict[str, "re.Pattern[str]"] = field(default_factory=dict)
+    rubric: List[str] = field(default_factory=list)   # what a reply must do (the LLM judge)
     on: str = "researcher"          # "researcher" | "instructions": which text `match` reads
     route: str = "request"          # rc-agent: the agent a triggered skill sends the ticket to
     path: str = ""
@@ -83,19 +101,65 @@ class Playbook:
         return (bool(self.match) and all(p.search(researcher_text) for p in self.match)
                 and not any(p.search(researcher_text) for p in self.unless))
 
-    def extract(self, ticket_text: str) -> Dict[str, List[str]]:
+    def extract(self, ticket_text: str, sources: Dict[str, str] = None) -> Dict[str, List[str]]:
+        """Each field's values: from its request-form answer when the form has
+        one (form.<field>), else from the field.<field> pattern over the whole
+        ticket. `sources`, when given, gets field -> "form: <question>" or "text"."""
         found: Dict[str, List[str]] = {}
-        for key, pattern in self.fields.items():
+        answers = form_answers(ticket_text)
+        for key in list(self.form) + [k for k in self.fields if k not in self.form]:
             values: List[str] = []
-            for m in pattern.finditer(ticket_text):
-                v = (m.group(1) if m.groups() else m.group(0)).strip()
-                if v and v not in values:
-                    values.append(v)
-                if len(values) >= MAX_FIELD_VALUES:
-                    break
+            question = self.form.get(key)
+            answer = next((qa for qa in answers if question and question.search(qa[0])), None)
+            if answer is not None:
+                pattern = self.fields.get(key)
+                values = _matches(pattern, answer[1]) if pattern else []
+                values = values or ([answer[1].strip()] if answer[1].strip() else [])
+                if values and sources is not None:
+                    sources[key] = "form: " + answer[0]
+            if not values and key in self.fields:
+                values = _matches(self.fields[key], ticket_text)
+                if values and sources is not None:
+                    sources[key] = "text"
             if values:
                 found[key] = values
         return found
+
+
+def _matches(pattern: "re.Pattern[str]", text: str) -> List[str]:
+    """Distinct values of `pattern` in `text` (group 1, or the whole match)."""
+    values: List[str] = []
+    for m in pattern.finditer(text):
+        v = (m.group(1) if m.groups() else m.group(0)).strip()
+        if v and v not in values:
+            values.append(v)
+        if len(values) >= MAX_FIELD_VALUES:
+            break
+    return values
+
+
+_FORM_END = re.compile(r"^(Work notes / activity|\(forwarded message)")
+
+
+def form_answers(ticket_text: str) -> List["tuple[str, str]"]:
+    """The request form's (question, answer) pairs, in order; [] without one.
+    The extension writes "- question: answer"; an answer may run over several
+    lines (a text area), so lines not starting "- " continue the one above."""
+    m = re.search(r"^Request form:[ \t]*$", ticket_text, re.M)
+    if not m:
+        return []
+    pairs: List[List[str]] = []
+    for line in ticket_text[m.end():].lstrip("\n").splitlines():
+        if _FORM_END.match(line):
+            break
+        if line.startswith("- ") and ": " in line:
+            q, _, a = line[2:].partition(": ")
+            pairs.append([q.strip(), a.strip()])
+        elif line.startswith("- "):
+            pairs.append([line[2:].strip(), ""])
+        elif pairs and line.strip():
+            pairs[-1][1] = (pairs[-1][1] + "\n" + line.strip()).strip()
+    return [(q, a) for q, a in pairs]
 
 
 def parse(text: str, path: str = "") -> Playbook:
@@ -131,6 +195,10 @@ def parse(text: str, path: str = "") -> Playbook:
                 pb.unless.append(re.compile(value))
             elif key.startswith("field."):
                 pb.fields[key[6:]] = re.compile(value)
+            elif key.startswith("form."):
+                pb.form[key[5:]] = re.compile(value)
+            elif key == "rubric":
+                pb.rubric.append(value)
             elif key.startswith("require."):
                 pb.requires.append(([k.strip() for k in key[8:].split("|") if k.strip()], value))
             else:
@@ -140,9 +208,10 @@ def parse(text: str, path: str = "") -> Playbook:
     if not (pb.name and pb.title and pb.match):
         raise ValueError("%s: name, title and at least one match line are required" % path)
     for keys, _ in pb.requires:
-        unknown = [k for k in keys if k not in pb.fields]
+        unknown = [k for k in keys if k not in pb.fields and k not in pb.form]
         if not keys or unknown:
-            raise ValueError("%s: require.%s names no field.%s line" % (path, "|".join(keys), "|".join(unknown)))
+            raise ValueError("%s: require.%s names no field.%s or form.%s line"
+                             % (path, "|".join(keys), "|".join(unknown), "|".join(unknown)))
     return pb
 
 
@@ -164,6 +233,7 @@ def load(directory: str = "") -> List[Playbook]:
 class Match:
     playbook: Playbook
     values: Dict[str, List[str]]
+    sources: Dict[str, str] = field(default_factory=dict)   # field -> "form: <question>" | "text"
 
     @property
     def missing(self) -> List[str]:
@@ -177,7 +247,7 @@ class Match:
 
     def to_dict(self) -> Dict[str, object]:
         return {"name": self.playbook.name, "title": self.playbook.title, "values": self.values,
-                "missing": self.missing}
+                "value_sources": self.sources, "missing": self.missing, "rubric": self.playbook.rubric}
 
 
 def find(researcher_text: str, ticket_text: str, playbooks: List[Playbook] = None,
@@ -190,14 +260,20 @@ def find(researcher_text: str, ticket_text: str, playbooks: List[Playbook] = Non
     text = (instructions or "").strip()
     if text:
         hits += [pb for pb in books if pb.on == "instructions" and pb.applies(text)][:1]
-    return [Match(pb, pb.extract(ticket_text)) for pb in hits]
+    out = []
+    for pb in hits:
+        sources: Dict[str, str] = {}
+        out.append(Match(pb, pb.extract(ticket_text, sources), sources))
+    return out
 
 
 def prompt_text(matches: List[Match]) -> str:
     """The runbooks as the prompt shows them, each with the values found."""
     parts = []
     for m in matches:
-        found = "\n".join("- %s: %s" % (k, ", ".join(v)) for k, v in m.values.items()) or "- (none)"
+        found = "\n".join("- %s: %s%s" % (k, ", ".join(v), " (the researcher's answer on the request form)"
+                                           if m.sources.get(k, "").startswith("form") else "")
+                          for k, v in m.values.items()) or "- (none)"
         block = "### %s\n\nValues found in the ticket (check them; they are pattern matches):\n%s\n" % (
             m.playbook.title, found)
         if m.missing:
@@ -213,3 +289,16 @@ def missing_text(matches: List[Match]) -> List[str]:
     for m in matches:
         out += [a for a in m.missing if a not in out]
     return out
+
+
+def rubric_items(matches: List[Match]) -> List[str]:
+    """What a reply to these request types must do, for the LLM judge: each
+    playbook's `rubric` lines, that it follows the procedure, and that it asks
+    for whatever is missing."""
+    out: List[str] = []
+    for m in matches:
+        if m.playbook.on == "researcher":
+            out.append("It follows RC's procedure for %s, at the stage the ticket is at." % m.playbook.title)
+        out += m.playbook.rubric
+        out += ["It asks the researcher for %s (not found in the ticket)." % ask for ask in m.missing]
+    return list(dict.fromkeys(out))

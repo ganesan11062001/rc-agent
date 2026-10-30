@@ -13,7 +13,10 @@
 #    argument is refused and runs nothing.
 # G. rc-agent on a server without tool calls: the pipeline's draft, unchanged.
 # E. a model server that rejects json_schema: the fallback attempt and the
-#    rejected one are both in the trace, and only real usage is counted.
+#    rejected one are both in the trace, and only real usage is counted;
+#    this backend's LLM judge runs in the background (JUDGE_MODE=background).
+# A also: the judge gate (scores in the response, a flagged draft rewritten
+# once), the engineer's sign-off, and the readable .md beside each run log.
 # Needs no GPU. ~1-2 min, almost all of it rc_kg starting.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,10 +40,10 @@ free() { $PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); prin
 
 # Start a TicketMate backend in the background against the given rc_kg URL
 # (and stub vLLM), on a free port, recording its PID for cleanup.
-backend() {   # backend <kg_url> [run_log_dir] [vllm_port] -> prints port
+backend() {   # backend <kg_url> [run_log_dir] [vllm_port] [judge_mode] -> prints port
   local port; port="$(free)"
   ( cd "$TM_ROOT/backend" && RC_KG_URL="$1" VLLM_BASE_URL="http://127.0.0.1:${3:-$VP}/v1" \
-      VLLM_MODEL_NAME=stub-model AUTH_TOKEN=contract LOG_FILE= RUN_LOG_DIR="${2:-}" USE_PROXY_ENV=false \
+      VLLM_MODEL_NAME=stub-model AUTH_TOKEN=contract LOG_FILE= RUN_LOG_DIR="${2:-}" USE_PROXY_ENV=false JUDGE_MODE="${4:-gate}" \
       exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$port" ) \
       >"$WORK/app-$port.log" 2>&1 &
   echo $! >> "$WORK/backend.pids"; echo "$port"
@@ -60,7 +63,7 @@ A="$(backend "http://127.0.0.1:$KGP" "$WORK/runs")"
 B="$(backend "http://127.0.0.1:$FKP")"
 C="$(backend "http://127.0.0.1:$(free)")"      # nothing listens there
 W="$(backend "http://127.0.0.1:$KWP")"
-E="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-e" "$VRP")"
+E="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-e" "$VRP" background)"
 N="$(backend "http://127.0.0.1:$KGP" "$WORK/runs-n" "$VNP")"
 
 $PY - "$A" "$B" "$C" "$W" "$WORK/runs" "$E" "$WORK/runs-e" "$N" "$WORK/runs-n" <<'PY'
@@ -85,9 +88,9 @@ def wait(port, want, timeout=300):
         except Exception: pass
         time.sleep(2)
     return None
-def draft(port, text):
+def draft(port, text, **extra):
     tok = call(port, "/api/login", {"access_token": "contract"})["session_token"]
-    return call(port, "/api/draft", {"ticket_text": text}, tok)
+    return call(port, "/api/draft", {"ticket_text": text, **extra}, tok)
 def all_text(d):
     return "\n".join([d["draft_response"], d["problem_summary"]] + d["suggested_steps"] + d["caveats"])
 OOM = "My job was killed, sacct says OUT_OF_MEMORY. I asked for --mem=4G. What should I do?"
@@ -198,20 +201,20 @@ check(0 <= mt.get("conciseness", -1) <= 1 and -1 <= mt.get("answer_relevance_emb
 srcs = {f.get("source") for f in rt.get("feedback") or []}
 check({"auto", "assertion", "metric"} <= srcs, "trace feedback from auto, assertion and metric evaluators")
 fbfile = logs[-1].replace(".json", ".feedback.jsonl")
-judged = {}
-for _ in range(40):
-    judged = {}
-    for line in open(fbfile).read().splitlines():
-        f = json.loads(line)
-        if f.get("source") == "llm_judge":
-            judged[f["key"]] = f
-    if len(judged) >= 4: break
-    time.sleep(0.5)
-check(set(judged) >= {"hallucination", "correctness", "conciseness", "answer_relevance"},
-      "background LLM judge recorded hallucination, correctness, conciseness, answer_relevance")
-check(judged.get("hallucination", {}).get("lower_is_better") is True
-      and (judged.get("correctness", {}).get("metadata") or {}).get("usage"),
-      "judge grades say their direction and carry the judge call's tokens")
+jd = d.get("judge") or {}
+check(jd.get("mode") == "gate" and jd.get("verdict") == "ok"
+      and set(jd.get("scores") or {}) >= {"hallucination", "correctness", "conciseness", "answer_relevance"},
+      "judge gate: verdict and the four grades returned with the draft")
+check(any(x["name"] == "llm_judge" and x["run_type"] == "llm" for x in runs)
+      and {"hallucination", "correctness"} <= {f["key"] for f in rt.get("feedback") or [] if f.get("source") == "llm_judge"},
+      "judge gate: an llm_judge run and its grades in the run tree")
+check((tr.get("tokens") or {}).get("judge", {}).get("total_tokens", 0) > 0, "the judge's tokens are counted apart")
+md = logs[-1][:-5] + ".md"
+check(os.path.exists(md) and oct(os.stat(md).st_mode & 0o777) == "0o600"
+      and open(md).read().startswith("# Draft %s" % d["request_id"]), "a readable .md beside the run log, mode 600")
+check("## The reply" in open(md).read() and "LLM judge" in open(md).read() and "**Run tree**" in open(md).read(),
+      "the .md has the reply, the judge and the run tree")
+check("thumbs" in open(md).read(), "the .md is rewritten when feedback arrives")
 sent = d["draft_response"].replace("Hi,", "Hello,")
 call(A, "/api/feedback", {"request_id": d["request_id"], "key": "comment", "score": None,
                          "comment": "fine", "correction": sent}, tok_)
@@ -219,6 +222,22 @@ recs = [json.loads(l) for l in open(fbfile).read().splitlines()]
 es = [f for f in recs if f["key"] == "edit_similarity"]
 check(any(f["key"] == "comment" and f.get("score") is None for f in recs), "comment-only feedback accepted")
 check(len(es) == 1 and 0.9 < es[0]["score"] < 1, "reply as sent -> edit_similarity (small edit, just under 1)")
+
+SIG = "Thanks,\nSam Rivera\nResearch Computing"
+d2 = draft(A, OOM + " JUDGE-LOW", signoff=SIG.replace("\n", "\r\n") + "  ")
+j2 = d2.get("judge") or {}
+check(d2["draft_response"].rstrip().endswith(SIG) and "Best regards" not in d2["draft_response"]
+      and d2["evaluations"]["assertions"].get("assert_signoff") is True,
+      "the engineer's sign-off replaces the default, exactly, and the sign-off check uses it")
+check(d2["draft_response"].index("References:") < d2["draft_response"].index(SIG), "References stay above the sign-off")
+check((j2.get("first") or {}).get("verdict") == "low" and j2.get("rewritten") is True and j2.get("verdict") == "ok"
+      and "(revised)" in d2["draft_response"], "a draft the judge flags is rewritten once and the better one returned")
+check(not any(c.startswith("Quality check (LLM judge)") for c in d2["caveats"]), "no judge caveat once the rewrite passes")
+logs2 = sorted(glob.glob(os.path.join(RUNS, "*", "*.json")), key=os.path.getmtime)
+tr2 = json.load(open(logs2[-1])).get("trace") or {}
+check([a.get("phase", "draft") for a in (tr2.get("llm") or {}).get("attempts") or []] == ["draft", "rewrite"]
+      and [j["phase"] for j in tr2.get("judge_calls") or []] == ["draft", "rewrite"],
+      "trace: both drafts and both judge calls, by phase")
 
 g = draft(A, GPU)
 check(any(c.startswith("Check citation [2]") for c in g["caveats"]), "wrong citation flagged")
@@ -264,6 +283,22 @@ check(d["kg_status"] == "ok" and d["references"], "draft still grounded after th
 lr = [x for x in ((tr.get("run_tree") or {}).get("runs") or []) if x["run_type"] == "llm" and x["name"] == "llm"]
 check([x["status"] for x in lr] == ["error", "success"] and "unsupported" in (lr[0].get("error") or ""),
       "run tree: rejected call is an error run, the fallback a success run")
+
+fbfile = logs[-1].replace(".json", ".feedback.jsonl") if logs else ""
+judged = {}
+for _ in range(40):
+    judged = {}
+    for line in (open(fbfile).read().splitlines() if os.path.exists(fbfile) else []):
+        f = json.loads(line)
+        if f.get("source") == "llm_judge":
+            judged[f["key"]] = f
+    if len(judged) >= 4: break
+    time.sleep(0.5)
+check(set(judged) >= {"hallucination", "correctness", "conciseness", "answer_relevance"} and not d.get("judge", {}).get("verdict"),
+      "background judge: grades recorded beside the run, none in the response")
+check(judged.get("hallucination", {}).get("lower_is_better") is True
+      and (judged.get("correctness", {}).get("metadata") or {}).get("usage"),
+      "judge grades say their direction and carry the judge call's tokens")
 
 import os
 print("F. rc-agent: orchestrator -> incident agent (ReAct) -> writer -> critic + reviewer")

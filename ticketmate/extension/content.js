@@ -391,6 +391,7 @@
 
   // Same setting as the toolbar popup (oodConfig.targetField), so they agree.
   const CFG_KEY = "oodConfig";
+  const SIGNOFF_KEY = "rcSignoff";   // the popup's "Sign the reply with"
   const TARGET_NOTES = {
     work_notes: ["Internal only: a mis-click can't reach the researcher.", ""],
     comments: ["The researcher sees additional comments. The draft lands unsaved, but one wrong Update sends it.", "rc-danger"],
@@ -811,11 +812,13 @@
 
     let reply;
     try {
+      const signoff = await chrome.storage.local.get(SIGNOFF_KEY).then((s) => s[SIGNOFF_KEY] || "", () => "");
       reply = await chrome.runtime.sendMessage({
         type: "DRAFT",
         ticketText: lastTicket.text,
         ticketNumber: lastTicket.number,
-        extraInstructions: extraInstructions
+        extraInstructions: extraInstructions,
+        signoff: signoff
       });
     } catch (err) {
       reply = { ok: false, error: "Extension was reloaded — refresh this page." };
@@ -989,6 +992,8 @@
 
     const ev = evaluationSection(data.evaluations || {});
     if (ev) html += ev;
+    const jg = judgeSection(data.judge || {});
+    if (jg) html += jg;
 
     const meta = [];
     if (data.model) meta.push("model " + escapeHtml(data.model));
@@ -1081,6 +1086,51 @@
     const title = "Quality checks: " + (keys.length - failed.length) + " of " + keys.length + " passed" +
                   (failed.length ? " — " + failed.map((k) => ASSERT_NAMES[k] || k).join(", ") : "");
     return moreSection("checks", title, body, failed.length ? "rc-more-warn" : "");
+  }
+
+  /* The LLM judge's grades (JUDGE_MODE=gate, app/evaluators.py): the four
+     scores, then the request type's rubric (multi-GPU, long partition, ...)
+     item by item, and whether the draft was rewritten for it. Flagged: the
+     title is marked, and the reasons are already in "Check before sending". */
+  const JUDGE_NAMES = {
+    hallucination: "unsupported claims", correctness: "resolves the request",
+    conciseness: "concise", answer_relevance: "on topic"
+  };
+  function judgeSection(j) {
+    if (!j || !j.mode || j.mode === "off" || j.mode === "background") return "";
+    if (j.verdict === "error") {
+      return moreSection("judge", "LLM judge: unavailable", '<p class="rc-meta">' + escapeHtml(j.error || "") + "</p>");
+    }
+    const s = j.scores || {};
+    let body = '<ul class="rc-list rc-checklist">';
+    for (const k of Object.keys(JUDGE_NAMES)) {
+      if (!s[k]) continue;
+      const v = s[k].score;
+      const good = k === "hallucination" ? v <= 0.3 : v >= 0.5;
+      body += '<li class="' + (good ? "rc-pass" : "rc-fail") + '">' + (good ? "✓ " : "✗ ") +
+              escapeHtml(JUDGE_NAMES[k]) + " " + (Math.round(v * 100)) + "%" +
+              (s[k].comment ? ' <span class="rc-meta">— ' + escapeHtml(s[k].comment) + "</span>" : "") + "</li>";
+    }
+    body += "</ul>";
+    const rubric = (j.rubric || []).filter((r) => r.met !== null && r.met !== undefined);
+    if (rubric.length) {
+      body += '<p class="rc-meta">For this kind of request:</p><ul class="rc-list rc-checklist">';
+      for (const r of rubric) {
+        body += '<li class="' + (r.met ? "rc-pass" : "rc-fail") + '">' + (r.met ? "✓ " : "✗ ") +
+                escapeHtml(r.item) + (r.reason ? ' <span class="rc-meta">— ' + escapeHtml(r.reason) + "</span>" : "") + "</li>";
+      }
+      body += "</ul>";
+    }
+    if (j.first) {
+      body += '<p class="rc-meta">' + (j.rewritten
+        ? "The first draft was flagged and rewritten once; this is the rewrite."
+        : "The first draft was flagged; a rewrite was not better, so this is the first draft.") + "</p>";
+    }
+    body += '<p class="rc-meta">Graded by the same model that wrote the draft — a strong hint, not a verdict.</p>';
+    const low = j.verdict === "low";
+    const title = "LLM judge: " + (low ? "review before sending" : "looks right") +
+                  (j.rewritten ? " (rewritten once)" : "");
+    return moreSection("judge", title, body, low ? "rc-more-warn" : "");
   }
 
   /* A collapsible section. Which ones are open is remembered for this tab, so

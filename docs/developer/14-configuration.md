@@ -6,6 +6,8 @@ menu: Operations
 
 # 14. Configuration reference
 
+> **New:** The judge's settings (`JUDGE_*`) and the `signoff` request field: chapter 19.5.
+
 Every setting the code reads, with its default and meaning. Settings come
 from four places:
 

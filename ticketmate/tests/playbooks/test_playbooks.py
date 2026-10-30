@@ -191,5 +191,21 @@ for t in ("Refer the user access policy from rc website and update the user",
           "explain how to request a GPU"):
     check(wants(t), "asks for something a page supplies: sources -- %s" % t[:50])
 
+print("catalog request forms: each matches its own playbook, values from its answers")
+from app import ticket_context  # noqa: E402
+FORM = ("Ticket: TASK0100001\n\nShort description: %s\n\nRequest form:\n"
+        "- Describe your benchmarking calculation in detail: %s\n- Username: doe.l\n\n"
+        "Work notes / activity:\nRivera, Sam\nWork notes\u202210/21/2026 09:00:00 AM\ncc lee.k")
+for subject, answer, want in [("Long partition access", "legacy CFD, 5 days", "long-partition"),
+                              ("Multi-GPU Partition Access", "PyTorch DDP scaling to 4 GPUs", "multigpu-access"),
+                              ("RC HPC Cluster Classroom Use for: Doe, Jane", "n/a", "course-request")]:
+    fp = ticket_context.prepare(FORM % (subject, answer))
+    got = playbooks.find(fp.query, fp.text, books)
+    check([g.playbook.name for g in got] == [want], "%s form -> %s (%s)" % (subject, want, [g.playbook.name for g in got]))
+    if want != "course-request":
+        check(got and got[0].values.get("username") == ["doe.l"] and got[0].sources.get("username") == "form: Username",
+              "%s: the username is the form's answer, not lee.k from the thread" % want)
+        check(got and len(got[0].playbook.rubric) >= 2, "%s: has rubric lines for the judge" % want)
+
 print("\n%s: %d failure(s)" % ("PASS" if not fails else "FAIL", len(fails)))
 sys.exit(1 if fails else 0)

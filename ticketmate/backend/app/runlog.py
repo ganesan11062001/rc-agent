@@ -4,7 +4,9 @@ Motivation: a draft that lands in a ticket is otherwise unaccountable. If an RC
 member asks "why did it say that?", or a reviewer asks what the model was
 actually shown, there has to be a record. This writes one JSON file per request
 containing the exact prompt sent, the raw text that came back, what the parsed
-draft was, and how long it took.
+draft was, and how long it took -- and beside it the same draft as a
+Markdown page a person can read top to bottom (<run>.md, app/trace_report.py):
+the full trace for tools and audits, the page for people.
 
 Storage notes:
   * Default (rc-agent) is rc-agent/traces/$USER/runs, with the other
@@ -100,7 +102,24 @@ def add_feedback(request_id: str, fb: Dict[str, Any]) -> Optional[str]:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except OSError:
         return None
+    write_report(path)                     # the readable page shows the new feedback too
     return rec["id"]
+
+
+def write_report(json_path: Path) -> Optional[str]:
+    """(Re)write the human-readable page beside a run log: <run>.md, mode 600.
+    The .json stays the full trace; the page is derived from it and its
+    feedback (app/trace_report.py). Never raises."""
+    try:
+        from . import trace_report
+        md = trace_report.render_file(str(json_path))
+        target = Path(json_path).with_suffix(".md")
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(md)
+        return str(target)
+    except Exception:                      # noqa: BLE001 -- a report must never break a draft
+        return None
 
 
 def record(
@@ -167,6 +186,7 @@ def record(
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
+        write_report(path)                 # <run>.md: the same draft, for a person to read
         return str(path)
     except OSError:
         return None

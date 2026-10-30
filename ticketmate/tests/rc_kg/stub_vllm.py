@@ -71,11 +71,17 @@ class H(BaseHTTPRequestHandler):
         user = body["messages"][1]["content"]
         prompt_tokens = sum(len(m["content"]) for m in body["messages"]) // 4 + 12
         if "strict evaluator" in body["messages"][0]["content"]:
-            # The background LLM judge (app/evaluators.py): a fixed, valid verdict.
-            out = json.dumps({"hallucination": {"score": 0.1, "unsupported_claims": ["made-up guide"]},
-                              "correctness": {"score": 0.9, "reason": "raises --mem as the sources say"},
+            # The LLM judge (app/evaluators.py): a fixed, valid verdict, every
+            # rubric line met -- except on a ticket saying JUDGE-LOW, whose
+            # first draft is graded low until it comes back "(revised)".
+            rubric = user.split("--- RUBRIC ---", 1)[-1].split("--- DRAFT REPLY ---", 1)[0]
+            items = [l[2:].strip() for l in rubric.splitlines() if l.startswith("- ")]
+            low = "JUDGE-LOW" in user and "(revised)" not in user
+            out = json.dumps({"hallucination": {"score": 0.6 if low else 0.1, "unsupported_claims": ["made-up guide"]},
+                              "correctness": {"score": 0.2 if low else 0.9, "reason": "raises --mem as the sources say"},
                               "conciseness": {"score": 0.8, "reason": "short"},
-                              "answer_relevance": {"score": 0.95, "reason": "on topic"}})
+                              "answer_relevance": {"score": 0.95, "reason": "on topic"},
+                              "rubric": [{"item": i, "met": True, "reason": "done"} for i in items]})
             return self._send({"id": "j", "object": "chat.completion", "model": "stub-model",
                                "choices": [{"index": 0, "finish_reason": "stop",
                                             "message": {"role": "assistant", "content": out}}],
@@ -102,7 +108,7 @@ class H(BaseHTTPRequestHandler):
                 "confidence": 0.7, "caveats": [],
                 "draft_response": "Hi,\n\nThe gpu partition allows 4 running jobs per user with an 8 hour maximum [%s].\n\nBest regards,\nResearch Computing" % part,
             }
-            out = json.dumps(draft)
+            out = json.dumps(_revised(draft, user))
             self._send({"id": "x", "object": "chat.completion", "model": "stub-model",
                         "choices": [{"index": 0, "finish_reason": "stop",
                                      "message": {"role": "assistant", "content": out}}],
@@ -118,11 +124,19 @@ class H(BaseHTTPRequestHandler):
                                "peak memory use with seff [%s]; see https://rc.northeastern.edu/made-up-oom-guide/ "
                                "too.\n\nBest regards,\nResearch Computing") % (oom, oom),
         }
-        out = json.dumps(draft)
+        out = json.dumps(_revised(draft, user))
         self._send({"id": "x", "object": "chat.completion", "model": "stub-model",
                     "choices": [{"index": 0, "finish_reason": "stop",
                                  "message": {"role": "assistant", "content": out}}],
                     "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": len(out) // 4,
                               "total_tokens": prompt_tokens + len(out) // 4}})
     def log_message(self, *a): pass
+
+
+def _revised(draft, user):
+    """A rewrite the judge asked for (app/main.py) says so, so the judge can tell."""
+    if "A REVIEWER CHECKED YOUR PREVIOUS DRAFT" in user:
+        draft["draft_response"] = draft["draft_response"].replace("Hi,\n\n", "Hi,\n\n(revised) ", 1)
+    return draft
+
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

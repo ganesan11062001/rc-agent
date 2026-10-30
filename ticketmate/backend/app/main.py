@@ -389,6 +389,7 @@ async def draft(request: DraftRequest):
                         "attempts": trace.get("attempts", [])},
                 "tokens": tokens,
                 "citations": cite_trace,
+                "judge_calls": trace.get("judge_calls", []),
                 "output": {"model_draft": before_citations, "response": draft_out},
                 "timings_ms": timings,
                 "error": error,
@@ -458,7 +459,167 @@ async def draft(request: DraftRequest):
     variant = (((kg.trace.get("rc_kg") or {}).get("snapshot")) or {}).get("variant")
     tr.root.metadata["project"] = "rc-agent/" + (variant or "no-kg")
     tr.root.tags.append("kg:" + kg.status)
-    before_citations = llm_draft.model_dump()
+    signoff = evaluators.signoff_text(request.signoff)
+    rubric = playbooks.rubric_items(found_playbooks)
+
+    async def finish(llm_draft: LLMDraft, model_name: str):
+        """Citations, output guardrails, the engineer's sign-off and the code
+        evaluators for one written draft. Returns (response, the draft before
+        citations, the citation trace, assertions, metrics, guardrail findings)."""
+        before = llm_draft.model_dump()
+        references = []
+        cite_trace = None
+        t = time.perf_counter()
+        if kg.status == "ok":
+            fields, refs, cite_trace = await kg_client.apply_citations(
+                llm_draft.model_dump(), kg, request_id=request_id,
+                extra_allowed_urls=[u for m in found_playbooks for u in m.urls])
+            llm_draft = LLMDraft(**fields)
+            references = [Reference(**r) for r in refs]
+            if kg.low_confidence and not references:
+                llm_draft.caveats.append(
+                    "No RC website page closely matched this ticket; the reply is "
+                    "not backed by RC documentation.")
+        else:
+            llm_draft = LLMDraft(**kg_client.strip_citations(llm_draft.model_dump()))
+        if kg.status == "unavailable":
+            llm_draft.caveats.append(
+                "The RC knowledge graph was unavailable (%s), so this draft was not "
+                "checked against the RC website and has no links." % kg.detail)
+        timings["citations"] = int((time.perf_counter() - t) * 1000)
+
+        # Guardrails, output side, on exactly what will be shown: credentials are
+        # redacted; what the agents' revision did not fix is a caveat for the RC
+        # engineer. Every finding goes to the trace and traces/$USER/guardrails/.
+        with tracing.run("guardrails.output", "tool") as gorun:
+            guarded_draft, output_findings = guardrails.check_output(
+                llm_draft.model_dump(), ticket, playbooks.prompt_text(found_playbooks) + "\n" + lookups_context)
+            llm_draft = LLMDraft(**guarded_draft)
+            for f in output_findings:
+                if f.severity in ("revise", "warn"):
+                    llm_draft.caveats.append("Guardrail: " + f.detail)
+            if gorun is not None:
+                gorun.end({"findings": [f.to_dict() for f in output_findings]},
+                          error="credential redacted" if any(f.severity == "block" for f in output_findings) else None)
+        # The engineer's own sign-off, where the model wrote the default one.
+        llm_draft.draft_response = evaluators.apply_signoff(llm_draft.draft_response, signoff)
+
+        response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
+        response.references = references
+        response.lookups = [ClusterLookup(**lk.to_dict()) for lk in found_lookups]
+        response.context = context_info
+
+        # Evaluators that need no LLM, run now so the UI can show failures:
+        # assertions (the system prompt's rules, as code) and metrics.
+        with tracing.run("evaluate", "chain",
+                         metadata={"evaluators": "assertions, metrics, answer_relevance"}) as erun:
+            checks = evaluators.assertions(response.model_dump(), request.ticket_text, kg.status,
+                                           kg.low_confidence, cite_trace,
+                                           instructed=bool(request.extra_instructions.strip()), signoff=signoff)
+            measures = evaluators.metrics(response.model_dump(), cite_trace, signoff)
+            relevance = await evaluators.answer_relevance(ticket, response.draft_response, request_id, signoff)
+            if relevance is not None:
+                measures["answer_relevance_embedding"] = relevance
+            if erun is not None:
+                erun.end({"assertions": checks, "metrics": measures})
+        failed = sorted(k for k, ok in checks.items() if not ok)
+        response.evaluations = {"assertions": checks, "assertions_failed": failed, "metrics": measures}
+        return response, before, cite_trace, checks, measures, output_findings
+
+    response, before_citations, cite_trace, checks, measures, output_findings = await finish(llm_draft, model_name)
+
+    # The LLM judge (JUDGE_MODE=gate), after the agents' own critic and
+    # reviewer: grade the finished draft -- generically and on its request
+    # type's rubric -- before it is returned. A flagged draft goes back to the
+    # writer once with the judge's reasons as revision notes; whichever version
+    # the judge grades better is returned, still flagged if it is still low.
+    mode = evaluators.judge_mode()
+    judge_info: dict = {"mode": mode}
+    trace["judge_calls"] = []
+
+    async def run_judge(resp: DraftResponse, phase: str) -> dict:
+        t = time.perf_counter()
+        with tracing.run("llm_judge", "llm", inputs={"phase": phase, "rubric": rubric},
+                         metadata={"model": settings.vllm_model_name}) as jrun:
+            result = await evaluators.judge(ticket, ws["kg_prompt_context"], resp.model_dump(), rubric,
+                                            timeout=settings.judge_timeout_seconds)
+            if jrun is not None:
+                jrun.end({k: result.get(k) for k in ("verdict", "scores", "rubric", "reasons")},
+                         error=result.get("error"))
+        timings["judge" if phase == "draft" else "judge_rewrite"] = int((time.perf_counter() - t) * 1000)
+        trace["judge_calls"].append({"phase": phase, **{k: result.get(k) for k in ("latency_ms", "usage", "error")}})
+        return result
+
+    if mode == "gate":
+        result = await run_judge(response, "draft")
+        if result.get("verdict") == "low" and settings.judge_rewrite:
+            first_result = result
+            judge_info["first"] = {k: result.get(k) for k in ("verdict", "reasons", "scores", "rubric")}
+            kept = {k: trace.get(k) for k in ("messages", "raw_response", "strategy")}
+            kept_ws = dict(ws)
+            n_before = len(trace.get("attempts", []))
+            t = time.perf_counter()
+            try:
+                with tracing.run("rewrite_for_judge", "chain", inputs={"reasons": result.get("reasons")}) as rrun:
+                    evidence = agent_state.Evidence(lookups=list(found_lookups), kg=kg, skills=list(found_playbooks))
+                    draft2, model2 = await write_with(evidence, evaluators.revision_note(result).strip(),
+                                                      route=(context_info.get("route") or "pipeline"))
+                    for a in trace.get("attempts", [])[n_before:]:
+                        a["phase"] = "rewrite"
+                    second = await finish(LLMDraft(**draft2), model2)
+                    result2 = await run_judge(second[0], "rewrite")
+                    keep_second = not result2.get("error") and evaluators.better(first_result, result2)
+                    if rrun is not None:
+                        rrun.end({"kept": "rewrite" if keep_second else "first", "verdict": result2.get("verdict")})
+                if keep_second:
+                    response, before_citations, cite_trace, checks, measures, output_findings = second
+                    model_name, result = model2, result2
+                    judge_info["rewrite"] = "kept"
+                else:
+                    trace.update(kept)
+                    ws.update(kept_ws)
+                    for a in trace.get("attempts", [])[n_before:]:
+                        a["discarded"] = True
+                    judge_info["rewrite"] = "discarded: the judge did not grade it better"
+            except LLMError as exc:
+                trace.update(kept)
+                ws.update(kept_ws)
+                judge_info["rewrite"] = "failed: " + exc.message
+            timings["rewrite"] = int((time.perf_counter() - t) * 1000)
+            judge_info["rewritten"] = judge_info["rewrite"] == "kept"
+        judge_info.update({k: result.get(k) for k in ("verdict", "scores", "rubric", "reasons", "latency_ms")
+                           if result.get(k) is not None})
+        if result.get("error"):
+            judge_info.update(verdict="error", error=result["error"])
+        if judge_info.get("verdict") == "low":
+            response.caveats.insert(0, evaluators.caveat(result))
+            tr.root.tags.append("judge:low")
+        for key, item in (result.get("scores") or {}).items():
+            tr.add_feedback(key, item["score"], source="llm_judge", comment=item["comment"])
+        for r in result.get("rubric") or []:
+            if r.get("met") is not None:
+                tr.add_feedback("rubric", 1 if r["met"] else 0, source="llm_judge",
+                                comment="%s -- %s" % (r["item"], r.get("reason", "")))
+        if judge_info.get("rewritten"):
+            tr.root.tags.append("judge:rewritten")
+    response.judge = judge_info
+
+    guardrail_findings += output_findings
+    tr.root.tags += ["guardrail:" + f.rule for f in output_findings]
+    for f in guardrail_findings:
+        ops_store.append("guardrails", dict(f.to_dict(), request_id=request_id, ticket=thread))
+    tr.add_feedback("guardrail_findings", len(guardrail_findings), source="guardrail")
+
+    for key, ok in checks.items():
+        tr.add_feedback(key, 1 if ok else 0, source="assertion")
+    for key, value in measures.items():
+        tr.add_feedback(key, value, source="metric")
+    passed = sum(checks.values())
+    tr.add_feedback("assertions_passed", round(passed / len(checks), 3) if checks else 1.0, source="assertion")
+    failed = response.evaluations["assertions_failed"]
+    if failed:
+        tr.root.tags.append("assertion_failed")
+    references = response.references
 
     # Where the prompt's tokens went, by the model's own tokenizer.
     breakdown = None
@@ -467,81 +628,19 @@ async def draft(request: DraftRequest):
             breakdown = await token_breakdown({
                 "system_prompt": trace["messages"][0]["content"],
                 "ticket_text": ticket,
-                "rc_sources": kg.context,
+                "rc_sources": ws["kg_prompt_context"],
                 "cluster_lookups": lookups_context,
+                "playbooks": ws["playbook_context"],
                 "engineer_instructions": request.extra_instructions,
             })
             if krun is not None:
                 krun.end({"counts": breakdown}, error=None if breakdown else "model server has no /tokenize")
     tokens = _token_summary(trace.get("attempts", []), breakdown)
 
-    references = []
-    cite_trace = None
-    t = time.perf_counter()
-    if kg.status == "ok":
-        fields, refs, cite_trace = await kg_client.apply_citations(
-            llm_draft.model_dump(), kg, request_id=request_id,
-            extra_allowed_urls=[u for m in found_playbooks for u in m.urls])
-        llm_draft = LLMDraft(**fields)
-        references = [Reference(**r) for r in refs]
-        if kg.low_confidence and not references:
-            llm_draft.caveats.append(
-                "No RC website page closely matched this ticket; the reply is "
-                "not backed by RC documentation.")
-    else:
-        llm_draft = LLMDraft(**kg_client.strip_citations(llm_draft.model_dump()))
-    if kg.status == "unavailable":
-        llm_draft.caveats.append(
-            "The RC knowledge graph was unavailable (%s), so this draft was not "
-            "checked against the RC website and has no links." % kg.detail)
-    timings["citations"] = int((time.perf_counter() - t) * 1000)
-
-    # Guardrails, output side, on exactly what will be shown: credentials are
-    # redacted; what the agents' revision did not fix is a caveat for the RC
-    # engineer. Every finding goes to the trace and traces/$USER/guardrails/.
-    with tracing.run("guardrails.output", "tool") as gorun:
-        guarded_draft, output_findings = guardrails.check_output(
-            llm_draft.model_dump(), ticket, playbooks.prompt_text(found_playbooks) + "\n" + lookups_context)
-        llm_draft = LLMDraft(**guarded_draft)
-        for f in output_findings:
-            if f.severity in ("revise", "warn"):
-                llm_draft.caveats.append("Guardrail: " + f.detail)
-        if gorun is not None:
-            gorun.end({"findings": [f.to_dict() for f in output_findings]},
-                      error="credential redacted" if any(f.severity == "block" for f in output_findings) else None)
-    guardrail_findings += output_findings
-    tr.root.tags += ["guardrail:" + f.rule for f in output_findings]
-    for f in guardrail_findings:
-        ops_store.append("guardrails", dict(f.to_dict(), request_id=request_id, ticket=thread))
-    tr.add_feedback("guardrail_findings", len(guardrail_findings), source="guardrail")
-
-    response = DraftResponse.from_llm_draft(llm_draft, model_name, 0)
-    response.references = references
-    response.lookups = [ClusterLookup(**lk.to_dict()) for lk in found_lookups]
-    response.context = context_info
-
-    # Evaluators that need no LLM, run now so the UI can show failures:
-    # assertions (the system prompt's rules, as code) and metrics.
-    with tracing.run("evaluate", "chain", metadata={"evaluators": "assertions, metrics, answer_relevance"}) as erun:
-        checks = evaluators.assertions(response.model_dump(), request.ticket_text, kg.status,
-                                       kg.low_confidence, cite_trace,
-                                       instructed=bool(request.extra_instructions.strip()))
-        measures = evaluators.metrics(response.model_dump(), cite_trace)
-        relevance = await evaluators.answer_relevance(ticket, response.draft_response, request_id)
-        if relevance is not None:
-            measures["answer_relevance_embedding"] = relevance
-        if erun is not None:
-            erun.end({"assertions": checks, "metrics": measures})
-    for key, ok in checks.items():
-        tr.add_feedback(key, 1 if ok else 0, source="assertion")
-    for key, value in measures.items():
-        tr.add_feedback(key, value, source="metric")
-    passed = sum(checks.values())
-    tr.add_feedback("assertions_passed", round(passed / len(checks), 3) if checks else 1.0, source="assertion")
-    failed = sorted(k for k, ok in checks.items() if not ok)
-    response.evaluations = {"assertions": checks, "assertions_failed": failed, "metrics": measures}
-    if failed:
-        tr.root.tags.append("assertion_failed")
+    judge_usage = [j["usage"] for j in trace["judge_calls"] if j.get("usage")]
+    if judge_usage:
+        tokens["judge"] = {k: sum(u.get(k) or 0 for u in judge_usage)
+                           for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     response.latency_ms = elapsed_ms
@@ -580,7 +679,7 @@ async def draft(request: DraftRequest):
     if saved:
         logger.info("run recorded | id=%s -> %s", request_id, saved)
         # LLM-as-judge in the background; it appends its grades beside the run.
-        evaluators.schedule_judge(request_id, ticket, ws["kg_prompt_context"], response.model_dump())
+        evaluators.schedule_judge(request_id, ticket, ws["kg_prompt_context"], response.model_dump(), rubric)
 
     # LLMOps: one metrics row per draft in traces/$USER/metrics/ (app/ops_store.py),
     # for dashboards and ops/ops_report.py; no ticket text.
@@ -600,6 +699,7 @@ async def draft(request: DraftRequest):
         "references": len(references), "urls_removed": len((cite_trace or {}).get("removed_urls") or []),
         "playbooks": [m.playbook.name for m in found_playbooks],
         "lookups": len(found_lookups), "assertions_failed": failed, "confidence": response.confidence,
+        "judge": {k: judge_info.get(k) for k in ("mode", "verdict", "rewritten")},
         "latency_ms": elapsed_ms, "timings_ms": timings, "tokens": tokens,
         "prompt_version": _PROMPT_VERSION.get("version"),
         "manifest": {k: len(v) for k, v in (ag.get("manifest") or {}).items()},
@@ -617,7 +717,8 @@ def _token_summary(attempts, breakdown):
     prompt tokens went."""
     used = [a["usage"] for a in attempts if a.get("usage")]
     total = {k: sum(u[k] for u in used) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
-    final = next((a["usage"] for a in reversed(attempts) if a.get("outcome") == "ok"), None)
+    final = next((a["usage"] for a in reversed(attempts) if a.get("outcome") == "ok" and not a.get("discarded")),
+                 None)
     out = {**total, "model_calls": len(attempts), "calls_with_usage": len(used), "final_call": final}
     if breakdown is not None:
         out["prompt_breakdown"] = dict(breakdown)

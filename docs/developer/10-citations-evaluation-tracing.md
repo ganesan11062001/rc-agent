@@ -6,6 +6,8 @@ menu: Knowledge
 
 # 10. Citations, evaluation, tracing
 
+> **New:** Since version 0.9.9 the LLM judge grades before the draft is returned by default (`JUDGE_MODE=gate`), with a per-request-type rubric and one rewrite, and every run log has a readable `.md` beside it: chapter 19.
+
 After the model answers, three things happen to every draft: its `[S#]`
 markers become links that are safe to send, code checks it against the
 prompt's rules, and everything about it is recorded.

@@ -52,6 +52,7 @@ the two.
 | 16 | [rc-agent: guardrails and context engineering](16-guardrails-context.md) | input/output guardrails, multi-query retrieval, context packing |
 | 17 | [rc-agent: LLMOps](17-llmops.md) | trace store, OpenTelemetry, metrics, ground truth, evals, optimization, release gate |
 | 18 | [TicketMate vs rc-agent](18-ticketmate-vs-rc-agent.md) | every difference, and how to choose |
+| 19 | [Sign-off, request forms, the LLM judge, readable traces](19-quality-loop.md) | the engineer's sign-off, per-request-type extraction, the judge gate and rubric, the .md beside every run log |
 
 ## Other documents
 

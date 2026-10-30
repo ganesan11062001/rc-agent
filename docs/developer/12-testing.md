@@ -6,6 +6,8 @@ menu: Operations
 
 # 12. Testing
 
+> **New:** Tests for the sign-off, request-form extraction, the judge gate and readable traces: chapter 19.6.
+
 Every test here runs without a GPU except the inference test. Most need
 nothing at all; a few start a real rc-kg from the published snapshot and a
 stub model. This chapter lists each suite, what it proves, how to run it, what

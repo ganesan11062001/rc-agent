@@ -13,6 +13,13 @@
                                        per-step latency p50/p95, tokens, errors, feedback
   traces.py feedback <request_id> --key thumbs --score 1 [--comment ...] [--correction ...]
   traces.py export drafts.csv          one row per draft (no ticket text)
+  traces.py md <request_id>            one draft as a readable Markdown page (stdout)
+  traces.py md --all                   (re)write the .md page beside every run log
+
+Two formats per draft: the .json is the full trace (every run, prompt, token
+and score, for tools); the .md beside it is the same draft for a person to
+read top to bottom (backend/app/trace_report.py). New drafts get both; `md`
+renders older logs, or re-renders after feedback.
 
 The model is LangSmith's: each draft is a trace, a tree of runs (chain,
 retriever, embedding, llm, parser, tool), each with id, parent, start/end,
@@ -393,6 +400,23 @@ def cmd_export(runs, args):
     print("wrote %d rows to %s (mode 600)" % (len(runs), args.csv))
 
 
+def cmd_md(runs, args):
+    """`md`: the readable page of one draft, or (re)write it beside every log."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "app"))
+    import trace_report                                   # stdlib only: no venv needed
+    if args.all:
+        for r in runs:
+            target = Path(r["_path"]).with_suffix(".md")
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(trace_report.render_file(r["_path"]))
+        print("wrote %d readable pages (mode 600)" % len(runs))
+        return
+    if not args.id:
+        sys.exit("md: give a request id, or --all")
+    print(trace_report.render_file(_find(runs, args.id)["_path"]))
+
+
 def main() -> int:
     """Parse the command line, load the run logs and run the subcommand."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -413,12 +437,14 @@ def main() -> int:
     pf.add_argument("--score", type=float, required=True); pf.add_argument("--comment", default="")
     pf.add_argument("--correction", default="")
     pe = sub.add_parser("export"); pe.add_argument("csv")
+    pm = sub.add_parser("md"); pm.add_argument("id", nargs="?", default="")
+    pm.add_argument("--all", action="store_true", help="write <run>.md beside every run log")
     args = ap.parse_args()
     if not args.dir.is_dir():
         sys.exit("no run logs at %s" % args.dir)
     runs = load(args.dir, args.since, args.ticket)
     {"list": cmd_list, "show": cmd_show, "runs": cmd_runs, "stats": cmd_stats,
-     "feedback": cmd_feedback, "export": cmd_export}[args.cmd](runs, args)
+     "feedback": cmd_feedback, "export": cmd_export, "md": cmd_md}[args.cmd](runs, args)
     return 0
 
 

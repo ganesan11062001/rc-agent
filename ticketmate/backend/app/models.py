@@ -32,6 +32,10 @@ class DraftRequest(BaseModel):
     # Optional, for logging and for the capture build's file layout.
     ticket_number: str = Field(default="", max_length=64)
 
+    # The engineer's own sign-off (the extension's settings), used exactly as
+    # written in place of the default "Best regards,\nResearch Computing".
+    signoff: str = Field(default="", max_length=300)
+
 
 class LLMDraft(BaseModel):
     """Exactly the shape we ask the model to emit.
@@ -89,6 +93,10 @@ class DraftResponse(LLMDraft):
     usage: Optional[Dict[str, int]] = None
     # Evaluator results at draft time: assertions (pass/fail) and metrics.
     evaluations: Dict[str, Any] = Field(default_factory=dict)
+    # The LLM judge's grades (JUDGE_MODE=gate): {mode, verdict "ok"|"low"|
+    # "error", scores {key: {score, comment}}, rubric [{item, met, reason}],
+    # reasons, rewritten, first (the first draft's grades when rewritten)}.
+    judge: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_llm_draft(

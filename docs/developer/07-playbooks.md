@@ -6,6 +6,8 @@ menu: The pipeline
 
 # 7. Playbooks (skills)
 
+> **New:** `form.<field>` lines (a request-form question per field) and `rubric:` lines (what the LLM judge grades a reply to this request type on): chapter 19.
+
 Some tickets are not answered from the website at all. RC has a set
 procedure for them: membership of a project group, access to a restricted
 partition, a storage increase, a course allocation. A **playbook** is one such

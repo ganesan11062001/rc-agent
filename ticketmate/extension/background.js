@@ -292,7 +292,7 @@ async function ping() {
 }
 
 /* POST /api/draft with the ticket as read from the page. */
-async function draft(ticketText, ticketNumber, extraInstructions) {
+async function draft(ticketText, ticketNumber, extraInstructions, signoff) {
   if (!ticketText || !ticketText.trim()) {
     return { ok: false, error: "No ticket text to send." };
   }
@@ -303,6 +303,8 @@ async function draft(ticketText, ticketNumber, extraInstructions) {
   if (ticketNumber) payload.ticket_number = ticketNumber;
   // Free-text guidance the RC member typed before drafting.
   if (extraInstructions) payload.extra_instructions = extraInstructions;
+  // The engineer's own sign-off (popup), used exactly as written.
+  if (signoff && signoff.trim()) payload.signoff = signoff.slice(0, 300);
 
   return withSession((sessionToken) =>
     request("/api/draft", {
@@ -352,7 +354,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handlers = {
     PING: () => ping(),
     SIGN_IN: () => signIn(),
-    DRAFT: () => draft(message.ticketText, message.ticketNumber, message.extraInstructions),
+    DRAFT: () => draft(message.ticketText, message.ticketNumber, message.extraInstructions, message.signoff),
     FEEDBACK: () => feedback(message.item),
     GET_CONFIG: () => getConfig().then((cfg) => ({ ok: true, data: cfg })),
     SAVE_CONFIG: () => saveConfig(message.baseUrl, message.accessToken)

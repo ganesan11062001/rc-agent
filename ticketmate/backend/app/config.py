@@ -133,6 +133,22 @@ class Settings(BaseSettings):
     online_eval: bool = True
     online_eval_sample_rate: float = 1.0
 
+    # The LLM judge (app/evaluators.py). "gate": it grades every draft before
+    # the draft is returned -- generic criteria plus the matched request
+    # type's rubric -- the panel shows the grades, and a draft it flags gets
+    # a "check before sending" caveat and (judge_rewrite) one rewrite with the
+    # judge's reasons, keeping whichever version it grades better. Costs one
+    # or two judge calls and at most one more draft call. "background": the
+    # old behaviour, graded after the reply is returned, sampled by
+    # online_eval_sample_rate. "off": no judge. online_eval=false is "off".
+    judge_mode: str = "gate"
+    judge_rewrite: bool = True
+    judge_timeout_seconds: float = 60.0
+    # A draft is flagged when the judge finds more than this share of its
+    # claims unsupported, correctness below the minimum, or a rubric item not met.
+    judge_max_hallucination: float = 0.3
+    judge_min_correctness: float = 0.5
+
     # Ticket text may contain sensitive researcher data, so it is NOT logged
     # unless this is explicitly turned on for local debugging.
     debug: bool = False

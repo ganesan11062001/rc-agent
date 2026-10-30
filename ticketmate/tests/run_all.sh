@@ -20,6 +20,8 @@ step() {   # step <name> <command...>
 step "ticket context"        "$PY" "$TM/tests/ticket_context/test_ticket_context.py"
 step "cluster lookups"       "$PY" "$TM/tests/lookups/test_lookups.py"
 step "skills (playbooks)"    "$PY" "$TM/tests/playbooks/test_playbooks.py"
+step "request forms"         "$PY" "$TM/tests/playbooks/test_forms.py"
+step "sign-off, judge, readable trace" "$PY" "$TM/tests/judge/test_judge.py"
 step "agent graph"           "$PY" "$TM/tests/agent/test_agent.py"
 step "OpenTelemetry export"  "$PY" "$TM/tests/agent/test_otel.py"
 step "guardrails"            "$PY" "$TM/tests/agent/test_guardrails.py"
