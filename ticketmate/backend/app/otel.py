@@ -1,7 +1,7 @@
 """Export each draft's run tree as OpenTelemetry spans -- always to
 traces/$USER/spans/<date>.jsonl, and to a collector when one is configured.
 
-The run log (runlog.py) keeps the full trace of every draft on /scratch. For
+The run log (runlog.py) keeps the full trace of every draft under traces/$USER/. For
 production monitoring the same tree also goes to any OpenTelemetry
 collector -- Jaeger, Grafana Tempo, Arize Phoenix, Langfuse, Datadog -- over
 OTLP/HTTP, when the standard variables say where:

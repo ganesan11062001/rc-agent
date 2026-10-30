@@ -21,6 +21,9 @@ trap cleanup EXIT
 free() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 KGP=$(free); VP=$(free); AP=$(free); mkdir -m 700 "$WORK/runs"
 export RC_KG_API_TOKEN="ui-$$"
+# Never rebuild or switch the shared graph, and keep spans and metrics out of
+# the real traces/$USER/.
+export RC_KG_REFRESH_LOOP=off RC_TRACES_DIR="$WORK/traces"
 SLURM_JOB_ID=uitest "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KGP" > "$WORK/kg.log" 2>&1 & PIDS+=($!)
 python3 "$TM/tests/rc_kg/stub_vllm.py" "$VP" & PIDS+=($!)
 ( cd "$TM/backend" && RC_KG_URL="http://127.0.0.1:$KGP" VLLM_BASE_URL="http://127.0.0.1:$VP/v1" VLLM_MODEL_NAME=stub-model \
@@ -33,4 +36,6 @@ done
 "$PW_PYTHON" "$HERE/web_feedback_test.py" "$AP" "$WORK/runs" "$SHOTS"; rc=$?
 # The extension panel's result layout (no backend needed: the worker is mocked).
 "$PW_PYTHON" "$HERE/extension_result_test.py" "$SHOTS" || rc=1
+# The extension reading catalog request forms (mocked worker too).
+"$PW_PYTHON" "$HERE/extension_form_test.py" || rc=1
 exit $rc

@@ -21,16 +21,14 @@ project (the graph variant), session (Slurm job) and thread (the ticket);
 feedback -- automatic at draft time, or a person's via /api/feedback or this
 script -- is attached by run id.
 
-Run logs live in /scratch/$USER/rc_copilot_runs (or $RUN_LOG_DIR), mode 700:
-only you can read your own. Each holds what went into the model (ticket,
+Run logs live in the repository under traces/$USER/runs (or $RUN_LOG_DIR,
+or $RC_TRACES_DIR/runs; git-ignored; /scratch/$USER/rc_copilot_traces/runs
+when you cannot write the repository), mode 700: only you can read your own. Each holds what went into the model (ticket,
 engineer instructions, retrieved RC sources, the exact messages of every
 call), what came out (raw output, the parsed draft, the final reply after
 citation rendering), every model call's token usage, timings per stage, and
 the versions of TicketMate, rc_kg and the graph that produced it. Logs from
 before trace_version 2 show what they have.
-
-Note: /scratch is purged monthly. Copy logs you need to keep somewhere
-private (mode 700) before then.
 """
 
 import argparse
@@ -41,7 +39,13 @@ import statistics
 import sys
 from pathlib import Path
 
-DEFAULT_DIR = Path(os.environ.get("RUN_LOG_DIR") or "/scratch/%s/rc_copilot_runs" % os.environ.get("USER", ""))
+# The same default as backend/app/ops_store.py: <repo>/traces/$USER/runs, or
+# /scratch/$USER/rc_copilot_traces/runs for a member who cannot write the repository.
+_REPO_TRACES = Path(__file__).resolve().parents[2] / "traces" / os.environ.get("USER", "unknown")
+DEFAULT_DIR = Path(os.environ.get("RUN_LOG_DIR") or (
+    Path(os.environ["RC_TRACES_DIR"]) if os.environ.get("RC_TRACES_DIR")
+    else _REPO_TRACES if _REPO_TRACES.is_dir()
+    else Path("/scratch") / os.environ.get("USER", "unknown") / "rc_copilot_traces") / "runs")
 
 
 def load(run_dir: Path, since: str = "", ticket: str = ""):

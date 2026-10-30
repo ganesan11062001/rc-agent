@@ -20,7 +20,7 @@ So, before anything else sees the ticket:
   whether the researcher could see it -- in order, oldest first, so the last
   entry is the latest.
 - Labelled: each author as "RC staff" or "researcher". The notifications sent
-  to the RC team list its members' addresses (`g.murugan@...`), and an author
+  to the RC team list its members' addresses (`g.patel@...`), and an author
   "Patel, Gita" is the address `g.patel`. On INC09000008 the model,
   not seeing that "Rivera, Sam" was RC, told the researcher to contact the
   systems team that Sam had already contacted.
@@ -41,7 +41,7 @@ Nothing here calls the model.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ACTIVITY_LABEL = "Work notes / activity:"
 
@@ -248,7 +248,7 @@ def _team_addresses(entries: List[Entry]) -> set:
 
 
 def _is_team_member(author: str, team_locals: set) -> bool:
-    """ "Patel, Gita" is g.murugan; "Lee, Jordan" is jor.lee."""
+    """ "Patel, Gita" is g.patel; "Lee, Jordan" is jor.lee."""
     last, _, first = author.partition(",")
     first, last = first.strip().lower(), re.sub(r"\s+", "", last.strip().lower())
     if not (first and last):
@@ -356,6 +356,21 @@ def build_query(head: str, latest_from_researcher: str = "") -> str:
     return query[:QUERY_MAX_CHARS].strip()
 
 
+def _split_form(head: str) -> Tuple[str, str]:
+    """(head without it, the "Request form:" block). The extension puts a
+    catalog item's form after the description; the form is kept apart from
+    cleaning, or a signature rule or quoted chain in the description would cut
+    it off with everything after it."""
+    m = re.search(r"^Request form:[ \t]*$", head, re.M)
+    if not m:
+        return head, ""
+    return head[:m.start()].rstrip(), head[m.start():].strip()
+
+
+def _with_form(text: str, form: str) -> str:
+    return text + "\n\n" + form if form else text
+
+
 def prepare(ticket_text: str) -> Prepared:
     """Clean a ticket; see the module docstring. Text without an activity
     stream (pasted by hand) only gets the address, quote and signature pass."""
@@ -370,17 +385,21 @@ def prepare(ticket_text: str) -> Prepared:
         cut = min(i for i, l in enumerate(first) if _HEADER.match(l.strip()))
         head, activity, sep = "\n".join(first[:max(0, cut - 2)]), ticket_text, ACTIVITY_LABEL
     if not entries:
-        forwarded = _forwarded_message(ticket_text, stats)
-        text = _clean_text(ticket_text, stats)
+        rest, form = _split_form(ticket_text)
+        forwarded = _forwarded_message(rest, stats)
+        text = _clean_text(rest, stats)
         if forwarded:
             text += "\n\n(forwarded message, quoted in the email)\n" + forwarded
+        text = _with_form(text, form)
         q = build_query(text)
         return Prepared(text, len(ticket_text), stats, q, expand(q))
 
+    head, form = _split_form(head)
     forwarded = _forwarded_message(head, stats)
     head = _clean_text(head, stats)
     if forwarded:
         head += "\n\n(forwarded message, quoted in the email)\n" + forwarded
+    head = _with_form(head, form)
     team = _team_addresses(entries)
     team_locals = {a.split("@")[0] for a in team}
     note_writers = {e.author.strip().lower() for e in entries if e.kind.lower().startswith("work notes")}

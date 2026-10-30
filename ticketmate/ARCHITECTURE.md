@@ -92,7 +92,7 @@ and only behind OOD's SSO plus its own access token.
     background.
 11. **Record** (`app/runlog.py`, `app/tracing.py`). One private JSON trace per
     draft — the run tree, exact prompts, tokens, timings, lookups, retrieval —
-    under `/scratch/$USER/rc_copilot_runs` (mode 700/600).
+    under `traces/$USER/` in the repository (mode 700/600), with its spans and a metrics row.
 12. **Show.** The panel writes the draft into **work notes** (or the field the
     member chose), unsaved, and shows what to check before sending; steps,
     lookups, cited pages, checks and feedback are one click away.
@@ -258,10 +258,11 @@ ticket executes nothing. Off with `CLUSTER_LOOKUPS=false`.
 
 ### 7.4 Ticket data at rest
 
-The run log (`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json`) holds
-ticket text, prompts and drafts, so the tree is forced to mode 700 and files to
-600 (`/scratch` is group-accessible). Folder names derived from the page are
-sanitised. `/scratch` is purged monthly. Set `RUN_LOG_DIR=` (empty) to turn
+The run log (`traces/$USER/runs/<ticket>/<time>-<id>.json` in the repository,
+git-ignored) holds ticket text, prompts and drafts, so the per-user tree is
+forced to mode 700 and files to 600 (`/projects` is group-readable). Folder
+names derived from the page are sanitised. Unlike `/scratch`, it is not purged:
+decide a retention period and prune old runs. Set `RUN_LOG_DIR=` (empty) to turn
 recording off. The capture-test app stores what it receives the same way.
 
 ### 7.5 Trust boundary for auto-configuration

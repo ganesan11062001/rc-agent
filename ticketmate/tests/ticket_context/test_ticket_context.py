@@ -250,6 +250,15 @@ check("Requested partition: multigpu" in fp.query and "benchmarking calculation"
 fd = prepare(FORM.replace("Request form:", "Description:\nSee the form.\n\nRequest form:"))
 check(fd.query.count("Requested partition") == 1 and "See the form." in fd.query,
       "with a description too: both, the form once")
+fs = prepare(FORM.replace("Request form:", "Description:\nPlease see the form.\n\nThanks,\nLee\n"
+                                          "-----------------------------------------\nLee Doe | Example Lab\n\n"
+                                          "On Mon, Oct 19, 2026 at 9:00 AM Lee wrote:\n> earlier\n\nRequest form:"))
+check("Requested partition: multigpu" in fs.text and "benchmarking calculation" in fs.query
+      and "Example Lab" not in fs.text and "> earlier" not in fs.text,
+      "a signature or quoted chain in the description does not cut off the form after it")
+pasted = prepare("Short description: Long partition access\n\nDescription:\nSee below.\n--\nLee\n\n"
+                 "Request form:\n- Expected run time: 5 days")
+check("Expected run time: 5 days" in pasted.text and "5 days" in pasted.query, "nor without an activity stream")
 
 print("forwarded requests")
 FWD = """Ticket: INC0000099

@@ -327,7 +327,7 @@ All settings live in `.env` (see `.env.example` for the annotated version).
 | `TRACE_TOKEN_BREAKDOWN` | `true` | Count prompt tokens per part (system / ticket / sources / instructions) with vLLM's `/tokenize` |
 | `ONLINE_EVAL` | `true` | The serving model grades each draft in the background |
 | `ONLINE_EVAL_SAMPLE_RATE` | `1.0` | Share of drafts graded |
-| `RUN_LOG_DIR` | `/scratch/$USER/rc_copilot_runs` | One private JSON trace per draft; empty = off. Read by `app/runlog.py` directly |
+| `RUN_LOG_DIR` | `<repo>/traces/$USER/runs` | One private JSON trace per draft; empty = off. Read by `app/runlog.py` directly |
 | `DEBUG` | `false` | **Logs full ticket text** — see below |
 | `LOG_FILE` | `logs/rc_copilot.log` | Empty value = stdout only |
 

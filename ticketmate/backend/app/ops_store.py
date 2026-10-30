@@ -15,7 +15,9 @@ and survive /scratch purges. Tickets carry researchers' data, so the
 per-user directory is 0700 and every file 0600; `traces/` itself is
 git-ignored. RC_TRACES_DIR moves it; RUN_LOG_DIR still overrides the run
 logs alone ("" turns them off). Writing is best-effort: a full disk never
-breaks a draft.
+breaks a draft. A member who cannot write the repository (the shared release
+belongs to its maintainer) gets /scratch/$USER/rc_copilot_traces instead, with
+the same layout and modes, rather than no traces at all.
 """
 
 import json
@@ -27,10 +29,25 @@ from typing import Any, Dict, Optional
 REPO_ROOT = Path(__file__).resolve().parents[3]          # the repository root (ticketmate/ or rc-agent/)
 
 
+SCRATCH_FALLBACK = Path("/scratch") / os.environ.get("USER", "unknown") / "rc_copilot_traces"
+_root: Optional[Path] = None
+
+
 def root() -> Path:
+    """traces/$USER/ in the repository; /scratch when that cannot be created."""
+    global _root
     configured = os.environ.get("RC_TRACES_DIR")
-    base = Path(configured) if configured else REPO_ROOT / "traces" / os.environ.get("USER", "unknown")
-    return base
+    if configured:
+        return Path(configured)
+    if _root is None:
+        repo = REPO_ROOT / "traces" / os.environ.get("USER", "unknown")
+        try:
+            repo.mkdir(parents=True, exist_ok=True)
+            os.chmod(repo, 0o700)
+            _root = repo
+        except OSError:
+            _root = SCRATCH_FALLBACK
+    return _root
 
 
 def path(kind: str) -> Optional[Path]:

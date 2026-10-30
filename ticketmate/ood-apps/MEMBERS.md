@@ -33,7 +33,7 @@ Open a terminal on Explorer (OOD → *Clusters* → *Explorer Shell Access*, or
 /projects/rc/projects/rc-agent/rc-copilot/install.sh
 ```
 
-This creates one symlink, `~/ondemand/dev/rc-copilot`, pointing at the shared
+This creates one symlink, `~/ondemand/dev/rc-agent`, pointing at the shared
 app. Nothing is copied, so there is nothing to keep up to date: every new
 session uses the current version. If you already had an `rc-copilot` sandbox
 app, it is moved aside to `rc-copilot.backup-<date>`, not deleted.
@@ -41,7 +41,7 @@ app, it is moved aside to `rc-copilot.backup-<date>`, not deleted.
 Check it:
 
 ```bash
-ls -l ~/ondemand/dev/rc-copilot
+ls -l ~/ondemand/dev/rc-agent
 # rc-copilot -> /projects/rc/projects/rc-agent/rc-copilot/current/rc-copilot
 ```
 
@@ -146,7 +146,7 @@ Each session's logs are in
 
 | | where it lives | who can read it |
 |---|---|---|
-| ticket text, prompts, drafts | your Slurm job; logs in `/scratch/$USER/rc_copilot_runs` (mode 700) | you |
+| ticket text, prompts, drafts | your Slurm job; logs in `<repo>/traces/$USER/`, or `/scratch/$USER/rc_copilot_traces` if you cannot write the repository (mode 700) | you |
 | session access token | the OOD session card (owner only) | you |
 | model caches | `/scratch/$USER/rc_copilot_cache` | you |
 | the app, models, knowledge graph | `/projects/rc/projects/ticketmate` | RC team, read-only |

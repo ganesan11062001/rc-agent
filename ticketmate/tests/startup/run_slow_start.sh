@@ -20,6 +20,7 @@ trap cleanup EXIT
 free() { $PY -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
 
 export RC_KG_API_TOKEN="slow-$$" RC_KG_PROGRESS_DIR="$WORK/kg_progress" VLLM_LOG_FILE="$WORK/vllm.log"
+export RC_KG_REFRESH_LOOP=off RC_TRACES_DIR="$WORK/traces"   # leave the shared graph and real traces alone
 mkdir -m 700 "$RC_KG_PROGRESS_DIR"
 KGP="$(free)"; "$RC_KG_ROOT/scripts/serve_kg.sh" --port "$KGP" >"$WORK/kg.log" 2>&1 & PIDS+=($!)
 VP="$(free)"; AP="$(free)"

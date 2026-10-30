@@ -174,8 +174,9 @@ major version.
 ### Every draft is traceable
 
 Each draft writes one private record,
-`/scratch/$USER/rc_copilot_runs/<ticket>/<time>-<id>.json` (mode 600 in a
-mode-700 directory), modelled on LangSmith with no external service: a tree of
+`traces/$USER/runs/<ticket>/<time>-<id>.json` in the repository (mode 600 in a
+mode-700 directory; `traces/` is git-ignored), beside its OpenTelemetry spans
+(`traces/$USER/spans/`) and one metrics row (`traces/$USER/metrics/`), modelled on LangSmith with no external service: a tree of
 runs (cleaning, lookups, retrieval and rc-kg's own stages, each model call,
 parsing, citations, evaluation), the exact prompts, tokens and timings, and the
 versions — model, prompt version (a hash of every template), TicketMate commit,

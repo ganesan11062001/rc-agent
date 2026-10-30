@@ -58,5 +58,6 @@ Next:
   3. Open "My Interactive Sessions" once the session is running; the
      extension configures itself from the session card.
 
-Your drafts are logged privately under /scratch/$USER/rc_copilot_runs.
+Your drafts are logged privately under traces/$USER/ in the repository
+(or /scratch/$USER/rc_copilot_traces when you cannot write it).
 EOF

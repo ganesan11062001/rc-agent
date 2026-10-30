@@ -147,7 +147,9 @@ export AUTH_TOKEN="$password"     # from before.sh; OOD generated it
 export SESSION_HOURS="<%= context.bc_num_hours %>"
 export LOG_FILE=""                # stdout only -- nothing extra on /projects
 export USE_PROXY_ENV=false
-export RUN_LOG_DIR="${RUN_LOG_DIR:-/scratch/$USER/rc_copilot_runs}"
+# Runs are recorded in the repository, under traces/$USER/ (app/ops_store.py,
+# git-ignored, mode 700), or /scratch/$USER/rc_copilot_traces for a member who
+# cannot write the repository; RUN_LOG_DIR moves them, "" turns recording off.
 
 echo "=== starting rc-copilot on 0.0.0.0:${port} (before the model) ==="
 "$TM_ROOT/backend/.venv/bin/python" -m uvicorn app.main:app \
@@ -213,5 +215,5 @@ if [ -n "$KG_PID" ]; then
   fi
 fi
 
-echo "=== runs are recorded under ${RUN_LOG_DIR} ==="
+echo "=== runs are recorded under ${RUN_LOG_DIR-<repo>/traces/$USER/runs (or /scratch/$USER/rc_copilot_traces/runs)} ==="
 wait "$APP_PID"
