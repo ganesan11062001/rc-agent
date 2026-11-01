@@ -42,7 +42,7 @@ the two.
 | 6 | [Cluster lookups](06-cluster-lookups.md) | the read-only commands and why they are safe |
 | 7 | [Playbooks (skills)](07-playbooks.md) | RC's procedures as files: triggers, stages, missing information |
 | 8 | [Prompts and generation](08-prompts-and-generation.md) | prompt assembly, structured output, the model client |
-| 9 | [The knowledge graph (rc-kg)](09-knowledge-graph.md) | ingest, schema, enrichment, hybrid retrieval, the API, snapshots |
+| 9 | [The knowledge graph (rc-kg)](09-knowledge-graph.md) | ingest, schema, enrichment, hybrid retrieval, cross-encoder and corrective retrieval (measured), the API, snapshots |
 | 10 | [Citations, evaluation, tracing](10-citations-evaluation-tracing.md) | how links are made safe, per-draft checks, run logs and run trees |
 | 11 | [Security and privacy](11-security-privacy.md) | the threat model and every control |
 | 12 | [Testing](12-testing.md) | each test suite and what it proves |

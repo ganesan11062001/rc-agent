@@ -18,7 +18,7 @@ from typing import Dict, List
 
 import yaml
 
-from retrieval.graphrag import retrieve
+from retrieval.corrective import retrieve_corrective as retrieve   # what POST /retrieve serves
 
 CASES = Path(__file__).resolve().parent / "ticket_cases.yaml"
 

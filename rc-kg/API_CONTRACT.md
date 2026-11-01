@@ -1,4 +1,4 @@
-# rc-kg HTTP API contract — v1 (current: 1.5)
+# rc-kg HTTP API contract — v1 (current: 1.6)
 
 What clients (TicketMate's `backend/app/kg_client.py` today) may rely on.
 `GET /health` returns `api_version`; clients check the **major** number.
@@ -30,7 +30,9 @@ Never needs the token. Always `200`.
 
 ## `POST /retrieve`
 
-Request: `{"query": str (1–50,000 chars), "k": int 1–20 = 6, "include_events": bool | null}`
+Request: `{"query": str (1–50,000 chars), "k": int 1–20 = 6, "include_events": bool | null, "corrective": bool | null}`
+
+`corrective` (1.6): run corrective retrieval for this request; `null` uses the server's `CORRECTIVE_RAG`.
 
 `503` while loading; `400` for an empty query.
 
@@ -52,6 +54,7 @@ Request: `{"query": str (1–50,000 chars), "k": int 1–20 = 6, "include_events
 | `sources[].last_modified` | string | `YYYY-MM-DD`, may be empty (1.1) |
 | `sources[].site` | string | `rc.northeastern.edu` or `rc-docs.northeastern.edu` (1.1) |
 | `sources[].score` | number | |
+| `sources[].rerank_score` | number \| null | the cross-encoder's probability that the section answers the query; `null` without reranking (1.6) |
 | `trace` | object (1.3) | how the result was produced: `request_id` (echo of the `X-Request-ID` header), `api_version`, `snapshot`, `timings_ms` {embed, vector, fulltext, topics, expand, total}, `candidates`, `settings`, `best_vector_score`, `context_chars` |
 
 ## `POST /cite`
@@ -78,6 +81,7 @@ never the query text.
 ## Changes
 
 - **1.4** (2026-10-24): `POST /similarity`.
+- **1.6** (2026-10-30): cross-encoder reranking (`RERANK_MODE`) and corrective retrieval (`CORRECTIVE_RAG`). Sources add `rerank_score`; `trace` adds `rerank_top`, `timings_ms.rerank`, `candidates.reranked`, `settings.rerank_*` and `corrective` `{enabled, ran, weak, rewritten_query, before_top, after_top, kept, sources_changed, second_ms, skipped}`; the request adds `corrective`. Additive: 1.x clients are unaffected.
 - **1.5** (2026-10-30): `POST /admin/swap` (switch to a newer graph without stopping); `/health` adds `swaps` and reports the snapshot being served.
 - **1.3** (2026-10-24): `trace` on `/retrieve` and `/cite`; `X-Request-ID` is
   echoed and logged.

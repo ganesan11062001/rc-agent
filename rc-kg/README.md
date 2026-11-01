@@ -432,6 +432,12 @@ one from another node after 4 hours.
 
 ## How retrieval works (GraphRAG)
 
+> Cross-encoder scoring (`RERANK_MODE`) and corrective retrieval
+> (`CORRECTIVE_RAG`) are implemented, traced and **off by default**: measured
+> on 2026-11-01 neither beat the hybrid order (details and numbers in the
+> docstrings of `retrieval/rerank.py` and `retrieval/corrective.py`, and the
+> developer guide 9.5). Re-measure with `scripts/with_kg.sh -m eval.rerank_sweep`.
+
 `retrieval/graphrag.py`, one call per ticket or question:
 
 1. **Seeds.** Vector search (`section_embeddings`) and fulltext search

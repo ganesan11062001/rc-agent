@@ -38,6 +38,7 @@ from graph import connection
 from graph.connection import driver
 from retrieval import citations, http, support
 from retrieval.embeddings import get_embedder
+from retrieval.corrective import retrieve_corrective
 from retrieval.graphrag import retrieve
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ async def lifespan(app: FastAPI):
 # The HTTP contract clients depend on (see API_CONTRACT.md). MAJOR changes
 # when a client written for the old one could break: a field removed or
 # renamed, a meaning changed. MINOR for additions. Clients check MAJOR.
-API_VERSION = "1.5"
+API_VERSION = "1.6"
 
 app = FastAPI(title="RC-KG", version=API_VERSION, lifespan=lifespan)
 
@@ -182,6 +183,8 @@ class RetrieveRequest(BaseModel):
     query: str = Field(..., max_length=50_000, description="Ticket text or a question")
     k: int = Field(6, ge=1, le=20)
     include_events: Optional[bool] = None
+    # Corrective retrieval for this request (None: CORRECTIVE_RAG). Added in 1.6.
+    corrective: Optional[bool] = None
 
 
 _STYLE = "^(markdown|plain|numbered)$"
@@ -301,13 +304,15 @@ def retrieve_endpoint(req: RetrieveRequest,
     allowed_urls, trace...), with request id, API version and snapshot added
     to the trace. 400 if retrieval rejects the query."""
     try:
-        res = retrieve(req.query, k=req.k, include_events=req.include_events)
+        res = retrieve_corrective(req.query, k=req.k, include_events=req.include_events,
+                                  enabled=req.corrective)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     body = asdict(res)
     body["trace"].update(request_id=x_request_id, api_version=API_VERSION, snapshot=_snapshot())
-    reqlog.info("retrieve id=%s k=%d sources=%d best_vec=%.3f low=%s total_ms=%s",
+    reqlog.info("retrieve id=%s k=%d sources=%d best_vec=%.3f rerank_top=%s corrective=%s low=%s total_ms=%s",
                 x_request_id or "-", req.k, len(res.sources), res.trace["best_vector_score"],
+                res.trace.get("rerank_top"), (res.trace.get("corrective") or {}).get("kept", "-"),
                 res.low_confidence, res.trace["timings_ms"]["total"])
     return body
 
@@ -379,7 +384,7 @@ def answer_endpoint(req: AnswerRequest) -> Dict:
     """POST /answer: retrieve, ask the configured LLM to answer from the
     sources, and cite. Returns the linked answer, citation bookkeeping,
     low_confidence and a short list of the sources."""
-    res = retrieve(req.query, k=req.k, include_events=req.include_events)
+    res = retrieve_corrective(req.query, k=req.k, include_events=req.include_events)
     if not res.sources:
         return {"answer": "No RC website content matched this question.", "sources": []}
     raw = _chat([

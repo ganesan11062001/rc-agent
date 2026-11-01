@@ -29,6 +29,7 @@ from config import get_settings
 from enrich.topics import load_topics, match_topics
 from graph.connection import driver
 
+from . import rerank
 from .embeddings import get_embedder
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,9 @@ class Source:
     score: float
     vector_score: Optional[float] = None
     signals: Dict[str, int] = field(default_factory=dict)   # retriever -> rank
+    # The cross-encoder's probability that this section answers the query
+    # (retrieval/rerank.py); None when reranking is off or unavailable.
+    rerank_score: Optional[float] = None
     context_before: str = ""
     context_after: str = ""
     topics: List[str] = field(default_factory=list)
@@ -259,12 +263,17 @@ def _clip(text: Optional[str], n: int) -> str:
 
 
 def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
-             candidates: int = 30, today: Optional[date] = None) -> RetrievalResult:
+             candidates: int = 30, today: Optional[date] = None,
+             rerank_mode: Optional[str] = None, rerank_query: Optional[str] = None) -> RetrievalResult:
     """Retrieve the top `k` sources for `query` (see the module docstring).
 
     `include_events` None uses INCLUDE_EVENTS_IN_RETRIEVAL. `candidates` is
     how many hits each retriever contributes before fusion. `today` is for
-    tests: it fixes the date stale status posts are measured from. Raises
+    tests: it fixes the date stale status posts are measured from.
+    `rerank_mode` None uses RERANK_MODE; `rerank_query` is what the
+    cross-encoder scores against (default `query`) -- corrective retrieval
+    searches with a rewritten query but scores against the original, so the
+    two results are comparable. Raises
     ValueError on an empty query and RuntimeError if the graph has no
     embeddings or was embedded with a different model.
     """
@@ -362,6 +371,31 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
     counts["stale_status_posts"] = stale
     order = sorted(order[: k * 4], key=fused.get, reverse=True)
 
+    # Cross-encoder reranking of the top candidates (retrieval/rerank.py).
+    mode = (s.rerank_mode if rerank_mode is None else rerank_mode).strip().lower()
+    probs: Dict[str, float] = {}
+    rerank_used = False
+    if mode in ("replace", "fuse", "score"):
+        t = time.perf_counter()
+        pool = order[: max(k, s.rerank_candidates)]
+        got = rerank.score(s.rerank_model, (rerank_query or query).strip(),
+                           [rerank.passage(rows[x]["page_title"], rows[x]["heading"], rows[x]["text"]) for x in pool])
+        if got is not None:
+            rerank_used = True
+            probs = dict(zip(pool, got))
+            if mode == "replace":
+                key = {x: probs[x] * (_STALE_FACTOR if signals[x].get("stale") else 1.0) for x in pool}
+                head = sorted(pool, key=key.get, reverse=True)
+            elif mode == "fuse":
+                head = [x for x, _ in rerank.fuse(pool, probs, _RRF_K, s.rerank_weight)]
+            else:                                   # "score": keep the hybrid order
+                head = list(pool)
+            for i, x in enumerate(sorted(pool, key=probs.get, reverse=True), 1):
+                signals[x]["rerank"] = i
+            order = head + [x for x in order if x not in probs]
+        lap("rerank", t)
+        counts["reranked"] = len(probs)
+
     ranked: List[str] = []
     per_page: Dict[str, int] = {}
     for sid in order:
@@ -392,6 +426,7 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
             score=round(fused[sid], 5),
             vector_score=round(vector_scores[sid], 4) if sid in vector_scores else None,
             signals=signals[sid],
+            rerank_score=round(probs[sid], 4) if sid in probs else None,
             context_before=_clip(r["prev_text"], 400) if r["prev_text"] else "",
             context_after=_clip(r["next_text"], 400) if r["next_text"] else "",
             topics=sorted(r["topics"]),
@@ -432,7 +467,13 @@ def retrieve(query: str, k: int = 6, include_events: Optional[bool] = None,
                          "topic_mode": _TOPIC_MODE, "topic_weight": round(topic_weight, 4),
                          "fulltext_weight": _FULLTEXT_WEIGHT, "max_per_page": _MAX_PER_PAGE,
                          "stale_after_days": _STALE_AFTER_DAYS, "stale_factor": _STALE_FACTOR,
-                         "embedding_model": emb.model},
+                         "embedding_model": emb.model,
+                         "rerank_mode": mode if rerank_used else ("off" if mode not in ("replace", "fuse", "score")
+                                                                  else mode + " (model unavailable)"),
+                         "rerank_model": s.rerank_model if rerank_used else None,
+                         "rerank_weight": s.rerank_weight if rerank_used and mode == "fuse" else None},
+            "rerank_top": round(max(probs[x] for x in ranked if x in probs), 4)
+                          if rerank_used and any(x in probs for x in ranked) else None,
             "best_vector_score": round(best_vec, 4),
             "low_confidence_threshold": LOW_CONFIDENCE_BELOW,
             "known_gap": gap,

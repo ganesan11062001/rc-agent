@@ -274,6 +274,82 @@ Try it from the command line:
 cd rc-kg && scripts/with_kg.sh -m retrieval.query "my job was killed with OUT_OF_MEMORY"
 ```
 
+### Cross-encoder scoring and corrective retrieval (API 1.6) -- built, measured, off
+
+Two standard RAG techniques are implemented and traced, and **off by
+default, because on our evaluation neither improved retrieval**. They are
+one setting away for when the reviewed-ticket cases show tickets they fix.
+
+**Cross-encoder** (`retrieval/rerank.py`, `RERANK_MODE`). After the stale
+adjustment, the top `RERANK_CANDIDATES` (20) sections are scored by a
+cross-encoder (`RERANK_MODEL`, default `cross-encoder/ms-marco-MiniLM-L-6-v2`,
+on CPU, in-process like the embedder: ticket text never leaves). It reads the
+query and a passage (page > heading, first 1,200 characters) together and
+gives the probability the passage answers the query. Modes:
+
+| mode | what it does |
+|---|---|
+| `off` (default) | no cross-encoder |
+| `score` | scores the candidates, keeps the hybrid order; `rerank_top` (the best returned source's score) is a confidence signal |
+| `replace` | reorders by the cross-encoder; stale status posts still x0.6 |
+| `fuse` | RRF of the hybrid order and the cross-encoder's, the latter weighted by `RERANK_WEIGHT` |
+
+Models that end in a sigmoid (bge-reranker) are used as they are; models
+that return logits (MiniLM) get one. If the model cannot be loaded, retrieval
+keeps its order and the trace says `<mode> (model unavailable)`.
+
+**Corrective retrieval** (`retrieval/corrective.py`, `CORRECTIVE_RAG`) -- the
+idea of Corrective RAG (Yan et al., 2024) without its web search, which our
+rules forbid. When a result is weak (`low_confidence`, or `rerank_top` below
+`RERANK_WEAK_BELOW`), the query is rewritten in the documentation's words --
+the subject and the opening of the description, plus `SYMPTOMS` (symptom
+pattern -> RC's vocabulary) and the descriptions of the `topics.yaml` topics
+it names; no model call -- retrieved again, and both results are scored by
+the cross-encoder **against the original query**. The rewrite is kept only if
+its best source scores `CORRECTIVE_MIN_GAIN` (0.2) higher and clears the weak
+threshold; otherwise the first result stands, still flagged. It needs the
+cross-encoder (any mode but `off`) to compare the two.
+
+**What was measured** (2026-11-01, `scripts/with_kg.sh -m eval.rerank_sweep`:
+45 questions, 12 reviewed-ticket cases, 12 off-topic questions, k=6):
+
+| configuration | hit@1 | hit@6 | MRR | ticket cases | off-topic flagged | p50 latency (2 CPUs) |
+|---|---|---|---|---|---|---|
+| hybrid, no cross-encoder (default) | 0.689 | 0.978 | 0.795 | 12/12 | 12/12 | 0.1 s |
+| MiniLM `replace` | 0.689 | 0.978 | 0.795 | 12/12 | 12/12 | 1.7 s |
+| MiniLM `fuse` w=1 | 0.667 | 0.956 | 0.778 | 12/12 | 12/12 | 1.7 s |
+| MiniLM `fuse` w=2 | 0.644 | 0.978 | 0.762 | 12/12 | 12/12 | 1.7 s |
+| bge-reranker-base `replace` | 0.644 | 0.933 | 0.744 | 11/12 | 12/12 | 9.6 s |
+| bge-reranker-base `fuse` w=1 | 0.689 | 0.933 | 0.779 | 12/12 | 12/12 | 9.4 s |
+| MiniLM `score` + corrective (keep if higher) | 0.667 | 0.978 | 0.780 | 12/12 | 12/12 | 1.9 s |
+
+MiniLM `replace` moved all 45 results; its gains ("what do I put in my sbatch
+script to get a GPU" 4th -> 1st, "add a student to my /projects" missing ->
+1st) exactly cancelled its losses ("gpu partition limits" 1st -> 3rd,
+"scratch files deleted" 2nd -> 4th). Both models are trained on web search
+(MS MARCO), not RC's vocabulary. Corrective ran on 2-4 questions and kept a
+worse rewrite ("interactive session keeps getting cancelled": 0.22 -> 0.38,
+right page lost from 1st) and one on noise (0.0388 -> 0.0395); the margin
+rule now in place would have kept neither. As a confidence signal the
+cross-encoder separates well (best source: median 0.994 on the questions, at
+most 0.087 on off-topic ones), but `best_vector_score` already flags all
+off-topic questions with no false alarms. Sessions have 8-16 CPUs, so the
+latency would be lower there.
+
+**Traced.** Each source's `rerank_score`; `trace.rerank_top`,
+`timings_ms.rerank`, `candidates.reranked`, `settings.rerank_*`; and
+`trace.corrective` `{enabled, ran, weak, rewritten_query, before_top,
+after_top, kept, sources_changed, second_ms, skipped}`. TicketMate and
+rc-agent add `rc_kg.rerank` and `rc_kg.corrective_retrieve` runs under
+`rc_kg.retrieve`, and the readable page shows a rerank column and what the
+corrective step did.
+
+**Turning them on** (before that, re-run the sweep and the ticket cases):
+
+```bash
+export RERANK_MODE=score CORRECTIVE_RAG=true      # in the session's environment (serve_kg.sh passes it on)
+```
+
 ## 9.6 The HTTP API
 
 `api/app.py`, FastAPI, `API_VERSION = "1.5"`. Started by `serve_kg.sh` on

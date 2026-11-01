@@ -79,6 +79,16 @@ HF_HUB_OFFLINE=1 "$RC_KG_PY" -c \
 || HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -c \
   "from huggingface_hub import snapshot_download; snapshot_download('$MODEL')" >/dev/null \
   || kg_die "could not download $MODEL into $HF_HOME"
+# The reranker (retrieval/rerank.py) the same way, but not fatal: without it
+# retrieval keeps its fused order and says so in the trace.
+RERANK="$("$RC_KG_PY" -c 'from config import get_settings; s = get_settings(); print(s.rerank_model if s.rerank_mode != "off" else "")')"
+if [ -n "$RERANK" ]; then
+  HF_HUB_OFFLINE=1 "$RC_KG_PY" -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('$RERANK', local_files_only=True)" >/dev/null 2>&1 \
+  || HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 "$RC_KG_PY" -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('$RERANK')" >/dev/null 2>&1 \
+  || kg_log "warning: could not download the reranker $RERANK; retrieval will not rerank"
+fi
 
 kg_log "phase 1: ingest"
 "$RC_KG_PY" -m ingest.run --report "$WORK/ingest_report.json" \

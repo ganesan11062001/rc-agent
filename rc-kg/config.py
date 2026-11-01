@@ -57,6 +57,24 @@ class Settings(BaseSettings):
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
 
+    # --- Reranking and corrective retrieval (retrieval/rerank.py, corrective.py)
+    # A cross-encoder scores the hybrid candidates: "off", "score" (scores
+    # only -- the confidence signal for corrective retrieval), "replace" (its
+    # order) or "fuse" (RRF of both orders, weighted by rerank_weight). The
+    # defaults are what eval/rerank_sweep.py measured (retrieval/rerank.py).
+    rerank_mode: str = "off"
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 20
+    rerank_weight: float = 1.0
+    # Corrective RAG: when the result is weak (low confidence, or the best
+    # reranked source below rerank_weak_below), rewrite the query in the
+    # documentation's words, retrieve again, keep the better of the two.
+    corrective_rag: bool = False
+    rerank_weak_below: float = 0.3
+    # The rewrite is kept only if its best source scores this much higher
+    # (and clears rerank_weak_below): a small gain was noise (0.0388 -> 0.0395).
+    corrective_min_gain: float = 0.2
+
     # --- LLM --------------------------------------------------------------
     # Any OpenAI-compatible chat endpoint: vLLM, llama.cpp, Ollama, OpenAI.
     llm_model: str = "Qwen/Qwen2.5-7B-Instruct"

@@ -223,6 +223,18 @@ directory first, so a developer's `rc-kg/.env` never reaches a session or a
 build; they are configured by the environment alone. `.env.example` lists
 the development values.
 
+### Cross-encoder and corrective retrieval (9.5; off by default, measured)
+
+| variable | default | meaning |
+|---|---|---|
+| `RERANK_MODE` | `off` | `off`, `score`, `replace` or `fuse` |
+| `RERANK_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | prefetched into `vendor/hf` by `build_graph.sh` when the mode is not `off` |
+| `RERANK_CANDIDATES` | `20` | how many top candidates are scored |
+| `RERANK_WEIGHT` | `1.0` | the cross-encoder's weight in `fuse` |
+| `CORRECTIVE_RAG` | `false` | rewrite and retrieve again when a result is weak |
+| `RERANK_WEAK_BELOW` | `0.3` | a best source scoring below this is weak |
+| `CORRECTIVE_MIN_GAIN` | `0.2` | how much better the rewrite must score to be kept |
+
 ### Sources
 
 | variable | default | meaning |

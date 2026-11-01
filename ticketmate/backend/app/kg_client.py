@@ -195,7 +195,7 @@ async def _check_compatible() -> Optional[str]:
 
 def _source_summary(src: Dict[str, Any]) -> Dict[str, Any]:
     keep = ("ref", "url", "page_title", "heading", "site", "content_type", "published",
-            "last_modified", "score", "vector_score", "signals", "topics")
+            "last_modified", "score", "vector_score", "rerank_score", "signals", "topics")
     return {k: src.get(k) for k in keep}
 
 
@@ -215,7 +215,7 @@ async def retrieve(ticket_text: str, request_id: str = "") -> KGContext:
 
 _STAGES = [("embed", "rc_kg.embed_query", "embedding"), ("vector", "rc_kg.vector_search", "retriever"),
            ("fulltext", "rc_kg.fulltext_search", "retriever"), ("topics", "rc_kg.topic_boost", "tool"),
-           ("expand", "rc_kg.graph_expand", "tool")]
+           ("expand", "rc_kg.graph_expand", "tool"), ("rerank", "rc_kg.rerank", "tool")]
 
 
 def _record_retrieval(rrun, kg: "KGContext") -> None:
@@ -240,10 +240,23 @@ def _record_retrieval(rrun, kg: "KGContext") -> None:
     counts = server.get("candidates") or {}
     for key, name, rtype in _STAGES:
         if key in times:
-            tracing.add_derived(rrun, name, rtype, offset, times[key],
-                                outputs={"candidates": counts.get(key)} if key in counts else None,
+            out = {"candidates": counts.get(key)} if key in counts else None
+            if key == "rerank":
+                out = {"reranked": counts.get("reranked"), "rerank_top": server.get("rerank_top"),
+                       "mode": (server.get("settings") or {}).get("rerank_mode"),
+                       "model": (server.get("settings") or {}).get("rerank_model")}
+            tracing.add_derived(rrun, name, rtype, offset, times[key], outputs=out,
                                 metadata={"source": "rc_kg server timings"})
             offset += times[key]
+    # Corrective retrieval (rc_kg 1.6): the weak first result, the rewritten
+    # query, both scores and which result was kept.
+    corr = server.get("corrective") or {}
+    if corr.get("ran") or corr.get("skipped"):
+        tracing.add_derived(rrun, "rc_kg.corrective_retrieve", "retriever", offset,
+                            corr.get("second_ms") or 0.0,
+                            outputs={k: corr.get(k) for k in ("weak", "rewritten_query", "before_top", "after_top",
+                                                               "kept", "sources_changed", "skipped")},
+                            metadata={"source": "rc_kg server trace"})
 
 
 async def _retrieve(ticket_text: str, request_id: str = "") -> KGContext:
@@ -279,6 +292,9 @@ async def _retrieve(ticket_text: str, request_id: str = "") -> KGContext:
         "latency_ms": int((time.perf_counter() - t0) * 1000),
         "query_topics": res["query_topics"], "low_confidence": res["low_confidence"],
         "context_chars": len(res["context"]), "allowed_urls": len(res["allowed_urls"]),
+        # rc_kg 1.6: the cross-encoder's best score, and the corrective step.
+        "rerank_top": (res.get("trace") or {}).get("rerank_top"),
+        "corrective": (res.get("trace") or {}).get("corrective"),
         "sources": [_source_summary(x) for x in res["sources"]],
         "rc_kg": {**_version, "retrieval": res.get("trace")},   # trace: rc_kg API >= 1.3
     }

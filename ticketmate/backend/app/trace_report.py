@@ -194,9 +194,23 @@ def render(run: Dict[str, Any], feedback: Optional[List[Dict[str, Any]]] = None)
     if ret:
         add("**Retrieval** -- %s, %s ms%s\n" % (ret.get("status"), ret.get("latency_ms"),
                                                  ", LOW CONFIDENCE" if ret.get("low_confidence") else ""))
-        add(_table(["ref", "page", "section", "score", "vector"], [
+        settings = _g(ret, "rc_kg", "retrieval", "settings", default={}) or {}
+        if settings.get("rerank_mode") and settings.get("rerank_mode") != "off":
+            add("Reranked by `%s` (%s); best source %s.\n" % (settings.get("rerank_model"),
+                                                              settings.get("rerank_mode"), _score(ret.get("rerank_top"))))
+        corr = ret.get("corrective") or {}
+        if corr.get("ran"):
+            add("**Corrective retrieval** -- the first result was weak (%s); searched again as:\n\n%s\n"
+                "Best source %s -> %s: kept the %s%s.\n" % (
+                    corr.get("weak"), _fence(corr.get("rewritten_query") or ""), _score(corr.get("before_top")),
+                    _score(corr.get("after_top")), "rewrite" if corr.get("kept") == "rewrite" else "first result",
+                    "; new pages: " + ", ".join(corr["sources_changed"]) if corr.get("sources_changed") else ""))
+        elif corr.get("weak"):
+            add("**Corrective retrieval** -- weak result (%s), not retried: %s\n" % (corr.get("weak"), corr.get("skipped")))
+        add(_table(["ref", "page", "section", "score", "vector", "rerank"], [
             [s.get("ref"), "[%s](%s)" % (_cell(s.get("page_title"), 60), s.get("url")), s.get("heading"),
-             _score(s.get("score")), _score(s.get("vector_score"))] for s in ret.get("sources") or []]))
+             _score(s.get("score")), _score(s.get("vector_score")), _score(s.get("rerank_score"))]
+            for s in ret.get("sources") or []]))
     cit = tr.get("citations") or {}
     if cit:
         bits = ["cited %s" % (", ".join(str(c) for c in cit.get("cited") or []) or "none")]
