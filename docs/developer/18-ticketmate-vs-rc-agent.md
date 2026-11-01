@@ -9,7 +9,7 @@ menu: rc-agent
 rc-agent is a copy of TicketMate. This chapter lists every difference
 between the two trees, what they share, what the agent costs, and which to
 use when. The differences come from `diff -rq` of
-`/projects/rc/projects/ticketmate` against `/projects/rc/projects/rc-agent`
+`/projects/rc/projects/rc-copilot/ticketmate` against `/projects/rc/projects/rc-copilot/rc-agent`
 (git-ignored and generated files left out).
 
 ## 18.1 In one paragraph
@@ -39,7 +39,7 @@ trace store are shared or the same.
 
 Only in TicketMate: `rc-copilot/`, the published OOD release (a git-ignored
 deploy target written by `ood-apps/publish.sh`). rc-agent has not been
-published: there is no `/projects/rc/projects/rc-agent/rc-copilot/`.
+published: there is no `/projects/rc/projects/rc-copilot/rc-agent/rc-copilot/`.
 
 ## 18.3 Files that differ
 
@@ -117,8 +117,8 @@ compare rc-agent with `AGENT_MODE=true` against `AGENT_MODE=false`.
 | part | how |
 |---|---|
 | rc-kg code | identical trees. `tests/run_all.sh` stage 10 diffs rc-agent's `rc-kg/` against TicketMate's and fails on any difference: "both apps must run the same knowledge-graph code (they publish to one shared store)" |
-| the published graph | one store, `RC_KG_DATA_ROOT` (default `/projects/rc/projects/rc-kg-data`): `graph/` and `graph-website/` snapshots and the build lock. "One published graph serves every session of both apps" (`rc-kg/README.md`). A session of either app switches to a newer snapshot, and rebuilds one older than 24 hours, for both |
-| playbooks | the same private directory (`PLAYBOOK_DIR`, set by `cluster/env.sh` to `/projects/rc/projects/rc-playbooks` when it exists); the same parser |
+| the published graph | one store, `RC_KG_DATA_ROOT` (default `/projects/rc/projects/rc-copilot/shared/kg-data`): `graph/` and `graph-website/` snapshots and the build lock. "One published graph serves every session of both apps" (`rc-kg/README.md`). A session of either app switches to a newer snapshot, and rebuilds one older than 24 hours, for both |
+| playbooks | the same private directory (`PLAYBOOK_DIR`, set by `cluster/env.sh` to `/projects/rc/projects/rc-copilot/shared/playbooks` when it exists); the same parser |
 | the extension | the same code apart from one display line; the same name ("RC Copilot for ServiceNow"); either backend's session card configures it |
 | the OOD app template | `form.yml`, `submit.yml.erb`, `template/script.sh.erb`, `view.html.erb` are identical; only the manifest's name differs |
 | toolchain and caches | rc-agent's `.uv` and `.cache` are symlinks to TicketMate's: the same `uv` Python, vLLM install and model weights |

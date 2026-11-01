@@ -4,7 +4,7 @@ and report how each was handled.
     # on a GPU job with vLLM and rc_kg running (as the OOD app starts them):
     VLLM_BASE_URL=http://127.0.0.1:8000/v1 RC_KG_URL=http://127.0.0.1:<port> \\
       backend/.venv/bin/python tests/agent/replay_eval.py \\
-        --runs /projects/rc/projects/ticketmate/traces/$USER/runs --limit 20 --out replay.jsonl
+        --runs /projects/rc/projects/rc-copilot/ticketmate/traces/$USER/runs --limit 20 --out replay.jsonl
 
 For each ticket (its latest run log): the route and why, what the agent
 looked up, whether the critic and the reviewer passed the draft, revisions,
@@ -57,7 +57,7 @@ def sent_reply(log: Path):
 
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--runs", default="/projects/rc/projects/ticketmate/traces/%s/runs" % os.environ.get("USER", ""),
+    ap.add_argument("--runs", default="/projects/rc/projects/rc-copilot/ticketmate/traces/%s/runs" % os.environ.get("USER", ""),
                     help="run logs to replay (default: TicketMate's, traces/$USER/runs)")
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--out", default="replay.jsonl")

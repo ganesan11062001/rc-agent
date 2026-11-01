@@ -290,7 +290,7 @@ backend/.venv/bin/python evals/run.py --groundtruth <file>    # another labelled
 ```
 
 It needs RC's playbooks: without `PLAYBOOK_DIR` (or
-`/projects/rc/projects/rc-playbooks`) it prints `SKIP` and exits 0. For
+`/projects/rc/projects/rc-copilot/shared/playbooks`) it prints `SKIP` and exits 0. For
 `rag` and `e2e` it uses `RC_KG_URL`, or starts a private rc-kg with
 `rc-kg/scripts/serve_kg.sh` on a free port (`RC_KG_REFRESH_LOOP=off`: "an
 eval never rebuilds or switches the graph") and polls its `/health` up to
@@ -375,7 +375,7 @@ real run logs.
 ```bash
 VLLM_BASE_URL=http://127.0.0.1:8000/v1 RC_KG_URL=http://127.0.0.1:<port> \
   backend/.venv/bin/python tests/agent/replay_eval.py \
-    --runs /projects/rc/projects/ticketmate/traces/$USER/runs --limit 20 --out replay.jsonl
+    --runs /projects/rc/projects/rc-copilot/ticketmate/traces/$USER/runs --limit 20 --out replay.jsonl
 ```
 
 ## 17.10 Optimisation
@@ -465,7 +465,7 @@ its output matching `FAIL|Error|error`. Run it "before publishing a release
 | 7 | prompt lint | `backend/.venv/bin/python tests/agent/test_prompts.py` | yes |
 | 8 | eval: routing+guardrails | `backend/.venv/bin/python evals/run.py --suite routing --suite guardrails --gate` | yes |
 | 9 | rc-kg unit tests | `rc-kg/.venv/bin/python -m pytest -q rc-kg/tests` | yes |
-| 10 | rc-kg same as TicketMate's | `diff -rq` of `rc-kg/` against `/projects/rc/projects/ticketmate/rc-kg`, excluding `__pycache__`, `.venv`, `.venv-eval`, `vendor`, `data`, `.env`, `.pytest_cache` | yes |
+| 10 | rc-kg same as TicketMate's | `diff -rq` of `rc-kg/` against `/projects/rc/projects/rc-copilot/ticketmate/rc-kg`, excluding `__pycache__`, `.venv`, `.venv-eval`, `vendor`, `data`, `.env`, `.pytest_cache` | yes |
 | 11 | rc-kg ticket regressions | `cd rc-kg && scripts/with_kg.sh -m eval.ticket_cases` | no |
 | 12 | eval: RAG on ground truth | `backend/.venv/bin/python evals/run.py --suite rag --gate` | no |
 | 13 | end-to-end contract (A-G) | `tests/rc_kg/run_contract.sh` | no |

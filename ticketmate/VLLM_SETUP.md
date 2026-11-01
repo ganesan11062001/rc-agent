@@ -127,7 +127,7 @@ only has 16 GB — enough for `small`, not for `qwen7b`.
 
 ## Environment notes
 
-- Everything (venv, uv, HF cache, Triton cache) lives under `/projects/rc/projects/ticketmate` (venv in `ticketmate/.venv`; uv, HF and compile caches shared at the top level)
+- Everything (venv, uv, HF cache, Triton cache) lives under `/projects/rc/projects/rc-copilot/ticketmate` (venv in `ticketmate/.venv`; uv, HF and compile caches shared at the top level)
   to stay off the home quota. `env.sh` sets `HF_HOME` accordingly.
 - torch is pinned to the **cu129** build. vLLM 0.29.0 requires torch 2.13.0,
   which is published only on the cu129 and cu130 indexes. cu129 is the safer

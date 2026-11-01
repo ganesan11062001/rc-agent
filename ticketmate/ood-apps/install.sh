@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install RC Copilot into your Open OnDemand sandbox -- one symlink, no copy.
 #
-#   /projects/rc/projects/rc-agent/rc-copilot/install.sh             install
-#   /projects/rc/projects/rc-agent/rc-copilot/install.sh --uninstall remove the link
+#   /projects/rc/projects/rc-copilot/rc-agent/rc-copilot/install.sh             install
+#   /projects/rc/projects/rc-copilot/rc-agent/rc-copilot/install.sh --uninstall remove the link
 #
 # ~/ondemand/dev/rc-agent becomes a symlink to the shared release, so you
 # always launch the current version and there is nothing in /scratch to be

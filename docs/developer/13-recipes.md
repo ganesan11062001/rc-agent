@@ -9,7 +9,7 @@ menu: Operations
 Step-by-step instructions for the changes you will make most often. Each
 recipe names the files to touch, the commands to run, and how you know it
 worked. Paths are relative to the repository root
-(`/projects/rc/projects/ticketmate` or `/projects/rc/projects/rc-agent`).
+(`/projects/rc/projects/rc-copilot/ticketmate` or `/projects/rc/projects/rc-copilot/rc-agent`).
 
 A reminder before you start: a backend or rc-kg change is live in the next
 OOD session without publishing, because sessions run the code straight from
@@ -251,7 +251,7 @@ requests per variant. It uses its own private Neo4j and:
 5. refreshes the runtime archive (`build_runtime.sh`).
 
 Snapshots are published to `$RC_KG_DATA_ROOT`, by default the shared
-`/projects/rc/projects/rc-kg-data` (`graph/`, `graph-website/`), which both
+`/projects/rc/projects/rc-copilot/shared/kg-data` (`graph/`, `graph-website/`), which both
 apps read; a checkout without it uses its own `rc-kg/data/`. Running sessions
 switch to the new snapshot within one check interval.
 

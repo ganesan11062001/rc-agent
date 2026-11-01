@@ -9,7 +9,7 @@ menu: Foundations
 ## 2.1 Layout
 
 ```
-<repo>/                                  /projects/rc/projects/ticketmate  (or rc-agent)
+<repo>/                                  /projects/rc/projects/rc-copilot/ticketmate  (or rc-agent)
 ├── README.md
 ├── docs/developer/                      this guide
 ├── ticketmate/                          the application

@@ -315,8 +315,8 @@ repository once per process and falls back), rather than no traces at all.
   evals/<YYYYmmdd-HHMMSS>-<suite>/       evaluation and ops reports
 ```
 
-(`<repo>` is the checkout root: `/projects/rc/projects/ticketmate` or
-`/projects/rc/projects/rc-agent`.)
+(`<repo>` is the checkout root: `/projects/rc/projects/rc-copilot/ticketmate` or
+`/projects/rc/projects/rc-copilot/rc-agent`.)
 
 | control | how |
 |---|---|

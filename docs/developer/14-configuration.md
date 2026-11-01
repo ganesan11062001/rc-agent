@@ -292,7 +292,7 @@ the development values.
 | `RC_KG_PORT` | a free port (`--port` overrides) | API port; host is `127.0.0.1` (`--host` overrides) |
 | `RC_KG_VARIANT` | `full` | `full` or `website` (`--variant`); a snapshot of the other variant is refused |
 | `RC_KG_SNAPSHOT` | the variant's directory under the data root | directory holding `neo4j.dump` |
-| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-kg-data` if it exists, else `rc-kg/data` | where snapshots are read and published (`graph/`, `graph-website/`) |
+| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-copilot/shared/kg-data` if it exists, else `rc-kg/data` | where snapshots are read and published (`graph/`, `graph-website/`) |
 | `RC_KG_TMP` | `$TMPDIR`, else `/tmp` | node-local parent of instance directories |
 | `RC_KG_THREADS` | `2` | `OMP_NUM_THREADS`/`MKL_NUM_THREADS` for query embedding, so torch leaves cores to vLLM |
 | `RC_KG_PROGRESS_DIR` | unset | startup checklist, one `<step>.json` per step; also where `refresh.log` and failed-start Neo4j logs go |

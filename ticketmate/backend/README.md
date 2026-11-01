@@ -180,7 +180,7 @@ laptop                                    cluster
 **1. Start vLLM** (on a login node):
 
 ```bash
-cd /projects/rc/projects/ticketmate/ticketmate/cluster
+cd /projects/rc/projects/rc-copilot/ticketmate/ticketmate/cluster
 sbatch --partition=gpu-short --time=02:00:00 \
        --gres=gpu:a100:1 --mem=80G --export=ALL,MODEL=qwen7b serve_stack.sbatch
 ```
@@ -203,7 +203,7 @@ To skip the copy-paste, on the laptop:
 
 ```bash
 eval "$(ssh you@login.explorer.northeastern.edu \
-        /projects/rc/projects/ticketmate/ticketmate/cluster/vllm_status.sh --env)"
+        /projects/rc/projects/rc-copilot/ticketmate/ticketmate/cluster/vllm_status.sh --env)"
 uvicorn app.main:app --port 8080
 ```
 

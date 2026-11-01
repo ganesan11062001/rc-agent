@@ -13,7 +13,7 @@
 #   RC_KG_PROGRESS_DIR startup checklist, one <step>.json per step (see _kg_instance.sh)
 #   RC_KG_REFRESH_LOOP on (default) | off -- keep the graph current while serving (refresh_kg.sh)
 #   RC_KG_REFRESH, RC_KG_REFRESH_MAX_AGE_H, RC_KG_REFRESH_CHECK_MIN   see refresh_kg.sh
-#   RC_KG_DATA_ROOT    where snapshots are published; default /projects/rc/projects/rc-kg-data
+#   RC_KG_DATA_ROOT    where snapshots are published; default /projects/rc/projects/rc-copilot/shared/kg-data
 #
 # Cleanup: a normal stop (SIGTERM, Ctrl-C, the job ending) removes everything.
 # If this script is killed outright, a watchdog stops Neo4j and the API and

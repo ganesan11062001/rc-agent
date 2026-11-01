@@ -396,7 +396,7 @@ One published graph serves every session of both apps (TicketMate and
 rc-agent run identical rc-kg code):
 
 ```
-/projects/rc/projects/rc-kg-data/          RC_KG_DATA_ROOT; a checkout without it uses its own data/
+/projects/rc/projects/rc-copilot/shared/kg-data/          RC_KG_DATA_ROOT; a checkout without it uses its own data/
   graph/            neo4j.dump, manifest.json, eval reports, previous/   the full graph
   graph-website/    the same for the website-only variant
   .build-<variant>.lock                    while a rebuild runs (one at a time, across all sessions)
@@ -423,7 +423,7 @@ in the background for the whole session and, every 20 minutes:
 | `RC_KG_REFRESH` | `on` | `off`: never rebuild, still switch to newer snapshots |
 | `RC_KG_REFRESH_MAX_AGE_H` | `24` | rebuild when the snapshot is older |
 | `RC_KG_REFRESH_CHECK_MIN` | `20` | how often to check |
-| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-kg-data` | where snapshots are read and published |
+| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-copilot/shared/kg-data` | where snapshots are read and published |
 
 The session's log: `refresh.log` (and `refresh.log.build`) in its progress
 directory. `/health` reports the snapshot being served and the last switches

@@ -64,7 +64,7 @@ from typing import Dict, List
 logger = logging.getLogger(__name__)
 
 # The repository ships one generic example. RC's own procedures are internal
-# and live outside it (/projects/rc/projects/rc-playbooks); PLAYBOOK_DIR,
+# and live outside it (/projects/rc/projects/rc-copilot/shared/playbooks); PLAYBOOK_DIR,
 # set by cluster/env.sh when that directory exists, points the loader there.
 PLAYBOOK_DIR = Path(__file__).resolve().parent / "playbooks"
 

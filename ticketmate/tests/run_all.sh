@@ -29,7 +29,7 @@ step "prompt lint"           "$PY" "$TM/tests/agent/test_prompts.py"
 step "eval: routing+guardrails" "$PY" "$TM/evals/run.py" --suite routing --suite guardrails --gate
 step "rc-kg unit tests"      "$KG/.venv/bin/python" -m pytest -q "$KG/tests"
 # Both apps must run the same knowledge-graph code (they publish to one shared store).
-step "rc-kg same as TicketMate's" bash -c "diff -rq --exclude=__pycache__ --exclude=.venv --exclude=.venv-eval --exclude=vendor --exclude=data --exclude=.env --exclude=.pytest_cache '$KG' /projects/rc/projects/ticketmate/rc-kg"
+step "rc-kg same as TicketMate's" bash -c "diff -rq --exclude=__pycache__ --exclude=.venv --exclude=.venv-eval --exclude=vendor --exclude=data --exclude=.env --exclude=.pytest_cache '$KG' /projects/rc/projects/rc-copilot/ticketmate/rc-kg"
 if [ "${1:-}" != "--quick" ]; then
   step "rc-kg ticket regressions" bash -c "cd '$KG' && scripts/with_kg.sh -m eval.ticket_cases"
   step "eval: RAG on ground truth" "$PY" "$TM/evals/run.py" --suite rag --gate

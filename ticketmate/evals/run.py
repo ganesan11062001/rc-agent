@@ -48,7 +48,7 @@ sys.path.insert(0, str(TM / "backend"))
 
 # RC's playbooks are internal and live outside the repository (cluster/env.sh sets PLAYBOOK_DIR).
 import os as _os  # noqa: E402
-_PRIVATE = "/projects/rc/projects/rc-playbooks"
+_PRIVATE = "/projects/rc/projects/rc-copilot/shared/playbooks"
 if not _os.environ.get("PLAYBOOK_DIR") and _os.path.isdir(_PRIVATE):
     _os.environ["PLAYBOOK_DIR"] = _PRIVATE
 if not _os.environ.get("PLAYBOOK_DIR"):

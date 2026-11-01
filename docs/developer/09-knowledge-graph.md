@@ -409,7 +409,7 @@ A graph is built once and published as a **snapshot**; every session loads
 a copy into its own private Neo4j.
 
 ```
-$RC_KG_DATA_ROOT/                     default /projects/rc/projects/rc-kg-data
+$RC_KG_DATA_ROOT/                     default /projects/rc/projects/rc-copilot/shared/kg-data
   graph/                              the full graph: website + rc-docs
     neo4j.dump                        the whole database: sections, embeddings, topics, indexes
     manifest.json                     built_at, git_commit, variant, sites, embedding model and dim,
@@ -421,7 +421,7 @@ $RC_KG_DATA_ROOT/                     default /projects/rc/projects/rc-kg-data
 ```
 
 `_kg_instance.sh` (`kg_data_root`) chooses the root: `$RC_KG_DATA_ROOT` if
-set, else `/projects/rc/projects/rc-kg-data` if it exists, else the
+set, else `/projects/rc/projects/rc-copilot/shared/kg-data` if it exists, else the
 checkout's own `rc-kg/data/`. TicketMate and rc-agent therefore read and
 publish **the same graph**. `RC_KG_SNAPSHOT` overrides the directory for one
 command.
@@ -562,7 +562,7 @@ since <time>`. When the lock is held:
 | `RC_KG_REFRESH_CHECK_MIN` | `20` | minutes between checks |
 | `RC_KG_REFRESH_FIRST_MIN` | `2` | the first check, after startup has settled |
 | `RC_KG_REFRESH_LOG` | `<progress dir>/refresh.log` | the build's own output goes to `<log>.build` |
-| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-kg-data` | where snapshots are read and published |
+| `RC_KG_DATA_ROOT` | `/projects/rc/projects/rc-copilot/shared/kg-data` | where snapshots are read and published |
 
 The refresh loop starts only when the served snapshot has a `manifest.json`.
 
@@ -623,12 +623,12 @@ graph, load a published snapshot into the **development Neo4j**, which has
 the HTTP browser on loopback:
 
 ```bash
-cd /projects/rc/projects/rc-agent/rc-kg       # or the ticketmate checkout
+cd /projects/rc/projects/rc-copilot/rc-agent/rc-kg       # or the ticketmate checkout
 scripts/install_neo4j.sh                       # once: Neo4j 5.26 into vendor/
 scripts/start_neo4j.sh                         # creates /tmp/rc_kg_neo4j, picks ports, writes .env
 scripts/stop_neo4j.sh
 vendor/neo4j-community-5.26.0/bin/neo4j-admin database load neo4j \
-    --from-path=/projects/rc/projects/rc-kg-data/graph --overwrite-destination=true
+    --from-path=/projects/rc/projects/rc-copilot/shared/kg-data/graph --overwrite-destination=true
 scripts/start_neo4j.sh                         # reuses the store and its password
 ```
 

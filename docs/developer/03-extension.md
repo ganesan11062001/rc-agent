@@ -468,7 +468,7 @@ The extension does not update itself. Members re-download the zip, replace
 the unzipped folder and click reload on `chrome://extensions`. While
 developing, *Load unpacked* the `extension/` folder itself.
 
-> **rc-agent:** releases go to `/projects/rc/projects/rc-agent/rc-copilot`,
+> **rc-agent:** releases go to `/projects/rc/projects/rc-copilot/rc-agent/rc-copilot`,
 > and `install.sh` links `~/ondemand/dev/rc-agent` (TicketMate's link is
 > `~/ondemand/dev/rc-copilot`), so the two apps can be installed side by side.
 > The app is named *RC Agent* in `manifest.yml`. The extension zip has the

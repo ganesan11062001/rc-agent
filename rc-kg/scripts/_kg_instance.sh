@@ -343,7 +343,7 @@ KG_VARIANTS="full website"
 # One published graph for every app and session: TicketMate and rc-agent read
 # and publish the same snapshots. RC_KG_DATA_ROOT overrides; without the
 # shared directory a checkout falls back to its own data/.
-KG_SHARED_DATA=/projects/rc/projects/rc-kg-data
+KG_SHARED_DATA=/projects/rc/projects/rc-copilot/shared/kg-data
 kg_data_root() {
   if [ -n "${RC_KG_DATA_ROOT:-}" ]; then echo "$RC_KG_DATA_ROOT"
   elif [ -d "$KG_SHARED_DATA" ]; then echo "$KG_SHARED_DATA"

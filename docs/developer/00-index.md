@@ -17,8 +17,8 @@ There are two codebases:
 
 | | path | what it is |
 |---|---|---|
-| **TicketMate** | `/projects/rc/projects/ticketmate` | the product as RC members use it: a fixed pipeline -- rules gather the facts, one model call writes the draft |
-| **rc-agent** | `/projects/rc/projects/rc-agent` | a copy of TicketMate in which, between gathering and writing, a LangGraph multi-agent system decides what else to look up, and reviewers check the draft; plus guardrails, evaluation and LLMOps |
+| **TicketMate** | `/projects/rc/projects/rc-copilot/ticketmate` | the product as RC members use it: a fixed pipeline -- rules gather the facts, one model call writes the draft |
+| **rc-agent** | `/projects/rc/projects/rc-copilot/rc-agent` | a copy of TicketMate in which, between gathering and writing, a LangGraph multi-agent system decides what else to look up, and reviewers check the draft; plus guardrails, evaluation and LLMOps |
 
 Both repositories carry this same guide, in `docs/developer/`. Both contain
 **rc-kg**, the knowledge graph. Everything in chapters 1-14 is true of both;

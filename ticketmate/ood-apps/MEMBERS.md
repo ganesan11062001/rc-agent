@@ -16,7 +16,7 @@ draft, review.
 You need:
 
 - an Explorer account in the RC group (you can read
-  `/projects/rc/projects/ticketmate`);
+  `/projects/rc/projects/rc-copilot/ticketmate`);
 - Open OnDemand with the **Develop** menu (sandbox apps) — if you don't see
   *Develop* in OOD's top bar, ask the OOD admins to enable app development for
   your account;
@@ -30,7 +30,7 @@ Open a terminal on Explorer (OOD → *Clusters* → *Explorer Shell Access*, or
 `ssh` to a login node) and run:
 
 ```bash
-/projects/rc/projects/rc-agent/rc-copilot/install.sh
+/projects/rc/projects/rc-copilot/rc-agent/rc-copilot/install.sh
 ```
 
 This creates one symlink, `~/ondemand/dev/rc-agent`, pointing at the shared
@@ -42,15 +42,15 @@ Check it:
 
 ```bash
 ls -l ~/ondemand/dev/rc-agent
-# rc-copilot -> /projects/rc/projects/rc-agent/rc-copilot/current/rc-copilot
+# rc-copilot -> /projects/rc/projects/rc-copilot/rc-agent/rc-copilot/current/rc-copilot
 ```
 
 ## Step 2 — Install the browser extension (once, 3 minutes)
 
 1. **Get the zip onto your computer.** It is
-   `/projects/rc/projects/rc-agent/rc-copilot/rc-copilot-extension.zip`.
+   `/projects/rc/projects/rc-copilot/rc-agent/rc-copilot/rc-copilot-extension.zip`.
    Easiest: OOD → *Files* → *Home Directory*, type
-   `/projects/rc/projects/rc-agent/rc-copilot` into the path bar, select the
+   `/projects/rc/projects/rc-copilot/rc-agent/rc-copilot` into the path bar, select the
    zip, **Download**. (Or `scp` it from a login node.)
 2. **Unzip it** into a folder you will keep, e.g.
    `Documents/rc-copilot-extension`. Chrome loads it from there, so don't
@@ -115,7 +115,7 @@ When it is right, click **Update** in ServiceNow yourself. Rating drafts
 ## Keeping it up to date
 
 - **The app** updates itself: every new session uses the current release.
-  `cat /projects/rc/projects/rc-agent/rc-copilot/current/VERSION` shows it.
+  `cat /projects/rc/projects/rc-copilot/rc-agent/rc-copilot/current/VERSION` shows it.
 - **The extension** does not. When a new version is announced, download the
   zip again (Step 2.1), unzip it **over the same folder**, and click the reload
   icon on RC Copilot in `chrome://extensions`.
@@ -149,7 +149,7 @@ Each session's logs are in
 | ticket text, prompts, drafts | your Slurm job; logs in `<repo>/traces/$USER/`, or `/scratch/$USER/rc_copilot_traces` if you cannot write the repository (mode 700) | you |
 | session access token | the OOD session card (owner only) | you |
 | model caches | `/scratch/$USER/rc_copilot_cache` | you |
-| the app, models, knowledge graph | `/projects/rc/projects/ticketmate` | RC team, read-only |
+| the app, models, knowledge graph | `/projects/rc/projects/rc-copilot/ticketmate` | RC team, read-only |
 
 Nothing leaves the cluster: the model, the knowledge-graph search and the
 cluster lookups all run inside your job. The lookups are read-only — nothing
@@ -160,7 +160,7 @@ RC Copilot runs can change, update or delete anything.
 ## Uninstall
 
 ```bash
-/projects/rc/projects/rc-agent/rc-copilot/install.sh --uninstall
+/projects/rc/projects/rc-copilot/rc-agent/rc-copilot/install.sh --uninstall
 ```
 
 removes the symlink; remove the extension on `chrome://extensions`.

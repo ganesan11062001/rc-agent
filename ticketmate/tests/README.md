@@ -31,7 +31,7 @@ and writes only into `tests/logs/`. Nothing outside `tests/` is modified.
 
 ```bash
 ssh you@login.explorer.northeastern.edu
-cd /projects/rc/projects/ticketmate/ticketmate/tests
+cd /projects/rc/projects/rc-copilot/ticketmate/ticketmate/tests
 sbatch --gres=gpu:t4:1 --export=ALL,MODEL=small run_inference_test.sbatch
 tail -F logs/inftest-<jobid>.out
 ```
